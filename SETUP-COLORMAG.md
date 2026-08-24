@@ -1,82 +1,61 @@
 # Setting up ColorMag
 
 The concrete version of `SETUP.md`, with ColorMag's real values filled in.
-Work through it in order. Roughly half a day, most of it step 5.
+Work through it in order. Roughly half a day, most of it step 4.
 
 ---
 
-## 0. Which shell — read this first
+## 0. Prerequisites — that is the whole list
 
-**Use WSL2, not Windows directly.** The scripts here are bash, and three of the
-things they rely on behave differently or not at all under Git Bash:
-`readlink -f` for resolving symlinked installs, backgrounding the Playground
-server, and `mktemp` semantics. You would get confusing partial failures rather
-than clean ones.
+Windows or macOS, no difference. Everything here is Node, so there is no WSL, no
+Python, and no Docker unless you later choose the `wp-env` engine.
 
-```powershell
-# PowerShell, as administrator, once
-wsl --install -d Ubuntu
 ```
-
-Then do everything below inside Ubuntu. Docker Desktop integrates with WSL2 if
-you later want the `wp-env` engine, symlinks work natively, and Claude Code runs
-there fine.
-
-**If you would rather not install WSL:** the Playground CLI itself is Node and
-cross-platform, so you can drive it directly on Windows and skip `boot-wp.sh`:
-
-```powershell
-npx @wp-playground/cli@latest start --path=C:\path\to\colormag --php=8.3 --port=9400 --login
-```
-
-You lose the blueprint seeding and the JSON handoff, so `/verify-fix` will not
-work end to end. Fine for a first look; not the setup to build on.
-
----
-
-## 1. Prerequisites
-
-```bash
-node -v      # need 20+
+node -v      # need 20 or newer  →  nodejs.org
 git --version
 claude --version
 ```
 
-Docker is only needed for `--engine wp-env`, which you will not need on day one.
+Use whatever terminal you normally use: PowerShell, Terminal.app, iTerm, the
+VS Code terminal. All commands below are identical on both platforms.
 
 ---
 
-## 2. Clone and install the skills
+## 1. Clone and install
 
-```bash
-git clone git@github.com:ThemeGrill/themegrill-qa.git ~/src/themegrill-qa
-cd ~/src/themegrill-qa && chmod +x scripts/*.sh
-
-mkdir -p ~/.claude/skills
-for s in verify-fix pr-qa-review regression-sweep full-test knowledge-init; do
-  ln -s ~/src/themegrill-qa/.claude/skills/$s ~/.claude/skills/$s
-done
-
-echo 'export THEMEGRILL_QA_HOME="$HOME/src/themegrill-qa"' >> ~/.bashrc
-source ~/.bashrc
+```
+git clone git@github.com:ThemeGrill/themegrill-qa.git
+cd themegrill-qa
+node install.mjs
 ```
 
-**Check:** open Claude Code in any directory, type `/`, and `verify-fix` should
-be listed.
+That is the whole install. It links the five skills into your personal Claude
+Code directory, sets `THEMEGRILL_QA_HOME`, checks your Node version, and
+smoke-tests that the scripts run.
+
+On Windows it links with directory junctions rather than symlinks, because
+junctions need no administrator rights and no Developer Mode. If even that is
+blocked it copies instead and tells you so — in which case re-run
+`node install.mjs` after each `git pull`.
+
+**Then open a new terminal**, so the environment variable is picked up.
+
+**Check:** open Claude Code anywhere, type `/`, and `verify-fix` should be
+listed.
 
 ---
 
-## 3. Boot ColorMag — the step most likely to break
+## 2. Boot ColorMag — the step most likely to break
 
-```bash
+```
 cd ~/src/colormag          # your ColorMag checkout
-$THEMEGRILL_QA_HOME/scripts/boot-wp.sh --engine playground
+node "$THEMEGRILL_QA_HOME/scripts/boot-wp.mjs" --engine playground
 ```
 
 This has never been run against a live network — the environment it was built in
 blocked `wordpress.org` and `playground.wordpress.net`. Expect to fix something
 in `blueprints/theme-test.json` here. That is the honest state of it, and it is
-why this is step 3 and not step 6.
+why this is step 2 and not step 5.
 
 What should happen: it prints a JSON line with a URL, you open it, and ColorMag
 is active with a dozen sample posts, three categories, a nav menu with a
@@ -87,15 +66,15 @@ dropdown, and four pages.
 | Symptom | Meaning | Do this |
 |---|---|---|
 | `not valid JSON` / `Host not...` | blocked network | allowlist those two hosts, or use `--engine wp-env` |
-| Boots but ColorMag is not active | blueprint slug mismatch | run `scripts/detect-product.sh` and check `slug` matches `activateTheme` in the blueprint |
+| Boots but ColorMag is not active | blueprint slug mismatch | run `scripts/detect-product.mjs` and check `slug` matches `activateTheme` in the blueprint |
 | A `wp-cli` blueprint step errors | step unsupported in this Playground version | delete that step, re-run, and fix it properly after |
-| Port already in use | something on 9400 | `PORT=9411 ./boot-wp.sh ...` |
+| Port already in use | something on 9400 | `--port 9411` |
 
 Do not continue past this step. Everything else assumes a working site.
 
 ---
 
-## 4. Ingest ColorMag's documentation
+## 3. Ingest ColorMag's documentation
 
 ColorMag's docs are WordPress + BetterDocs, and they expose a REST API — which is
 better than scraping, because the sections come from the site's own categories
@@ -103,9 +82,9 @@ rather than being guessed from URLs. That matters here specifically: every
 article lives at `/colormag/docs/<slug>/`, so there is no section in the path at
 all.
 
-```bash
+```
 cd ~/src/colormag
-python3 $THEMEGRILL_QA_HOME/scripts/ingest-docs.py \
+node $THEMEGRILL_QA_HOME/scripts/ingest-docs.mjs \
   --rest https://docs.themegrill.com/colormag \
   --out .themegrill-qa
 ```
@@ -162,9 +141,9 @@ pre-release pass.
 
 ---
 
-## 5. The knowledge file — the hour that decides everything
+## 4. The knowledge file — the hour that decides everything
 
-```bash
+```
 cd ~/src/colormag
 claude
 > /knowledge-init
@@ -198,11 +177,11 @@ Commit the result to the **ColorMag repo**, not to themegrill-qa.
 
 ---
 
-## 6. Point it at fixes you already checked by hand
+## 5. Point it at fixes you already checked by hand
 
 Pick three or four ColorMag fixes you personally verified recently.
 
-```bash
+```
 cd ~/src/colormag
 git checkout fix/CM-1234-whatever
 claude
@@ -228,7 +207,7 @@ on automation.
 
 ---
 
-## 7. Only then, CI
+## 6. Only then, CI
 
 Add `.github/workflows/qa.yml` to the ColorMag repo:
 
@@ -280,10 +259,10 @@ Add to ColorMag's `.gitignore`:
 ## Order of operations, condensed
 
 ```
-WSL2 → clone + link skills → boot a site → ingest docs → prune areas
+clone + node install.mjs → boot a site → ingest docs → prune areas
      → knowledge file + the human hour → verify-fix on known fixes
      → DECIDE → CI on ColorMag only → watch a dozen PRs → then Zakra
 ```
 
-Step 3 is the technical risk. Step 5 is the one that determines whether the
-output is useful. Step 6 is where you find out if any of it works.
+Step 2 is the technical risk. Step 4 is the one that determines whether the
+output is useful. Step 5 is where you find out if any of it works.

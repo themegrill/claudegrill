@@ -32,8 +32,8 @@ themegrill-qa/
 │   ├── pr-qa-review/SKILL.md      # entry point 2
 │   └── regression-sweep/SKILL.md  # entry point 3
 ├── scripts/
-│   ├── detect-product.sh          # works out what product it is looking at
-│   └── boot-wp.sh                 # Playground or wp-env, product mounted live
+│   ├── detect-product.mjs          # works out what product it is looking at
+│   └── boot-wp.mjs                 # Playground or wp-env, product mounted live
 ├── blueprints/                    # seeded WordPress for theme / plugin testing
 ├── knowledge/                     # per-product context — the important part
 └── .github/workflows/
@@ -74,7 +74,7 @@ Push these files to `ThemeGrill/themegrill-qa` (or rename — then update the
 `repository:` lines in both reusable workflows and in the example callers).
 
 ```bash
-chmod +x scripts/*.sh
+node install.mjs
 ```
 
 ### 2. Secrets
@@ -154,7 +154,7 @@ Watch the first week's spend before widening to all seven products.
 
 **Playground is not a real server.** It runs PHP-WASM with SQLite. Anything that
 depends on MySQL-specific SQL, real cron, outbound mail, or genuine file
-uploads will behave differently or not at all. `boot-wp.sh --engine wp-env`
+uploads will behave differently or not at all. `boot-wp.mjs --engine wp-env`
 exists for exactly these cases and the skills are instructed to switch when the
 diff touches them — but if you are relying on this for something in that list,
 check which engine the run actually used.
@@ -182,7 +182,7 @@ Honest accounting, so you know where to look first when something breaks.
 
 **Verified working:**
 
-- `detect-product.sh` against a theme (`style.css` header), a plugin (PHP header),
+- `detect-product.mjs` against a theme (`style.css` header), a plugin (PHP header),
   invocation from a subdirectory, Jira-key extraction from a branch name, pro
   companion detection, and a clean failure on a non-WordPress directory.
 - All YAML parses; all JSON parses; both scripts pass `bash -n`.
@@ -197,7 +197,7 @@ parsing and then failed fetching WordPress itself. Everything before the network
 fetch is confirmed; the blueprint steps, the readiness poll, and the JSON handoff
 are not.
 
-**So the first thing to do is run `scripts/boot-wp.sh` on your own machine**,
+**So the first thing to do is run `scripts/boot-wp.mjs` on your own machine**,
 where those hosts are reachable, and fix whatever the blueprint gets wrong. Ten
 minutes of that will surface more than any amount of further review. Also note
 that GitHub-hosted runners can reach both hosts fine, but a self-hosted runner

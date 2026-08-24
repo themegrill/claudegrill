@@ -1,6 +1,6 @@
 # What this costs
 
-Run `python3 scripts/estimate-cost.py` to recompute any of this with your own
+Run `node scripts/estimate-cost.mjs` to recompute any of this with your own
 assumptions. Every number below is modelled, not measured — see *Measure this
 properly* at the end.
 
@@ -108,6 +108,6 @@ In week one, run one product only and read the actual numbers:
   documented, so inspect one before relying on parsing it.
 - Org-level spend is visible on the Claude Console usage dashboard.
 
-Then edit the token shapes at the top of `estimate-cost.py` and re-run it. If
+Then edit the token shapes at the top of `estimate-cost.mjs` and re-run it. If
 real costs come in more than about 2× the model, the cause is almost certainly
 snapshot size — tighten the mission scope per shard before anything else.

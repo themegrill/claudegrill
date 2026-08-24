@@ -125,7 +125,7 @@ jobs:
           JSON
           cp -r themegrill-qa/scripts themegrill-qa/blueprints themegrill-qa/knowledge product/ 2>/dev/null || true
           cp -r themegrill-qa/.claude product/.claude
-          chmod +x product/scripts/*.sh
+          # nothing to chmod: the scripts are Node
 
       - name: QA review
         if: steps.triage.outputs.run == 'true'

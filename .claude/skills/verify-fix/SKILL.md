@@ -19,7 +19,7 @@ still run the derivation below.
 ## Step 1 — Work out what you are looking at
 
 ```bash
-scripts/detect-product.sh
+scripts/detect-product.mjs
 ```
 
 That gives you type (theme/plugin), slug, name, version, repo root, the branch,
@@ -35,7 +35,7 @@ git log --oneline -5
 If the working tree is clean, diff against the upstream base instead
 (`git diff origin/HEAD...HEAD`) — the change is committed but unmerged.
 
-**Read the product knowledge file** if `detect-product.sh` found one. It tells
+**Read the product knowledge file** if `detect-product.mjs` found one. It tells
 you the product's critical flows, admin surfaces, known-fragile areas and
 integration points. It exists so you do not have to rediscover the product.
 
@@ -63,7 +63,7 @@ confident, useless verification.
 ## Step 3 — Boot a site
 
 ```bash
-scripts/boot-wp.sh --engine playground
+scripts/boot-wp.mjs --engine playground
 ```
 
 Use `playground` by default: it boots in seconds and mounts the working tree
@@ -158,6 +158,6 @@ implied claim of total coverage.
   the fix is wrong, say the fix is wrong.
 - **Never report a bug you have not reproduced twice.** One-shot anomalies in a
   browser-driving agent are usually the agent, not the product.
-- Tear down the site when finished (kill the pid from `boot-wp.sh`).
+- Tear down the site when finished (kill the pid from `boot-wp.mjs`).
 - If Playwright fails to drive the page three times in a row, stop and report
   the blocker. Do not keep retrying variations.

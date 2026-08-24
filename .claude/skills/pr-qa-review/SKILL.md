@@ -19,7 +19,7 @@ work, and be explicit about what you could not check.
 ## Step 1 — Establish context
 
 ```bash
-scripts/detect-product.sh
+scripts/detect-product.mjs
 gh pr view "$PR_NUMBER" --json title,body,author,baseRefName,headRefName,files,additions,deletions
 gh pr diff "$PR_NUMBER"
 ```
@@ -75,7 +75,7 @@ Bias missions toward the failure modes that actually hurt this catalogue:
 ## Step 4 — Execute
 
 ```bash
-scripts/boot-wp.sh --engine playground
+scripts/boot-wp.mjs --engine playground
 ```
 
 Use `wp-env` instead when the diff touches SQL, mail, cron or multisite — those

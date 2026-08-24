@@ -22,7 +22,7 @@ local session is slower, costs the same or more, and exhausts context. Only use
 ## Step 1 — Identify and confirm scope
 
 ```bash
-scripts/detect-product.sh
+scripts/detect-product.mjs
 ```
 
 Read the product's knowledge file and pull out its **critical flows** — that list
@@ -72,7 +72,7 @@ not a pass, and must be called out as such.
 Boot once and work the areas in sequence, but keep discipline:
 
 ```bash
-scripts/boot-wp.sh --engine playground
+scripts/boot-wp.mjs --engine playground
 ```
 
 - Announce the area list and work through it in order, one at a time.

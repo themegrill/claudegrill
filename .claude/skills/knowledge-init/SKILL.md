@@ -20,7 +20,7 @@ as an additional input if given.
 | Input | Gives you | How to get it |
 |---|---|---|
 | **Source** | Structure — settings pages, option keys, capabilities, hooks, routes | the greps below |
-| **Docs** | Intent — what each setting is *for*, the flows, expected outcomes | `scripts/ingest-docs.py` |
+| **Docs** | Intent — what each setting is *for*, the flows, expected outcomes | `scripts/ingest-docs.mjs` |
 | **Git history** | Fragility — where bugs keep coming from | `git log` mining |
 
 Only two things are then left for a human: which flows matter *most*, and the
@@ -31,7 +31,7 @@ highest-value input, because expected behaviour is the one thing source cannot
 tell you and the thing the agents most need:
 
 ```bash
-python3 scripts/ingest-docs.py https://docs.<product>.com/sitemap.xml --out .themegrill-qa
+node scripts/ingest-docs.mjs https://docs.<product>.com/sitemap.xml --out .themegrill-qa
 ```
 
 That writes `.themegrill-qa/docs/<section>.md` plus `.themegrill-qa/docs-index.json`. Two things
@@ -61,7 +61,7 @@ still needs to supply.
 ## Step 1 — Read the product
 
 ```bash
-scripts/detect-product.sh
+scripts/detect-product.mjs
 ```
 
 Then gather, with evidence for each finding:

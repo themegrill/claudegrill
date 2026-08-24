@@ -29,7 +29,7 @@ permission; do not assume it.
 ## Step 1 — Set up
 
 ```bash
-scripts/detect-product.sh
+scripts/detect-product.mjs
 ```
 
 Read the product knowledge file. It defines the critical flows, the admin
@@ -40,7 +40,7 @@ intentional behaviour is the most common false positive.
 Boot the site on the released version, not the working tree:
 
 ```bash
-scripts/boot-wp.sh --engine playground --wp "${WP_VERSION:-latest}" --php "${PHP_VERSION:-8.3}"
+scripts/boot-wp.mjs --engine playground --wp "${WP_VERSION:-latest}" --php "${PHP_VERSION:-8.3}"
 ```
 
 Sweeps are the right place to vary the matrix. If the workflow passed a

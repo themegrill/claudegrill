@@ -105,7 +105,7 @@ CI, no cost risk beyond a few local runs.
 In your ColorMag checkout:
 
 ```bash
-$THEMEGRILL_QA_HOME/scripts/boot-wp.sh --engine playground
+node "$THEMEGRILL_QA_HOME/scripts/boot-wp.mjs" --engine playground
 ```
 
 This is the **first thing to run and the most likely thing to break**, because it
@@ -122,7 +122,7 @@ config; the script prints a hint saying so.
 ### 2.2 Ingest the docs
 
 ```bash
-python3 $THEMEGRILL_QA_HOME/scripts/ingest-docs.py \
+node $THEMEGRILL_QA_HOME/scripts/ingest-docs.mjs \
   https://docs.themegrill.com/colormag/sitemap.xml --out .themegrill-qa
 ```
 
@@ -290,7 +290,7 @@ Onboard one at a time. Seven half-configured products is worse than two good one
 | Symptom | Cause | Fix |
 |---|---|---|
 | `not valid JSON` on boot | blocked egress to `wordpress.org` | allowlist it, or `--engine wp-env` |
-| Playground boots, product inactive | blueprint slug or entry-file mismatch | check `detect-product.sh` output against the blueprint |
+| Playground boots, product inactive | blueprint slug or entry-file mismatch | check `detect-product.mjs` output against the blueprint |
 | `/verify-fix` can't find blueprints | `THEMEGRILL_QA_HOME` unset with a symlinked install | export it |
 | Agent hunts for a control that isn't there | stale docs | that's a **doc drift finding** — file it, don't suppress it |
 | Nine bot comments on one PR | comment marker not matching | check `<!-- themegrill-qa-bot -->` is preserved |
@@ -306,7 +306,7 @@ Onboard one at a time. Seven half-configured products is worse than two good one
 - [ ] Repo pushed, org references updated
 - [ ] `ANTHROPIC_API_KEY` set at org level
 - [ ] Skills symlinked, `THEMEGRILL_QA_HOME` exported
-- [ ] `boot-wp.sh` produces a working site
+- [ ] `boot-wp.mjs` produces a working site
 - [ ] Docs ingested for the first product
 
 **Before any CI**

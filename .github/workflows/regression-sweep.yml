@@ -61,7 +61,7 @@ on:
           Hard spend cap per shard. The run STOPS when reached, so a cap set
           below what a shard needs silently truncates coverage rather than
           failing loudly. Modelled cost of a shard is ~$2.60 on Sonnet 5
-          (scripts/estimate-cost.py), so this leaves headroom. Narrow the area
+          (scripts/estimate-cost.mjs), so this leaves headroom. Narrow the area
           list rather than tightening this if you need to spend less.
         required: false
         type: string
@@ -198,7 +198,7 @@ jobs:
           JSON
           cp -r themegrill-qa/scripts themegrill-qa/blueprints themegrill-qa/knowledge product/ 2>/dev/null || true
           cp -r themegrill-qa/.claude product/.claude
-          chmod +x product/scripts/*.sh
+          # nothing to chmod: the scripts are Node
 
       - name: Sweep ${{ matrix.shard.area }}
         uses: anthropics/claude-code-action@v1

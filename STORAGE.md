@@ -20,8 +20,8 @@ lifecycles.
 | # | What | Path | Committed? | Written by |
 |---|---|---|---|---|
 | 1 | Product handbook | `.themegrill-qa/knowledge.md` | yes | `/knowledge-init` then a human |
-| 2 | Ingested docs | `.themegrill-qa/docs/*.md` + `docs-index.json` | yes | `ingest-docs.py` |
-| 3 | Docs fetch cache | `.themegrill-qa/.docs-cache/` | **no** — gitignored | `ingest-docs.py` |
+| 2 | Ingested docs | `.themegrill-qa/docs/*.md` + `docs-index.json` | yes | `ingest-docs.mjs` |
+| 3 | Docs fetch cache | `.themegrill-qa/.docs-cache/` | **no** — gitignored | `ingest-docs.mjs` |
 | 4 | Specs and snapshots | `tests/e2e/**` | yes | agent, via PR |
 | 5 | Findings ledger | `.themegrill-qa/findings/` | yes | agent, via PR |
 
@@ -51,7 +51,7 @@ This file is small, hand-maintained, and permanent. It is the asset.
 
 `.themegrill-qa/docs/<section>.md`, `.themegrill-qa/docs-index.json`
 
-Generated from the public docs site by `ingest-docs.py`. Contains each doc
+Generated from the public docs site by `ingest-docs.mjs`. Contains each doc
 section's text plus a **Stated outcomes** block — the sentences where the docs
 promise a specific result, which are the assertions the agent checks against.
 

@@ -1,0 +1,23 @@
+{
+  "name": "themegrill-qa",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-assisted QA platform for ThemeGrill's WordPress themes and plugins",
+  "license": "GPL-2.0-or-later",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "comment": "No dependencies, by design. ThemeGrill develops on Windows and macOS, so everything here runs on plain Node with nothing to install.",
+  "scripts": {
+    "install-qa": "node install.mjs",
+    "detect": "node scripts/detect-product.mjs",
+    "boot": "node scripts/boot-wp.mjs",
+    "boot:wp-env": "node scripts/boot-wp.mjs --engine wp-env",
+    "stop": "node scripts/boot-wp.mjs --stop",
+    "ingest:docs": "node scripts/ingest-docs.mjs",
+    "ingest:suite": "node scripts/ingest-testsuite.mjs",
+    "cost": "node scripts/estimate-cost.mjs",
+    "check": "node --check scripts/detect-product.mjs && node --check scripts/boot-wp.mjs && node --check scripts/ingest-docs.mjs && node --check scripts/ingest-testsuite.mjs && node --check scripts/estimate-cost.mjs && node --check install.mjs"
+  }
+}
