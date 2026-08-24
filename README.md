@@ -1,6 +1,7 @@
 # themegrill-qa
 
 > **Start here:** [SETUP.md](SETUP.md) is the ordered onboarding runbook.
+> [CONVENTIONS.md](CONVENTIONS.md) governs every spec written against this.
 > [CLAUDE.md](CLAUDE.md) orients Claude Code — invariants, build state, next tasks.
 > [COSTS.md](COSTS.md) is the spend model.
 

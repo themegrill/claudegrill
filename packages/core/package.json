@@ -1,0 +1,14 @@
+{
+  "name": "@themegrill-qa/core",
+  "version": "0.1.0",
+  "description": "Shared Playwright spec helpers for ThemeGrill WordPress products",
+  "main": "index.js",
+  "license": "GPL-2.0-or-later",
+  "files": ["index.js", "wp-cli.js", "fixtures.js", "theme.js"],
+  "peerDependencies": {
+    "@wordpress/e2e-test-utils-playwright": ">=1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

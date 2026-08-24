@@ -26,10 +26,19 @@ scripts/                 the deterministic layer — shell and stdlib Python
   boot-wp.sh             disposable WordPress, product mounted live
   ingest-docs.py         docs site → intent layer + area list
   estimate-cost.py       spend model
+packages/core/           shared spec helpers — the suite layer
+  wp-cli.js              the one route for running PHP against a test site
+  fixtures.js            tagged fixtures with a teardown that removes everything
+  theme.js               theme helpers, incl. the three-way customizer check
 blueprints/              seeded WordPress state for theme / plugin testing
 knowledge/               templates and starter knowledge files
+examples/                a spec in the house style, to copy into a product repo
 .github/workflows/       reusable workflows + per-product caller examples
 ```
+
+**[CONVENTIONS.md](CONVENTIONS.md) governs every spec.** Read it before writing
+one. Nine rules, drawn from a WordPress plugin suite that had already settled
+them in practice, adapted for a catalogue that is part themes and part plugins.
 
 ## Invariants — do not break these
 
