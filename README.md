@@ -3,6 +3,7 @@
 > **Start here:** [SETUP.md](SETUP.md) is the ordered onboarding runbook.
 > [CONVENTIONS.md](CONVENTIONS.md) governs every spec written against this.
 > [STORAGE.md](STORAGE.md) says where every artifact is kept.
+> [SETUP-COLORMAG.md](SETUP-COLORMAG.md) is the concrete first-product walkthrough.
 > [CLAUDE.md](CLAUDE.md) orients Claude Code — invariants, build state, next tasks.
 > [COSTS.md](COSTS.md) is the spend model.
 

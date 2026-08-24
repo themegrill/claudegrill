@@ -187,9 +187,172 @@ def outcome_sentences(text, limit=12):
     return out
 
 
+# --------------------------------------------------------------- REST ingestion
+#
+# ThemeGrill's own docs run on WordPress with BetterDocs, which exposes a `docs`
+# post type and a `doc_category` taxonomy over the REST API. That is a much
+# better source than scraping: the categories are the site's own navigation
+# rather than a guess from URL segments, the content arrives without page
+# furniture, and pagination is explicit.
+#
+# It matters for ColorMag specifically, whose article URLs are all
+# /colormag/docs/<slug>/ — the section does not appear in the path at all, so the
+# sitemap route would file every article under one area.
+
+
+def api_get(url, cache_dir, delay, retries=2):
+    """GET JSON from a WP REST endpoint, with the same on-disk cache."""
+    body = fetch(url, cache_dir, delay, retries)
+
+    if body is None:
+        return None
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        print(f"  ! not JSON: {url}", file=sys.stderr)
+        return None
+
+
+def strip_html(html):
+    """Reuse the article extractor on a content.rendered blob."""
+    ex = Extractor()
+    try:
+        ex.feed(html or "")
+    except Exception:
+        return re.sub(r"<[^>]+>", " ", html or "")
+    return ex.text()
+
+
+def ingest_rest(a):
+    """Ingest via the WordPress REST API. Returns the index dict."""
+    base = a.rest.rstrip("/")
+    tax_url = f"{base}/wp-json/wp/v2/{a.taxonomy}?per_page=100&_fields=id,name,slug,count,parent"
+
+    print(f"rest     {base}")
+    terms = api_get(tax_url, a.cache, a.delay)
+
+    if not terms:
+        sys.exit(f"could not read {a.taxonomy} from {base} — check --taxonomy and the URL")
+
+    by_id = {t["id"]: t for t in terms}
+    print(f"found    {len(terms)} categories, "
+          f"{sum(t.get('count', 0) for t in terms)} articles\n")
+
+    # Pull every article. `_fields` keeps the payload small; content.rendered is
+    # the only large field we actually need.
+    articles, page = [], 1
+    while True:
+        url = (f"{base}/wp-json/wp/v2/{a.post_type}"
+               f"?per_page=100&page={page}&_fields=id,slug,link,title,content,{a.taxonomy}")
+        batch = api_get(url, a.cache, a.delay)
+
+        if not batch:
+            break
+        articles.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+        if page > 25:                      # guard against a misbehaving endpoint
+            print("  ! stopped at 25 pages", file=sys.stderr)
+            break
+
+    if not articles:
+        sys.exit(f"no {a.post_type} records returned from {base}")
+
+    grouped = defaultdict(list)
+    uncategorised = []
+
+    for art in articles:
+        term_ids = art.get(a.taxonomy) or []
+        if not term_ids:
+            uncategorised.append(art)
+            continue
+        # An article in several categories belongs to its most specific one:
+        # a child term is a narrower surface than its parent.
+        chosen = max(term_ids, key=lambda i: (by_id.get(i, {}).get("parent", 0) != 0, i))
+        grouped[by_id.get(chosen, {}).get("slug") or f"term-{chosen}"].append(art)
+
+    if uncategorised:
+        grouped["uncategorised"] = uncategorised
+
+    grouped = OrderedDict(sorted(grouped.items(), key=lambda kv: -len(kv[1])))
+
+    docs_dir = os.path.join(a.out, "docs")
+    os.makedirs(docs_dir, exist_ok=True)
+    index = {"source": base, "mode": "rest", "sections": [], "suggested_areas": []}
+
+    for slug, arts in grouped.items():
+        if a.section and slug not in a.section:
+            continue
+        if a.limit:
+            arts = arts[: a.limit]
+
+        term = next((t for t in terms if t.get("slug") == slug), {})
+        label = term.get("name", slug)
+        parent = by_id.get(term.get("parent", 0), {}).get("name")
+
+        print(f"{slug}  ({len(arts)} articles)" + (f"  ← under {parent}" if parent else ""))
+
+        rows, all_outcomes, thin = [], [], []
+        for art in arts:
+            title = strip_html(art.get("title", {}).get("rendered", "")) or art.get("slug", "")
+            text = strip_html(art.get("content", {}).get("rendered", ""))
+            outs = outcome_sentences(text)
+            all_outcomes.extend(outs)
+
+            if len(text) < MIN_ARTICLE_CHARS:
+                thin.append({"url": art.get("link", ""), "chars": len(text)})
+                print(f"  ! THIN, review: {art.get('link','')} ({len(text)}c) — included anyway",
+                      file=sys.stderr)
+
+            rows.append({"title": title, "url": art.get("link", ""), "text": text,
+                         "outcomes": len(outs)})
+            print(f"  · {title[:66]:<66} {len(text):>6}c {len(outs):>2} outcomes")
+
+        path = os.path.join(docs_dir, f"{slug}.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(f"# Docs — {label}\n\n")
+            if parent:
+                f.write(f"_Sub-section of {parent}._\n\n")
+            f.write(f"<!-- Generated by ingest-docs.py from {base} (REST).\n"
+                    f"     {len(rows)} articles. This is the INTENT source for QA:\n"
+                    f"     what the product promises, in the product owner's words.\n"
+                    f"     Do not hand-edit — re-run the ingest instead. -->\n\n")
+
+            if all_outcomes:
+                f.write("## Stated outcomes in this section\n\n")
+                f.write("_Each of these is a candidate assertion. If the product does not "
+                        "do this, that is either a regression or a stale doc — both are "
+                        "findings._\n\n")
+                for s in dict.fromkeys(all_outcomes):
+                    f.write(f"- {s}\n")
+                f.write("\n---\n\n")
+
+            for r in rows:
+                f.write(f"## {r['title']}\n\n<{r['url']}>\n\n{r['text']}\n\n---\n\n")
+
+        index["sections"].append({
+            "section": slug, "label": label, "parent": parent,
+            "file": os.path.relpath(path, a.out), "articles": len(rows),
+            "failed": 0, "thin": thin, "outcomes": len(all_outcomes),
+            "titles": [r["title"] for r in rows],
+        })
+        print(f"  → {path}\n")
+
+    index["suggested_areas"] = [s["section"] for s in index["sections"]]
+    return index
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("sitemap", help="URL of the docs sitemap.xml")
+    ap.add_argument("sitemap", nargs="?", help="URL of the docs sitemap.xml")
+    ap.add_argument("--rest", metavar="BASE_URL",
+                    help="Ingest via the WordPress REST API instead of the sitemap, e.g. "
+                         "https://docs.themegrill.com/colormag . Preferred for ThemeGrill's "
+                         "own docs: categories come from the site rather than the URL path.")
+    ap.add_argument("--post-type", default="docs", help="REST post type (default docs)")
+    ap.add_argument("--taxonomy", default="doc_category",
+                    help="REST taxonomy used for sections (default doc_category)")
     ap.add_argument("--out", default=".themegrill-qa", help="output directory (default .themegrill-qa)")
     ap.add_argument("--section", action="append", help="limit to these sections")
     ap.add_argument("--limit", type=int, help="max articles per section")
@@ -197,7 +360,33 @@ def main():
     ap.add_argument("--cache", default=".themegrill-qa/.docs-cache")
     a = ap.parse_args()
 
+    if not a.rest and not a.sitemap:
+        ap.error("give either a sitemap URL or --rest BASE_URL")
+
     os.makedirs(a.cache, exist_ok=True)
+
+    # ---- REST route -------------------------------------------------------
+    if a.rest:
+        index = ingest_rest(a)
+        ipath = os.path.join(a.out, "docs-index.json")
+        with open(ipath, "w", encoding="utf-8") as f:
+            json.dump(index, f, indent=2)
+
+        tot = sum(s["articles"] for s in index["sections"])
+        thin = sum(len(s["thin"]) for s in index["sections"])
+        print("=" * 68)
+        print(f"{tot} articles in {len(index['sections'])} sections "
+              f"→ {os.path.join(a.out, 'docs')}")
+        if thin:
+            print(f"{thin} articles came out unusually short — listed under \"thin\" in "
+                  f"the index. Check one; usually a page built entirely from blocks the "
+                  f"parser skipped.")
+        print(f"index → {ipath}")
+        print("\nareas_json for the sweep caller:")
+        print(json.dumps(index["suggested_areas"]))
+        return
+
+    # ---- sitemap route ----------------------------------------------------
     docs_dir = os.path.join(a.out, "docs")
     os.makedirs(docs_dir, exist_ok=True)
 
