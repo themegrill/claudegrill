@@ -1,0 +1,4 @@
+.themegrill-qa/.docs-cache/
+__pycache__/
+*.pyc
+sweep-report.md

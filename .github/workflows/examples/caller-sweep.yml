@@ -1,0 +1,76 @@
+# Drop this into each product repo as .github/workflows/sweep.yml
+#
+# MANUAL ONLY, by design. You release 2-3 products a month, so a weekly cron
+# would spend most of its money on weeks when nothing changed. Run this from
+# Claude Code with `/full-test`, or from the Actions tab, when a product ships.
+#
+# The scheduled and release-driven triggers are kept below, commented out, for
+# when a product's release cadence or bug rate justifies turning them back on.
+# Re-enable them per product, not across the whole catalogue at once.
+
+name: Regression sweep
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag or branch to sweep (blank = default branch)'
+        required: false
+        default: ''
+      depth:
+        description: 'Coverage depth'
+        type: choice
+        options: [full, smoke]
+        default: full
+      file_tickets:
+        description: 'File verified findings to Jira'
+        type: boolean
+        default: false
+
+  # --- opt-in triggers, disabled ------------------------------------------
+  #
+  # On every published release. Full sweep for x.y.0, smoke for patches.
+  # Turn this on for a product whose releases keep breaking things.
+  #
+  # release:
+  #   types: [published]
+  #
+  # Weekly heartbeat. 02:00 UTC Monday = 07:45 Sunday evening Kathmandu.
+  #
+  # schedule:
+  #   - cron: '0 2 * * 1'
+  #
+  # Fired by themegrill-qa's wp-core-watch.yml when WordPress core ships a new version.
+  # Cheapest early warning for the "core update broke our theme" bug class —
+  # consider enabling on the two flagship themes only, at smoke depth.
+  #
+  # repository_dispatch:
+  #   types: [wp-core-released]
+
+jobs:
+  sweep:
+    uses: ThemeGrill/themegrill-qa/.github/workflows/regression-sweep.yml@main
+    with:
+      product_slug: colormag
+      product_type: theme
+      version: ${{ inputs.version }}
+      depth: ${{ inputs.depth || 'full' }}
+      file_tickets: ${{ inputs.file_tickets || false }}
+
+      # Areas mirror the critical-flows list in .themegrill-qa/knowledge.md.
+      # This list is the direct multiplier on what a full sweep costs:
+      # shards = areas × env combos. Keep it honest.
+      areas_json: >-
+        ["activation-and-fatals","customizer-round-trip","front-page-blocks",
+         "header-and-menu","archive-single-search-404","demo-import",
+         "woocommerce","upgrade-migration","roles-and-caps"]
+      smoke_areas_json: >-
+        ["activation-and-fatals","customizer-round-trip","upgrade-migration"]
+
+      matrix_json: '[{"wp":"latest","php":"8.3"},{"wp":"6.7","php":"8.1"}]'
+
+      budget_per_shard_usd: "3.50"
+      max_shards: 20
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ATLASSIAN_ROVO_TOKEN: ${{ secrets.ATLASSIAN_ROVO_TOKEN }}

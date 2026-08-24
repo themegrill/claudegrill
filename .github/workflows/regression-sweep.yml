@@ -1,0 +1,391 @@
+name: Regression sweep (reusable)
+
+# Whole-product exploratory pass over a released version.
+#
+# Shape: plan → fan out → aggregate.
+#
+# A single agent cannot cover a product the size of User Registration in one
+# run: it exhausts its context, times out, and produces a shallow pass over
+# everything instead of a real pass over anything. So the product is split into
+# functional areas and each area gets its own shard — its own WordPress, its own
+# context, its own time budget. The aggregate job then merges the shard reports
+# and files tickets once, so caps and dedup apply globally rather than per shard.
+
+on:
+  workflow_call:
+    inputs:
+      product_slug:
+        required: true
+        type: string
+      product_type:
+        required: true
+        type: string
+      version:
+        description: "Tag/branch to sweep. Empty = default branch."
+        required: false
+        type: string
+        default: ""
+
+      # --- coverage ---------------------------------------------------------
+      areas_json:
+        description: >
+          Functional areas to shard across. Should mirror the critical-flows
+          list in the product's knowledge file. One shard per area per env combo.
+        required: false
+        type: string
+        default: '["core-activation","admin-settings","frontend-rendering","roles-and-caps","upgrade-migration"]'
+      smoke_areas_json:
+        description: "Subset used when depth=smoke."
+        required: false
+        type: string
+        default: '["core-activation","upgrade-migration"]'
+      matrix_json:
+        description: "Environment combinations."
+        required: false
+        type: string
+        default: '[{"wp":"latest","php":"8.3"}]'
+      depth:
+        description: "smoke (patch releases, weekly) | full (major releases)"
+        required: false
+        type: string
+        default: "smoke"
+      max_shards:
+        description: "Hard ceiling on shard count, so a long area list cannot run away."
+        required: false
+        type: number
+        default: 20
+
+      # --- spend ------------------------------------------------------------
+      budget_per_shard_usd:
+        description: >
+          Hard spend cap per shard. The run STOPS when reached, so a cap set
+          below what a shard needs silently truncates coverage rather than
+          failing loudly. Modelled cost of a shard is ~$2.60 on Sonnet 5
+          (scripts/estimate-cost.py), so this leaves headroom. Narrow the area
+          list rather than tightening this if you need to spend less.
+        required: false
+        type: string
+        default: "3.50"
+      max_turns:
+        description: "Turn ceiling per shard, as a runaway-loop guard."
+        required: false
+        type: number
+        default: 120
+      model:
+        required: false
+        type: string
+        default: "claude-sonnet-5"
+
+      # --- output -----------------------------------------------------------
+      file_tickets:
+        description: "Create Jira issues for verified findings."
+        required: false
+        type: boolean
+        default: false
+      qa_ref:
+        required: false
+        type: string
+        default: "main"
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      ATLASSIAN_ROVO_TOKEN:
+        required: false
+
+jobs:
+  # ---------------------------------------------------------------- plan ----
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.build.outputs.shards }}
+      count: ${{ steps.build.outputs.count }}
+      est: ${{ steps.build.outputs.est }}
+    steps:
+      - name: Build the shard list
+        id: build
+        shell: python3 {0}
+        run: |
+          import json, os, itertools
+
+          depth  = "${{ inputs.depth }}"
+          areas  = json.loads(r'''${{ inputs.depth == 'full' && inputs.areas_json || inputs.smoke_areas_json }}''')
+          combos = json.loads(r'''${{ inputs.matrix_json }}''')
+          cap    = int("${{ inputs.max_shards }}")
+          budget = float("${{ inputs.budget_per_shard_usd }}")
+
+          shards = [
+              {"area": a, "wp": c["wp"], "php": c["php"]}
+              for a, c in itertools.product(areas, combos)
+          ]
+
+          truncated = len(shards) > cap
+          shards = shards[:cap]
+
+          out = os.environ["GITHUB_OUTPUT"]
+          with open(out, "a") as f:
+              f.write(f"shards={json.dumps(shards)}\n")
+              f.write(f"count={len(shards)}\n")
+              f.write(f"est={len(shards) * budget:.2f}\n")
+
+          summary = os.environ["GITHUB_STEP_SUMMARY"]
+          with open(summary, "a") as f:
+              f.write(f"## Sweep plan — `${{ inputs.product_slug }}`\n\n")
+              f.write(f"- Depth: **{depth}**\n")
+              f.write(f"- Shards: **{len(shards)}** ({len(areas)} areas × {len(combos)} env combos)\n")
+              f.write(f"- Cap per shard: **${budget:.2f}** → worst case **${len(shards)*budget:.2f}** this run\n")
+              f.write(f"- Ticket filing: **{'enabled' if '${{ inputs.file_tickets }}' == 'true' else 'report only'}**\n")
+              if truncated:
+                  f.write(f"\n> Shard list truncated to the {cap} cap. Raise `max_shards` or narrow `areas_json`.\n")
+              f.write("\n| Shard | Area | WP | PHP |\n|---|---|---|---|\n")
+              for i, s in enumerate(shards, 1):
+                  f.write(f"| {i} | `{s['area']}` | {s['wp']} | {s['php']} |\n")
+
+  # --------------------------------------------------------------- sweep ----
+  sweep:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    permissions:
+      contents: read
+      id-token: write
+
+    strategy:
+      fail-fast: false          # a fatal in one area must not cancel the others
+      max-parallel: 4           # be a good citizen of your Actions concurrency
+      matrix:
+        shard: ${{ fromJson(needs.plan.outputs.shards) }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version }}
+          path: product
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ThemeGrill/themegrill-qa      # <-- change to your org/repo
+          ref: ${{ inputs.qa_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: themegrill-qa
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Chromium
+        run: npx --yes playwright@latest install --with-deps chromium
+
+      - name: Assemble MCP config
+        run: |
+          mkdir -p .qa /tmp/qa-evidence
+          # Shards never file tickets, so they never get Jira write access.
+          # Only the aggregate job does.
+          cat > .qa/mcp.json <<'JSON'
+          {
+            "mcpServers": {
+              "playwright": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated",
+                         "--browser", "chromium", "--no-sandbox",
+                         "--viewport-size", "1440x900",
+                         "--save-session",
+                         "--output-dir", "/tmp/qa-evidence"]
+              }
+            }
+          }
+          JSON
+          cp -r themegrill-qa/scripts themegrill-qa/blueprints themegrill-qa/knowledge product/ 2>/dev/null || true
+          cp -r themegrill-qa/.claude product/.claude
+          chmod +x product/scripts/*.sh
+
+      - name: Sweep ${{ matrix.shard.area }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            /regression-sweep ${{ inputs.product_slug }} ${{ inputs.version }}
+
+            Work inside the ./product directory.
+
+            SCOPE THIS RUN TO ONE AREA: **${{ matrix.shard.area }}**
+
+            Other areas are covered by sibling shards running in parallel. Do not
+            wander outside your area — duplicated exploration wastes budget and
+            produces duplicate findings the aggregate step then has to reconcile.
+            Read only the parts of the knowledge file relevant to your area.
+
+            Environment: WordPress ${{ matrix.shard.wp }}, PHP ${{ matrix.shard.php }}.
+            Ticket filing: DISABLED for shards. Write findings to the report; the
+            aggregate job files them.
+
+            Write your report to product/sweep-report.md. Head it with the area
+            and environment. An empty report documenting what you covered is a
+            valid result — say what you exercised and what you could not reach.
+          claude_args: >-
+            --model ${{ inputs.model }}
+            --mcp-config .qa/mcp.json
+            --allowedTools "Bash,Read,Write,Grep,Glob,mcp__playwright__*"
+            --permission-mode dontAsk
+            --max-turns ${{ inputs.max_turns }}
+            --max-budget-usd ${{ inputs.budget_per_shard_usd }}
+        env:
+          WP_VERSION: ${{ matrix.shard.wp }}
+          PHP_VERSION: ${{ matrix.shard.php }}
+          PRODUCT_SLUG: ${{ inputs.product_slug }}
+          QA_AREA: ${{ matrix.shard.area }}
+
+      - name: Name the report for its shard
+        if: always()
+        run: |
+          SAFE="${{ matrix.shard.area }}-wp${{ matrix.shard.wp }}-php${{ matrix.shard.php }}"
+          SAFE="$(echo "$SAFE" | tr -c 'a-zA-Z0-9._-' '-')"
+          mkdir -p /tmp/partials
+          if [ -f product/sweep-report.md ]; then
+            cp product/sweep-report.md "/tmp/partials/${SAFE}.md"
+          else
+            printf '# %s\n\nNo report produced — the shard failed before writing one. See its job log.\n' \
+              "$SAFE" > "/tmp/partials/${SAFE}.md"
+          fi
+          echo "SAFE_NAME=$SAFE" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: partial-${{ env.SAFE_NAME }}
+          path: /tmp/partials/${{ env.SAFE_NAME }}.md
+          retention-days: 90
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-${{ env.SAFE_NAME }}
+          path: |
+            /tmp/qa-evidence/**
+            product/**/*.png
+            product/**/*.webm
+            /tmp/playground.log
+          if-no-files-found: ignore
+          retention-days: 90
+
+  # ----------------------------------------------------------- aggregate ----
+  aggregate:
+    needs: [plan, sweep]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ThemeGrill/themegrill-qa      # <-- change to your org/repo
+          ref: ${{ inputs.qa_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: themegrill-qa
+
+      - name: Collect shard reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: partial-*
+          path: /tmp/partials
+          merge-multiple: true
+
+      - name: Stitch the combined report
+        run: |
+          mkdir -p out
+          {
+            echo "# Regression sweep — ${{ inputs.product_slug }} ${{ inputs.version }}"
+            echo ""
+            echo "Depth: ${{ inputs.depth }} · Shards: ${{ needs.plan.outputs.count }} · Run: ${{ github.run_id }}"
+            echo ""
+            echo "---"
+            echo ""
+            for f in /tmp/partials/*.md; do
+              [ -f "$f" ] || continue
+              cat "$f"; echo ""; echo "---"; echo ""
+            done
+          } > out/combined-report.md
+          wc -l out/combined-report.md
+
+      - name: Assemble MCP config
+        run: |
+          mkdir -p .qa
+          if [ "${{ inputs.file_tickets }}" = "true" ]; then
+            cat > .qa/mcp.json <<'JSON'
+          { "mcpServers": { "atlassian": {
+              "type": "stdio", "command": "npx", "args": ["-y", "@atlassian/mcp-server"],
+              "env": { "ATLASSIAN_API_TOKEN": "${ATLASSIAN_ROVO_TOKEN}" } } } }
+          JSON
+          else
+            echo '{ "mcpServers": {} }' > .qa/mcp.json
+          fi
+
+      # One reconciliation pass over every shard's findings. This is where the
+      # global caps live: dedup across shards, then at most five tickets total.
+      - name: Reconcile and file
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Read out/combined-report.md — the merged findings from
+            ${{ needs.plan.outputs.count }} parallel sweep shards of
+            ${{ inputs.product_slug }} ${{ inputs.version }}.
+
+            Produce out/final-report.md:
+
+            1. Deduplicate. Shards run in parallel and independently, so the same
+               root cause often appears in two or three area reports under
+               different symptoms. Merge those into one finding and say which
+               areas observed it — a defect seen from three directions is a
+               stronger signal, not three defects.
+            2. Rank by user impact: data loss and fatals first, cosmetic last.
+            3. Separate verified findings from the suspicious-unverified list.
+            4. Note coverage gaps, including any shard that failed to report.
+
+            Ticket filing: ${{ inputs.file_tickets && 'ENABLED' || 'DISABLED — write the report only' }}.
+
+            If enabled: search Jira for an existing issue before filing anything.
+            Maximum FIVE tickets for this entire run across all shards. File the
+            five highest-impact; list the rest in the report. Label them
+            `automated-qa` and `needs-triage`, file into triage state, and link
+            back to this workflow run.
+          claude_args: >-
+            --model ${{ inputs.model }}
+            --mcp-config .qa/mcp.json
+            --allowedTools "Read,Write,Grep,Glob,mcp__atlassian__*"
+            --permission-mode dontAsk
+            --max-turns 40
+            --max-budget-usd 1.00
+        env:
+          ATLASSIAN_ROVO_TOKEN: ${{ secrets.ATLASSIAN_ROVO_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sweep-report-${{ inputs.product_slug }}
+          path: out/
+          retention-days: 90
+
+      - name: Render into the run summary
+        if: always()
+        run: |
+          {
+            echo "## Sweep result — ${{ inputs.product_slug }} ${{ inputs.version }}"
+            echo ""
+            echo "Worst-case budget for this run: \$${{ needs.plan.outputs.est }} across ${{ needs.plan.outputs.count }} shards, plus \$1.00 to reconcile."
+            echo ""
+            if [ -f out/final-report.md ]; then
+              cat out/final-report.md
+            elif [ -f out/combined-report.md ]; then
+              echo "_Reconciliation did not complete; raw merged shard reports below._"
+              echo ""
+              head -c 60000 out/combined-report.md
+            else
+              echo "No report produced. Check the shard job logs."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

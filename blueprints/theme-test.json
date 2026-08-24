@@ -1,0 +1,59 @@
+{
+  "$schema": "https://playground.wordpress.net/blueprint-schema.json",
+  "landingPage": "/wp-admin/",
+  "preferredVersions": { "php": "8.3", "wp": "latest" },
+  "features": { "networking": true },
+  "steps": [
+    { "step": "login", "username": "admin", "password": "password" },
+
+    { "step": "activateTheme", "themeFolderName": "__SLUG__" },
+
+    {
+      "step": "wp-cli",
+      "command": "wp option update permalink_structure '/%postname%/'"
+    },
+    {
+      "step": "wp-cli",
+      "command": "wp rewrite flush --hard"
+    },
+
+    {
+      "step": "wp-cli",
+      "command": "wp term create category Technology --slug=technology"
+    },
+    {
+      "step": "wp-cli",
+      "command": "wp term create category Business --slug=business"
+    },
+    {
+      "step": "wp-cli",
+      "command": "wp term create category Travel --slug=travel"
+    },
+
+    {
+      "step": "runPHP",
+      "code": "<?php require '/wordpress/wp-load.php'; $cats = get_categories(['hide_empty'=>false]); for ($i=1; $i<=12; $i++) { $c = $cats[($i-1) % max(1,count($cats))]; $id = wp_insert_post(['post_title'=>\"Sample Article $i — a headline long enough to wrap on narrow viewports\",'post_content'=>\"<!-- wp:paragraph --><p>Lead paragraph for article $i. This body text exists so typography, line-height and measure can be inspected.</p><!-- /wp:paragraph --><!-- wp:heading --><h2>A subheading</h2><!-- /wp:heading --><!-- wp:paragraph --><p>Secondary paragraph with a <a href='#'>link</a>, <strong>bold</strong> and <em>italic</em> text.</p><!-- /wp:paragraph --><!-- wp:list --><ul><li>List item one</li><li>List item two</li></ul><!-- /wp:list --><!-- wp:quote --><blockquote class='wp-block-quote'><p>A pull quote for testing blockquote styling.</p></blockquote><!-- /wp:quote -->\",'post_status'=>'publish','post_type'=>'post']); if ($id && !is_wp_error($id) && isset($c->term_id)) { wp_set_post_categories($id, [$c->term_id]); } }"
+    },
+
+    {
+      "step": "runPHP",
+      "code": "<?php require '/wordpress/wp-load.php'; $home = wp_insert_post(['post_title'=>'Home','post_content'=>'<!-- wp:paragraph --><p>Static front page.</p><!-- /wp:paragraph -->','post_status'=>'publish','post_type'=>'page']); $blog = wp_insert_post(['post_title'=>'Blog','post_status'=>'publish','post_type'=>'page']); wp_insert_post(['post_title'=>'About','post_content'=>'<!-- wp:paragraph --><p>About page.</p><!-- /wp:paragraph -->','post_status'=>'publish','post_type'=>'page']); wp_insert_post(['post_title'=>'Contact','post_status'=>'publish','post_type'=>'page']);"
+    },
+
+    {
+      "step": "runPHP",
+      "code": "<?php require '/wordpress/wp-load.php'; $menu_id = wp_create_nav_menu('Primary Test Menu'); $pages = get_pages(); foreach ($pages as $p) { wp_update_nav_menu_item($menu_id, 0, ['menu-item-title'=>$p->post_title,'menu-item-object'=>'page','menu-item-object-id'=>$p->ID,'menu-item-type'=>'post_type','menu-item-status'=>'publish']); } $parent = wp_update_nav_menu_item($menu_id, 0, ['menu-item-title'=>'Dropdown Parent','menu-item-url'=>home_url('/'),'menu-item-status'=>'publish']); foreach (['Child One','Child Two','Child Three'] as $child) { wp_update_nav_menu_item($menu_id, 0, ['menu-item-title'=>$child,'menu-item-url'=>home_url('/'),'menu-item-parent-id'=>$parent,'menu-item-status'=>'publish']); } $locations = get_registered_nav_menus(); $assign = []; foreach (array_keys($locations) as $loc) { $assign[$loc] = $menu_id; } set_theme_mod('nav_menu_locations', $assign);"
+    },
+
+    {
+      "step": "wp-cli",
+      "command": "wp widget add search sidebar-1 --title='Search'"
+    },
+
+    { "step": "setSiteOptions", "options": {
+        "blogname": "QA Test Site",
+        "blogdescription": "Disposable site for automated QA",
+        "posts_per_page": "10"
+    }}
+  ]
+}

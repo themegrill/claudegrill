@@ -1,0 +1,88 @@
+name: Watch WordPress core releases
+
+# Lives in themegrill-qa, not in the products. Polls the WordPress.org version API and,
+# when core ships a version we have not swept against, fans a repository_dispatch
+# out to every product repo so each runs its own sweep.
+#
+# Rationale: a new WordPress release breaks themes and plugins at least as often
+# as your own releases do, and you find out from customers rather than from CI.
+# This is the cheapest possible early warning.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'        # daily, 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Dispatch even if the version has not changed'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write              # to update the stored last-seen version
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ask WordPress.org what the current version is
+        id: wp
+        run: |
+          # no-api=1 returns the plain "current" offer without upgrade payloads
+          CURRENT="$(curl -fsS 'https://api.wordpress.org/core/version-check/1.7/' \
+                     | python3 -c 'import json,sys; print(json.load(sys.stdin)["offers"][0]["current"])')"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+
+          SEEN="$(cat .wp-core-seen 2>/dev/null || echo none)"
+          echo "seen=$SEEN" >> "$GITHUB_OUTPUT"
+
+          if [ "$CURRENT" != "$SEEN" ] || [ "${{ inputs.force }}" = "true" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo "## WordPress core watch"
+            echo ""
+            echo "- Current: **$CURRENT**"
+            echo "- Last swept against: **$SEEN**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fan out to the products
+        if: steps.wp.outputs.changed == 'true'
+        env:
+          # A PAT with `repo` scope on the product repos. GITHUB_TOKEN cannot
+          # dispatch to other repositories.
+          GH_TOKEN: ${{ secrets.PRODUCT_DISPATCH_TOKEN }}
+        run: |
+          set -e
+          # Keep this list in one place; it is the only enumeration of products
+          # anywhere in the pipeline.
+          PRODUCTS="colormag zakra user-registration everest-forms masteriyo blockart magazine-blocks"
+          for p in $PRODUCTS; do
+            echo "dispatching → ThemeGrill/$p"
+            gh api "repos/ThemeGrill/$p/dispatches" \
+              -f event_type=wp-core-released \
+              -F "client_payload[wp_version]=${{ steps.wp.outputs.current }}" \
+              || echo "  ! failed for $p (missing repo or token scope) — continuing"
+          done
+
+          {
+            echo ""
+            echo "Dispatched a full sweep to: \`$PRODUCTS\`"
+            echo ""
+            echo "> Each product decides its own depth; see its sweep.yml."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record what we swept against
+        if: steps.wp.outputs.changed == 'true'
+        run: |
+          echo "${{ steps.wp.outputs.current }}" > .wp-core-seen
+          git config user.name  "themegrill-qa-bot"
+          git config user.email "themegrill-qa-bot@users.noreply.github.com"
+          git add .wp-core-seen
+          git commit -m "chore: WordPress ${{ steps.wp.outputs.current }} swept" || exit 0
+          git push

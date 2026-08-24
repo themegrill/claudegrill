@@ -1,0 +1,211 @@
+name: PR QA (reusable)
+
+# Reusable workflow. Each product repo calls this — see examples/caller-pr-qa.yml.
+# One place to fix the pipeline, seven products consuming it.
+
+on:
+  workflow_call:
+    inputs:
+      product_slug:
+        description: "Product slug, must match a file in knowledge/<slug>.md"
+        required: true
+        type: string
+      product_type:
+        description: "theme or plugin"
+        required: true
+        type: string
+      wp_version:
+        required: false
+        type: string
+        default: "latest"
+      php_version:
+        required: false
+        type: string
+        default: "8.3"
+      qa_ref:
+        description: "Ref of the shared themegrill-qa repo to use"
+        required: false
+        type: string
+        default: "main"
+      model:
+        required: false
+        type: string
+        default: "claude-sonnet-5"
+      budget_usd:
+        description: "Hard spend cap for this review. The run stops when reached."
+        required: false
+        type: string
+        default: "1.50"
+      max_turns:
+        description: "Turn ceiling, as a runaway-loop guard."
+        required: false
+        type: number
+        default: 80
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+
+jobs:
+  qa:
+    # Draft PRs are work in progress; reviewing them wastes tokens and annoys people.
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      pull-requests: write   # needed to post and edit the verdict comment
+      issues: read
+      id-token: write
+
+    # A push to a PR under review supersedes the run in flight. Without this you
+    # pay for every intermediate commit.
+    concurrency:
+      group: pr-qa-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Check out the product
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the review needs the base branch to compare against
+          path: product
+
+      - name: Check out shared QA tooling
+        uses: actions/checkout@v4
+        with:
+          repository: ThemeGrill/themegrill-qa      # <-- change to your org/repo
+          ref: ${{ inputs.qa_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: themegrill-qa
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Only what the browser needs. Full `playwright install --with-deps` pulls
+      # three engines and adds minutes to every run.
+      - name: Install Chromium
+        run: npx --yes playwright@latest install --with-deps chromium
+
+      - name: Decide whether this PR is worth a QA run
+        id: triage
+        working-directory: product
+        run: |
+          BASE="origin/${{ github.event.pull_request.base.ref }}"
+          git fetch origin "${{ github.event.pull_request.base.ref }}" --depth=1 -q || true
+          FILES="$(git diff --name-only "$BASE"...HEAD || git diff --name-only HEAD~1)"
+          echo "$FILES"
+          # Docs/CI/translation-only changes do not need a browser.
+          if [ -z "$(printf '%s\n' "$FILES" | grep -vE '(\.md$|\.txt$|\.po$|\.pot$|\.mo$|^\.github/|^\.gitignore$|^languages/|LICENSE)' || true)" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No functional changes — skipping QA run."
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Assemble MCP config
+        if: steps.triage.outputs.run == 'true'
+        run: |
+          mkdir -p .qa
+          cat > .qa/mcp.json <<'JSON'
+          {
+            "mcpServers": {
+              "playwright": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated",
+                         "--browser", "chromium", "--no-sandbox",
+                         "--viewport-size", "1440x900",
+                         "--save-session",
+                         "--output-dir", "/tmp/qa-evidence"]
+              }
+            }
+          }
+          JSON
+          cp -r themegrill-qa/scripts themegrill-qa/blueprints themegrill-qa/knowledge product/ 2>/dev/null || true
+          cp -r themegrill-qa/.claude product/.claude
+          chmod +x product/scripts/*.sh
+
+      - name: QA review
+        if: steps.triage.outputs.run == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            /pr-qa-review
+
+            Review pull request #${{ github.event.pull_request.number }} in
+            ${{ github.repository }}.
+
+            Product: ${{ inputs.product_slug }} (${{ inputs.product_type }})
+            Base branch: ${{ github.event.pull_request.base.ref }}
+            Head SHA: ${{ github.event.pull_request.head.sha }}
+            Target environment: WordPress ${{ inputs.wp_version }}, PHP ${{ inputs.php_version }}
+
+            Work inside the ./product directory. Follow the pr-qa-review skill
+            exactly. Post exactly one comment on the PR carrying the
+            <!-- themegrill-qa-bot --> marker, editing your previous marked comment if one
+            already exists rather than adding another.
+
+            You have no merge authority. Do not commit, push, or submit a formal
+            GitHub review. Comment only.
+          claude_args: >-
+            --model ${{ inputs.model }}
+            --mcp-config .qa/mcp.json
+            --allowedTools "Bash,Read,Grep,Glob,mcp__playwright__*,mcp__github__*"
+            --permission-mode dontAsk
+            --max-turns ${{ inputs.max_turns }}
+            --max-budget-usd ${{ inputs.budget_usd }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WP_VERSION: ${{ inputs.wp_version }}
+          PHP_VERSION: ${{ inputs.php_version }}
+          PRODUCT_SLUG: ${{ inputs.product_slug }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+      # The PR comment is the summary; this is the audit trail. Everything the
+      # browser did lands here — screenshots, the recorded MCP session, the
+      # WordPress debug log.
+      - name: Upload evidence
+        if: always() && steps.triage.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-evidence-pr-${{ github.event.pull_request.number }}
+          path: |
+            /tmp/qa-evidence/**
+            product/**/*.png
+            product/**/*.webm
+            product/**/trace*.zip
+            /tmp/playground.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # Mirror the verdict onto the Actions run page, so the run itself is
+      # readable without going back to the PR conversation.
+      - name: Run summary
+        if: always() && steps.triage.outputs.run == 'true'
+        run: |
+          {
+            echo "## QA run — PR #${{ github.event.pull_request.number }}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Product | \`${{ inputs.product_slug }}\` (${{ inputs.product_type }}) |"
+            echo "| Environment | WP ${{ inputs.wp_version }} · PHP ${{ inputs.php_version }} |"
+            echo "| Commit | \`${{ github.event.pull_request.head.sha }}\` |"
+            echo ""
+            echo "The verdict is posted as a comment on the PR."
+            echo "Screenshots, the recorded browser session and the WordPress debug log"
+            echo "are in the **qa-evidence-pr-${{ github.event.pull_request.number }}** artifact below."
+            echo ""
+            if [ -d /tmp/qa-evidence ]; then
+              echo "<details><summary>Evidence captured</summary>"
+              echo ""
+              echo '```'
+              find /tmp/qa-evidence -type f -printf '%P  (%sB)\n' 2>/dev/null | head -60 || true
+              echo '```'
+              echo ""
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

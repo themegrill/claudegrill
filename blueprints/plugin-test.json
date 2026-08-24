@@ -1,0 +1,32 @@
+{
+  "$schema": "https://playground.wordpress.net/blueprint-schema.json",
+  "landingPage": "/wp-admin/",
+  "preferredVersions": { "php": "8.3", "wp": "latest" },
+  "features": { "networking": true },
+  "steps": [
+    { "step": "login", "username": "admin", "password": "password" },
+
+    { "step": "activatePlugin", "pluginPath": "__SLUG__/__ENTRY__" },
+
+    {
+      "step": "wp-cli",
+      "command": "wp option update permalink_structure '/%postname%/'"
+    },
+    { "step": "wp-cli", "command": "wp rewrite flush --hard" },
+
+    {
+      "step": "runPHP",
+      "code": "<?php require '/wordpress/wp-load.php'; foreach ([['qa_subscriber','subscriber'],['qa_editor','editor'],['qa_author','author'],['qa_customer','customer'],['qa_student','subscriber'],['qa_instructor','subscriber']] as $u) { list($login,$role) = $u; if (!username_exists($login)) { $id = wp_create_user($login, 'Password123!', $login.'@example.test'); if (!is_wp_error($id)) { $user = new WP_User($id); $user->set_role(get_role($role) ? $role : 'subscriber'); } } }"
+    },
+
+    {
+      "step": "runPHP",
+      "code": "<?php require '/wordpress/wp-load.php'; wp_insert_post(['post_title'=>'Plugin Test Page','post_content'=>'<!-- wp:paragraph --><p>Drop shortcodes or blocks under test here.</p><!-- /wp:paragraph -->','post_status'=>'publish','post_type'=>'page']); wp_insert_post(['post_title'=>'Frontend Sample Post','post_content'=>'<!-- wp:paragraph --><p>Body copy.</p><!-- /wp:paragraph -->','post_status'=>'publish','post_type'=>'post']);"
+    },
+
+    { "step": "setSiteOptions", "options": {
+        "blogname": "QA Test Site",
+        "admin_email": "qa@example.test"
+    }}
+  ]
+}

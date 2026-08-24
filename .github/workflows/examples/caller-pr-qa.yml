@@ -1,0 +1,23 @@
+# Drop this into each product repo as .github/workflows/qa.yml
+# This is the entire per-product footprint — everything else lives in themegrill-qa.
+
+name: QA
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - '**.md'
+      - 'languages/**'
+      - '.github/**'
+
+jobs:
+  qa:
+    uses: ThemeGrill/themegrill-qa/.github/workflows/pr-qa.yml@main
+    with:
+      product_slug: colormag
+      product_type: theme
+      wp_version: latest
+      php_version: "8.3"
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
