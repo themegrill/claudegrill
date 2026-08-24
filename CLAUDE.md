@@ -63,6 +63,18 @@ These are load-bearing. Changing one is a design decision, not a refactor.
 7. **Never edit product source to make a check pass.** These skills verify; they
    do not fix.
 
+8. **Specs select on markup we own, never on theme or third-party class names.**
+   Borrowed from `wpmake22/post-purchase-hub`, which states the reason exactly: a
+   spec reaching for a theme's class names passes on the theme it was written
+   against and fails on every other one, which is the opposite of the point.
+   - **Plugins:** own data attributes, `data-<prefix>-*` (post-purchase-hub uses
+     `data-pph-*`). Add them to plugin-rendered markup as needed.
+   - **Themes:** semantic selectors first — `getByRole`, `getByLabel`, headings,
+     landmarks — because the markup *is* the product and much of what a theme
+     renders is WooCommerce or block output we cannot annotate. Reserve owned
+     data attributes for theme-specific chrome: header layouts, footer columns,
+     customizer-driven regions.
+
 ## Conventions
 
 - Bash: `set -euo pipefail`, absolute paths, `python3` for JSON. No jq dependency.
@@ -107,18 +119,27 @@ These are load-bearing. Changing one is a design decision, not a refactor.
    verdicts. This is the cheapest test of whether the approach works.
 3. **Resolve the knowledge-file TODOs** for ColorMag with a maintainer.
 4. **First live PR run** on ColorMag only. Check that trivial PRs are skipped.
-5. **Spec generation — the one that changes the economics.** Add `tests/` per
-   product and have verified findings arrive as a PR containing a Playwright spec
-   that reproduces the bug. Wire Playwright's Generator agent
-   (`npx playwright init-agents --loop=claude`); do not write an orchestrator.
-   Until this exists, cost per run never falls and nothing accumulates.
-6. **Invert the default** once the suite is trusted: suite on every PR, agent on
+5. **Port the existing spec harness, do not invent one.**
+   `wpmake22/post-purchase-hub` already has a working Playwright suite with
+   settled conventions: wp-env, two projects (desktop 1440×900, mobile 375×812),
+   per-theme visual snapshots, owned-selector rule, and a full unit /
+   integration / e2e pyramid. Extract `tests/e2e/utils/` into `packages/core`
+   and adopt its conventions rather than designing new ones. This is
+   deterministic, costs no tokens, and is the fastest route to an accumulating
+   suite. Transpose the matrix for themes — one theme × N plugins, not one
+   plugin × N themes.
+6. **Spec generation on top of that harness.** Verified findings arrive as a PR
+   containing a spec written in the house style. Wire Playwright's Generator
+   agent (`npx playwright init-agents --loop=claude`); do not write an
+   orchestrator. Until this exists, cost per run never falls.
+7. **Invert the default** once the suite is trusted: suite on every PR, agent on
    HIGH-risk diffs only. PR reviews are ~64% of spend, so this is where the
    savings are.
-7. **`packages/core` page objects** wrapping `@wordpress/e2e-test-utils-playwright`
-   — do this at three products, not seven.
-8. **Visual baselines** keyed by product/version/template/viewport. The dominant
-   bug class for the four visual products, and nothing else catches it.
+8. **Snapshot diff triage** — the agent's best-fitting job in the whole system.
+   Six themes × two viewports × N specs is a large snapshot set, and
+   `--update-snapshots` makes rubber-stamping a real regression as easy as
+   accepting an intended restyle. Classifying those diffs has no good
+   non-AI answer.
 
 Deliberately **not** on the list: a dashboard (GitHub and Jira already are one),
 a vector database, a custom agent framework, merge authority, or a healer allowed
