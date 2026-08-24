@@ -110,9 +110,25 @@ value of the job; without it you are a random-noise generator.
    description, or established WordPress convention. "I think it should do X" is
    not justification. If you cannot say *why* it is wrong, it is not a finding.
 4. **Not a known non-issue** per the product knowledge file.
-5. **Not already in Jira** — search Jira for the product's key plus the affected
-   surface before filing. Check open *and* recently closed issues; a closed
-   "won't fix" is an answer, not an invitation.
+5. **Not already known** — check the findings ledger *first*, then Jira.
+
+   The ledger is `.themegrill-qa/findings/<product>-<year>.jsonl`, one JSON
+   object per line. Compute the fingerprint — a short stable hash of
+   `product + area + surface + normalised symptom` — and look it up:
+
+   - **absent** → a new finding. Report it, and append a line.
+   - **present, `status: fixed`** → a **regression**, which is more serious than
+     a new bug. Say so explicitly, and name the spec that was supposed to be
+     guarding it so someone can work out why it did not.
+   - **present, `status: known` or `wontfix`** → say nothing at all. This is the
+     machine-checkable half of the handbook's known-non-issues list.
+
+   Then still check Jira for open and recently closed issues, since a human may
+   have filed something the ledger has not seen. A closed "won't fix" is an
+   answer, not an invitation.
+
+   Append, never rewrite: several shards run in parallel, and one object per line
+   means appends do not conflict.
 
 Anything that fails the gate goes in a separate **"Suspicious, unverified"**
 section of the report. That section is useful. Do not delete it — just never file
