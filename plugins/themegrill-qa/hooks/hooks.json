@@ -1,0 +1,17 @@
+{
+  "comment": "Schema checked against the Claude Code plugin reference for CLI 2.1.211: a plugin declares hooks either inline in plugin.json or in this file, referenced from plugin.json's `hooks` field. ${CLAUDE_PLUGIN_ROOT} is exported to hook processes and is quoted here because the plugin cache path can contain spaces. The hook never blocks — see spec-guard.mjs.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/spec-guard.mjs\"",
+            "timeout": 10,
+            "statusMessage": "checking for unguarded source changes"
+          }
+        ]
+      }
+    ]
+  }
+}
