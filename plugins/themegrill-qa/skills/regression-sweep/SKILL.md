@@ -8,6 +8,24 @@ pass-arguments: true
 
 # Scheduled regression sweep
 
+## Where the scripts live — resolve this first
+
+Commands below refer to `$QA`, this plugin's own directory. Resolve it once
+before anything else:
+
+```bash
+QA="${CLAUDE_PLUGIN_ROOT:-${THEMEGRILL_QA_HOME:-..}/plugins/themegrill-qa}"
+node "$QA/scripts/detect-product.mjs" >/dev/null && echo "QA=$QA"
+```
+
+`CLAUDE_PLUGIN_ROOT` is set automatically when this runs as an installed plugin,
+which is the normal case; the fallback covers a plain `git clone` install. If the
+shell is not bash — PowerShell on a Windows machine, say — use that shell's
+equivalent rather than assuming this line works.
+
+If neither variable resolves to a directory containing `scripts/`, stop and say
+so. Guessing at a path produces a confusing failure several steps later.
+
 You are doing an exploratory QA pass over a **released** version of a WordPress
 product, looking for defects nobody has written a test for. This runs on a
 schedule or manually after a release, unattended.
@@ -29,7 +47,7 @@ permission; do not assume it.
 ## Step 1 — Set up
 
 ```bash
-scripts/detect-product.mjs
+node "$QA/scripts/detect-product.mjs"
 ```
 
 Read the product knowledge file. It defines the critical flows, the admin
@@ -40,7 +58,7 @@ intentional behaviour is the most common false positive.
 Boot the site on the released version, not the working tree:
 
 ```bash
-scripts/boot-wp.mjs --engine playground --wp "${WP_VERSION:-latest}" --php "${PHP_VERSION:-8.3}"
+node "$QA/scripts/boot-wp.mjs" --engine playground --wp "${WP_VERSION:-latest}" --php "${PHP_VERSION:-8.3}"
 ```
 
 Sweeps are the right place to vary the matrix. If the workflow passed a

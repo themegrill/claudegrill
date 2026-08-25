@@ -8,6 +8,24 @@ pass-arguments: true
 
 # Full product test, on demand
 
+## Where the scripts live — resolve this first
+
+Commands below refer to `$QA`, this plugin's own directory. Resolve it once
+before anything else:
+
+```bash
+QA="${CLAUDE_PLUGIN_ROOT:-${THEMEGRILL_QA_HOME:-..}/plugins/themegrill-qa}"
+node "$QA/scripts/detect-product.mjs" >/dev/null && echo "QA=$QA"
+```
+
+`CLAUDE_PLUGIN_ROOT` is set automatically when this runs as an installed plugin,
+which is the normal case; the fallback covers a plain `git clone` install. If the
+shell is not bash — PowerShell on a Windows machine, say — use that shell's
+equivalent rather than assuming this line works.
+
+If neither variable resolves to a directory containing `scripts/`, stop and say
+so. Guessing at a path produces a confusing failure several steps later.
+
 Whole-product coverage, triggered by a human when a product actually ships —
 rather than on a cron that spends money on weeks when nothing changed.
 
@@ -22,7 +40,7 @@ local session is slower, costs the same or more, and exhausts context. Only use
 ## Step 1 — Identify and confirm scope
 
 ```bash
-scripts/detect-product.mjs
+node "$QA/scripts/detect-product.mjs"
 ```
 
 Read the product's knowledge file and pull out its **critical flows** — that list
@@ -72,7 +90,7 @@ not a pass, and must be called out as such.
 Boot once and work the areas in sequence, but keep discipline:
 
 ```bash
-scripts/boot-wp.mjs --engine playground
+node "$QA/scripts/boot-wp.mjs" --engine playground
 ```
 
 - Announce the area list and work through it in order, one at a time.

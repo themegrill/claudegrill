@@ -11,13 +11,13 @@
   "comment": "No dependencies, by design. ThemeGrill develops on Windows and macOS, so everything here runs on plain Node with nothing to install.",
   "scripts": {
     "install-qa": "node install.mjs",
-    "detect": "node scripts/detect-product.mjs",
-    "boot": "node scripts/boot-wp.mjs",
-    "boot:wp-env": "node scripts/boot-wp.mjs --engine wp-env",
-    "stop": "node scripts/boot-wp.mjs --stop",
-    "ingest:docs": "node scripts/ingest-docs.mjs",
-    "ingest:suite": "node scripts/ingest-testsuite.mjs",
-    "cost": "node scripts/estimate-cost.mjs",
-    "check": "node --check scripts/detect-product.mjs && node --check scripts/boot-wp.mjs && node --check scripts/ingest-docs.mjs && node --check scripts/ingest-testsuite.mjs && node --check scripts/estimate-cost.mjs && node --check install.mjs"
+    "detect": "node plugins/themegrill-qa/scripts/detect-product.mjs",
+    "boot": "node plugins/themegrill-qa/scripts/boot-wp.mjs",
+    "boot:wp-env": "node plugins/themegrill-qa/scripts/boot-wp.mjs --engine wp-env",
+    "stop": "node plugins/themegrill-qa/scripts/boot-wp.mjs --stop",
+    "ingest:docs": "node plugins/themegrill-qa/scripts/ingest-docs.mjs",
+    "ingest:suite": "node plugins/themegrill-qa/scripts/ingest-testsuite.mjs",
+    "cost": "node plugins/themegrill-qa/scripts/estimate-cost.mjs",
+    "check": "node --check plugins/themegrill-qa/scripts/detect-product.mjs && node --check plugins/themegrill-qa/scripts/boot-wp.mjs && node --check plugins/themegrill-qa/scripts/ingest-docs.mjs && node --check plugins/themegrill-qa/scripts/ingest-testsuite.mjs && node --check plugins/themegrill-qa/scripts/estimate-cost.mjs && node --check install.mjs"
   }
 }

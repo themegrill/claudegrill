@@ -2,3 +2,8 @@
 __pycache__/
 *.pyc
 sweep-report.md
+
+# never commit generated distribution artifacts
+*.bundle
+*.zip
+*.tar.gz

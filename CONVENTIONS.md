@@ -190,6 +190,118 @@ for.
 
 ---
 
+## Two WordPress Customizer traps
+
+Both of these were found the hard way during the first live ColorMag session, and
+both will bite any spec that drives the Customizer.
+
+### Clear stale changesets before every Customizer spec
+
+Every Customizer session — including every automated one — leaves an `auto-draft`
+`customize_changeset` post behind. They accumulate, and WordPress's own "restore
+the more recent autosave" prompt can then silently load one **instead of the
+published state**. A spec that opens the Customizer and reads a control may be
+reading an abandoned draft from an earlier run.
+
+So the fixture that opens the Customizer trashes stale changesets first:
+
+```js
+await evalPhp(requestUtils, `
+  $ids = get_posts( array(
+    'post_type'   => 'customize_changeset',
+    'post_status' => 'auto-draft',
+    'numberposts' => -1,
+    'fields'      => 'ids',
+  ) );
+  foreach ( $ids as $id ) { wp_trash_post( $id ); }
+  echo count( $ids );
+`);
+```
+
+This is WordPress core behaviour, not a product bug. It presents as a flaky test
+or as "the setting reverted", which is why it is worth knowing about before you
+spend an afternoon on it.
+
+### A spec that publishes must revert in teardown, not at the end of the test
+
+Found the hard way on ColorMag: a Customizer spec published a test value and then
+failed *before* reaching its own revert line. It left the live site mutated, and
+the damage surfaced somewhere else entirely — an unrelated layout spec measured a
+gap three times its expected size. The failure looked like a layout bug and was
+not one.
+
+Reverting on the happy path only is not enough, because the case that needs the
+revert most is the failing one.
+
+```js
+// Snapshot once, globally.
+export default async function globalSetup() {
+  const mods = await getOption(requestUtils, `theme_mods_${SLUG}`);
+  fs.writeFileSync(".auth/theme-mods-baseline.json", JSON.stringify(mods));
+}
+
+// Restore in the fixture's teardown, which runs whether the test passed or not.
+export const test = base.extend({
+  customizer: async ({ requestUtils }, use) => {
+    await use(makeCustomizer(requestUtils));
+    const baseline = JSON.parse(fs.readFileSync(".auth/theme-mods-baseline.json", "utf8"));
+    await setOption(requestUtils, `theme_mods_${SLUG}`, baseline);
+  },
+});
+```
+
+Any spec that writes site-wide state — theme mods, options, active theme, active
+plugins — restores it in a fixture teardown. Never in the test body.
+
+### Do not wait on a button's disabled state to know a publish finished
+
+Also found on ColorMag: waiting for `#save` to re-enable after publishing took
+8.5 seconds once and had still not happened after 45 seconds on another run —
+while the failure screenshot showed the button visibly enabled. Three specs were
+shelved because of it.
+
+The button's state is a rendering detail of whatever framework draws the
+Customizer. Wait on the save itself:
+
+```js
+async function publish(page) {
+  const saved = page.waitForResponse(
+    (r) => r.url().includes("admin-ajax.php") && r.status() === 200 &&
+           (r.request().postData() ?? "").includes("customize_save"),
+  );
+  await page.click("#save");
+  await saved;
+
+  // Then confirm from the Customizer's own state, not from the DOM.
+  await page.waitForFunction(
+    () => window.wp?.customize?.state?.("saved")?.get() === true,
+    null,
+    { timeout: 15000 },
+  );
+}
+```
+
+The general rule: when an assertion about "has it finished" can be made against
+the network or the application's own state, prefer that over anything visual.
+Visual waits on a framework-rendered admin screen are the main source of
+slow-flaky specs on these products.
+
+`wp.customize('some_id').set(value)` updates the underlying setting reliably —
+publish and the live frontend both reflect it. But on a Customizer built as a
+React app it does **not** necessarily trigger the framework's own re-render, so
+the *live preview* may not update even though nothing is broken. A real user
+clicking the control does update it.
+
+Consequences for specs:
+
+- The **publish** and **reopen** legs of the three-way check are safe to automate
+  via `.set()`.
+- The **live-preview** leg is not, on a React-driven Customizer. Drive the actual
+  control, or leave that leg to a human and say so in the spec.
+- **Never report "live preview broken" from a `.set()`-driven test.** Confirm by
+  hand first. This is the highest-probability false positive available on these
+  products, and reporting it once costs more trust than the test was worth.
+
 ## Snapshots
 
 Visual checks use Playwright's built-in snapshots, per project, per theme:

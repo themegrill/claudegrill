@@ -196,8 +196,9 @@ jobs:
             }
           }
           JSON
-          cp -r themegrill-qa/scripts themegrill-qa/blueprints themegrill-qa/knowledge product/ 2>/dev/null || true
-          cp -r themegrill-qa/.claude product/.claude
+          cp -r themegrill-qa/plugins/themegrill-qa/scripts themegrill-qa/plugins/themegrill-qa/blueprints product/ 2>/dev/null || true
+          cp -r themegrill-qa/knowledge product/ 2>/dev/null || true
+          mkdir -p product/.claude && cp -r themegrill-qa/plugins/themegrill-qa/skills product/.claude/skills
           # nothing to chmod: the scripts are Node
 
       - name: Sweep ${{ matrix.shard.area }}

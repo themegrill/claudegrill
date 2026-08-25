@@ -29,9 +29,33 @@ import { fileURLToPath } from "node:url";
 
 const isWindows = process.platform === "win32";
 const here = path.dirname(fileURLToPath(import.meta.url));
-const qaHome = process.env.THEMEGRILL_QA_HOME
-  ? path.resolve(process.env.THEMEGRILL_QA_HOME)
-  : path.resolve(here, "..");
+
+/**
+ * The plugin root — the directory holding `scripts/` and `blueprints/`.
+ *
+ * Resolved from this file's own location first, which is correct whether we are
+ * running from an installed plugin (the Claude Code plugin cache), a git clone,
+ * or a CI checkout. `THEMEGRILL_QA_HOME` is honoured only as a fallback, and
+ * tolerates being pointed at either the plugin directory or the repository root
+ * above it, because both are things people reasonably set it to.
+ */
+function resolveQaHome() {
+  const selfRelative = path.resolve(here, "..");
+  if (fs.existsSync(path.join(selfRelative, "blueprints"))) return selfRelative;
+
+  const env = process.env.THEMEGRILL_QA_HOME;
+  if (env) {
+    for (const candidate of [
+      path.resolve(env),
+      path.resolve(env, "plugins", "themegrill-qa"),
+    ]) {
+      if (fs.existsSync(path.join(candidate, "blueprints"))) return candidate;
+    }
+  }
+  return selfRelative; // let the blueprint check below report the miss
+}
+
+const qaHome = resolveQaHome();
 
 const stateFile = path.join(os.tmpdir(), "themegrill-qa-playground.json");
 const logFile = path.join(os.tmpdir(), "themegrill-qa-playground.log");
@@ -71,18 +95,6 @@ function npxCommand() {
   return isWindows ? "npx.cmd" : "npx";
 }
 
-/**
- * Windows `spawn`/`execFileSync` with `shell: true` (required for a `.cmd`
- * file) builds the child's command line by joining argv with plain spaces —
- * it does not quote anything. Any argument containing a space (a "Local
- * Sites" WordPress install, "OneDrive", "My Documents") silently splits into
- * two arguments. Quoting is therefore the caller's job on this platform;
- * elsewhere argv is passed straight through and quoting would corrupt it.
- */
-function winQuote(arg) {
-  return isWindows && /\s/.test(arg) ? `"${arg}"` : arg;
-}
-
 /** Kill a process and everything it started. */
 function killTree(pid) {
   try {
@@ -112,28 +124,12 @@ function killTree(pid) {
  * any status here hands the agent a broken site and produces a confusing failure
  * three steps later, so require a non-error status *and* markup that looks like
  * WordPress before declaring victory.
- *
- * A cold boot fetches WordPress core and PHP-WASM over the network, then runs
- * the full blueprint (category, post, page, menu and widget seeding) before
- * the CLI prints "Ready!" — on a slow connection or under heavy antivirus
- * scanning of the SQLite/WASM files this has been observed to still be
- * answering 502 several minutes in, so the ceiling here is generous. The
- * heartbeat exists so a long wait is visibly still trying rather than
- * indistinguishable from hung.
  */
-async function waitForServer(url, childAlive, timeoutMs = 600000) {
+async function waitForServer(url, childAlive, timeoutMs = 180000) {
   const started = Date.now();
   let lastStatus = null;
-  let lastHeartbeat = started;
 
   while (Date.now() - started < timeoutMs) {
-    const elapsed = Date.now() - started;
-    if (elapsed - (lastHeartbeat - started) >= 30000) {
-      lastHeartbeat = Date.now();
-      console.error(
-        `... still waiting (${Math.round(elapsed / 1000)}s elapsed, last status ${lastStatus ?? "none yet"})`,
-      );
-    }
     try {
       const res = await fetch(url, { redirect: "follow" });
       lastStatus = res.status;
@@ -256,7 +252,7 @@ if (opt.engine === "playground") {
   }
 
   const out = fs.openSync(logFile, "w");
-  const child = spawn(npxCommand(), args.map(winQuote), {
+  const child = spawn(npxCommand(), args, {
     cwd: info.root,
     stdio: ["ignore", out, out],
     detached: !isWindows, // own process group, so we can kill the tree
@@ -342,15 +338,11 @@ if (opt.engine === "wp-env") {
   }
 
   const run = (args) =>
-    execFileSync(
-      npxCommand(),
-      ["--yes", "@wordpress/env@latest", ...args].map(winQuote),
-      {
-        cwd: info.root,
-        stdio: "inherit",
-        shell: isWindows,
-      },
-    );
+    execFileSync(npxCommand(), ["--yes", "@wordpress/env@latest", ...args], {
+      cwd: info.root,
+      stdio: "inherit",
+      shell: isWindows,
+    });
 
   run(["start"]);
   try {

@@ -25,9 +25,35 @@ Rules for maintaining it:
 
 <Plain description. What a customer buys it for. What the main screen looks like.>
 
+## How the options are implemented
+
+<!--
+Added because the first live session on ColorMag found something no earlier
+version of this template asked for, and it turned out to be the single most
+important fact about testing that theme: its header and footer are built by a
+proprietary React framework (Customind), and a single theme mod switches the
+entire settings surface between two completely different code paths.
+
+A suite written without knowing that would have been driving the wrong UI.
+-->
+
+- **Settings framework:** <raw `$wp_customize->add_*`, a custom framework, a
+  React app, a settings page outside the Customizer — name it, with a path>
+- **Are there two code paths?** <e.g. a builder-vs-legacy toggle. If yes, name
+  the option that switches them, what new installs get, and whether existing
+  sites are migrated>
+- **Anything Pro-gated in the UI** that a free-build test will see as absent or
+  disabled
+
+Answer this before writing a single spec. It decides what the specs even drive.
+
 ## Critical flows
 
 Ordered by what would hurt most if it broke. The agent tests these first.
+
+**Do not order this list from what products of this kind usually do.** Propose an
+order from evidence — the most-patched files in git history, the support queue —
+and mark it unconfirmed until a maintainer has read it.
 
 1. **<Flow name>** — <entry point> → <steps> → <observable success condition>
 2. ...

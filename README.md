@@ -4,6 +4,7 @@
 > [CONVENTIONS.md](CONVENTIONS.md) governs every spec written against this.
 > [STORAGE.md](STORAGE.md) says where every artifact is kept.
 > [SETUP-COLORMAG.md](SETUP-COLORMAG.md) is the concrete first-product walkthrough.
+> [INSTALL.md](INSTALL.md) says who needs a local install (fewer people than you think).
 > [CLAUDE.md](CLAUDE.md) orients Claude Code — invariants, build state, next tasks.
 > [COSTS.md](COSTS.md) is the spend model.
 
@@ -26,20 +27,16 @@ workflow and a knowledge file; everything else lives here.
 ## Layout
 
 ```
-themegrill-qa/
-├── .claude/skills/
-│   ├── verify-fix/SKILL.md        # entry point 1
-│   ├── pr-qa-review/SKILL.md      # entry point 2
-│   └── regression-sweep/SKILL.md  # entry point 3
-├── scripts/
-│   ├── detect-product.mjs          # works out what product it is looking at
-│   └── boot-wp.mjs                 # Playground or wp-env, product mounted live
-├── blueprints/                    # seeded WordPress for theme / plugin testing
-├── knowledge/                     # per-product context — the important part
-└── .github/workflows/
-    ├── pr-qa.yml                  # reusable
-    ├── regression-sweep.yml       # reusable
-    └── examples/                  # copy these into each product repo
+themegrill-qa/                     ← this repo is also the plugin marketplace
+├── .claude-plugin/marketplace.json
+├── plugins/themegrill-qa/         ← the installable plugin
+│   ├── skills/                    the five commands
+│   ├── scripts/                   Node helpers, zero dependencies
+│   └── blueprints/                seeded WordPress for theme / plugin testing
+├── packages/core/                 shared spec helpers
+├── knowledge/                     starter knowledge files and the template
+├── examples/                      a spec in the house style
+└── .github/workflows/             reusable workflows + per-product callers
 ```
 
 ---
@@ -68,85 +65,16 @@ day-one accuracy forever.
 
 ## Setup
 
-### 1. Create this repo
+Three documents, depending on what you need:
 
-Push these files to `ThemeGrill/themegrill-qa` (or rename — then update the
-`repository:` lines in both reusable workflows and in the example callers).
+- **[INSTALL.md](INSTALL.md)** — who needs a local install, and the three routes.
+  Short answer: most developers need nothing; CI covers them.
+- **[SETUP.md](SETUP.md)** — the ordered onboarding runbook for the platform.
+- **[SETUP-COLORMAG.md](SETUP-COLORMAG.md)** — the concrete first-product
+  walkthrough, with ColorMag's real values filled in.
 
-```bash
-node install.mjs
-```
-
-### 2. Secrets
-
-At the **organization** level, so all seven repos inherit them:
-
-| Secret | Needed for | How to get it |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | Everything | [Claude Console](https://platform.claude.com) |
-| `ATLASSIAN_ROVO_TOKEN` | Ticket filing only | Atlassian API token with Rovo MCP scope — needs an org admin to enable API-token auth for the Rovo MCP server |
-
-The Atlassian MCP defaults to OAuth, which needs an interactive browser and
-therefore cannot work in CI. The API-token path is the one to use; it is a
-separate feature your Atlassian admin may need to turn on.
-
-### 3. Per product repo
-
-Copy `.github/workflows/examples/caller-pr-qa.yml` to
-`.github/workflows/qa.yml`, change `product_slug` and `product_type`, and do the
-same for the sweep. Then write `knowledge/<slug>.md` from `_TEMPLATE.md`.
-
-### 4. Locally, for `/verify-fix`
-
-```bash
-export ATLASSIAN_API_TOKEN=...        # optional, for reading Jira tickets
-claude
-> /verify-fix
-```
-
-No arguments needed. It reads the product from `style.css` or the plugin header,
-the change from `git diff`, and the ticket from the branch name — so a branch
-called `fix/CM-1234-mobile-menu-overlap` gives it everything it needs.
-
----
-
-## Rollout order
-
-Do these in order. Each one is useful alone, and each de-risks the next.
-
-1. **`/verify-fix` on ColorMag, locally.** Zero CI, zero cost risk. Run it on a
-   fix you have already verified by hand and see whether it agrees with you.
-   This is the cheapest possible test of whether the whole idea works.
-2. **Fill in `knowledge/colormag.md`.** Every TODO you resolve makes every later
-   step better. Budget an hour with whoever knows the theme best.
-3. **PR runner on ColorMag only,** with the model set to Sonnet. Watch a dozen
-   PRs. Count how many comments were useful versus noise.
-4. **Sweep on ColorMag, report-only.** Read three reports. If the findings are
-   real, turn on `--file-tickets` manually for one run and see what lands.
-5. **Zakra, then the plugins.** URM, Everest Forms and Masteriyo need richer
-   blueprints (users, roles, seeded forms/courses) — extend
-   `blueprints/plugin-test.json` per product rather than sharing one.
-
-Do not start at step 3.
-
----
-
-## Cost control
-
-This is the thing that quietly kills pipelines like this, so it is built in:
-
-- **Path filters and a triage step** — docs, translations and CI-only changes
-  skip the browser entirely.
-- **Draft PRs are skipped.**
-- **`concurrency: cancel-in-progress`** — pushing three commits to a PR pays for
-  one review, not three.
-- **Sonnet by default.** Move a specific workflow to Opus only if you can point
-  at reviews Sonnet got wrong.
-- **Chromium only**, not all three browser engines.
-- **Sweeps are matrixed but capped** at two WP/PHP combinations; add more
-  deliberately.
-
-Watch the first week's spend before widening to all seven products.
+Costs are modelled in **[COSTS.md](COSTS.md)**; run `npm run cost` to re-derive
+them with your own assumptions.
 
 ---
 

@@ -8,6 +8,24 @@ pass-arguments: true
 
 # Bootstrap a QA knowledge file
 
+## Where the scripts live — resolve this first
+
+Commands below refer to `$QA`, this plugin's own directory. Resolve it once
+before anything else:
+
+```bash
+QA="${CLAUDE_PLUGIN_ROOT:-${THEMEGRILL_QA_HOME:-..}/plugins/themegrill-qa}"
+node "$QA/scripts/detect-product.mjs" >/dev/null && echo "QA=$QA"
+```
+
+`CLAUDE_PLUGIN_ROOT` is set automatically when this runs as an installed plugin,
+which is the normal case; the fallback covers a plain `git clone` install. If the
+shell is not bash — PowerShell on a Windows machine, say — use that shell's
+equivalent rather than assuming this line works.
+
+If neither variable resolves to a directory containing `scripts/`, stop and say
+so. Guessing at a path produces a confusing failure several steps later.
+
 Produces a **draft** of `.themegrill-qa/knowledge.md` by reading the product's source.
 The draft is a starting point that saves an hour of blank-page work. It is not
 the finished file, and it must not be committed as if it were.
@@ -31,7 +49,7 @@ highest-value input, because expected behaviour is the one thing source cannot
 tell you and the thing the agents most need:
 
 ```bash
-node scripts/ingest-docs.mjs https://docs.<product>.com/sitemap.xml --out .themegrill-qa
+node "$QA/scripts/ingest-docs.mjs" https://docs.<product>.com/sitemap.xml --out .themegrill-qa
 ```
 
 That writes `.themegrill-qa/docs/<section>.md` plus `.themegrill-qa/docs-index.json`. Two things
@@ -61,7 +79,7 @@ still needs to supply.
 ## Step 1 — Read the product
 
 ```bash
-scripts/detect-product.mjs
+node "$QA/scripts/detect-product.mjs"
 ```
 
 Then gather, with evidence for each finding:

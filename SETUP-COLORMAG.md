@@ -21,7 +21,10 @@ VS Code terminal. All commands below are identical on both platforms.
 
 ---
 
-## 1. Clone and install
+## 1. Install
+
+For this first pass, clone it — you will be editing the tooling as you go, and a
+clone lets you see changes immediately:
 
 ```
 git clone git@github.com:ThemeGrill/themegrill-qa.git
@@ -29,16 +32,15 @@ cd themegrill-qa
 node install.mjs
 ```
 
-That is the whole install. It links the five skills into your personal Claude
-Code directory, sets `THEMEGRILL_QA_HOME`, checks your Node version, and
-smoke-tests that the scripts run.
+It links the five skills into your personal Claude Code directory (junctions on
+Windows, so no administrator rights), sets `THEMEGRILL_QA_HOME`, checks your Node
+version and smoke-tests the scripts. **Then open a new terminal** so the
+environment variable is picked up.
 
-On Windows it links with directory junctions rather than symlinks, because
-junctions need no administrator rights and no Developer Mode. If even that is
-blocked it copies instead and tells you so — in which case re-run
-`node install.mjs` after each `git pull`.
-
-**Then open a new terminal**, so the environment variable is picked up.
+Once the tooling settles, the rest of the team does not clone anything — an
+organisation owner enables the plugin once in managed settings and everyone has
+the commands. See [INSTALL.md](INSTALL.md) for all three routes and which people
+actually need a local install at all (fewer than you would think).
 
 **Check:** open Claude Code anywhere, type `/`, and `verify-fix` should be
 listed.
@@ -49,7 +51,7 @@ listed.
 
 ```
 cd ~/src/colormag          # your ColorMag checkout
-node "$THEMEGRILL_QA_HOME/scripts/boot-wp.mjs" --engine playground
+node "$THEMEGRILL_QA_HOME/plugins/themegrill-qa/scripts/boot-wp.mjs" --engine playground
 ```
 
 This has never been run against a live network — the environment it was built in
@@ -84,7 +86,7 @@ all.
 
 ```
 cd ~/src/colormag
-node $THEMEGRILL_QA_HOME/scripts/ingest-docs.mjs \
+node $THEMEGRILL_QA_HOME/plugins/themegrill-qa/scripts/ingest-docs.mjs \
   --rest https://docs.themegrill.com/colormag \
   --out .themegrill-qa
 ```

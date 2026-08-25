@@ -76,19 +76,27 @@ nothing before Phase 5 depends on it.
 
 ---
 
-## Phase 1 — Local install · once per person, ~5 min
+## Phase 1 — Local install · ~5 min, and mostly for one person
+
+**Most developers install nothing.** The PR reviewer runs in GitHub Actions, so
+the whole team gets QA on their pull requests without touching their machines. A
+local install is only for `/verify-fix` — checking a fix before pushing — which
+matters to whoever fixes bugs, not to everyone.
+
+For this phase, install it for yourself with a clone, because you will be editing
+the tooling as you go:
 
 ```bash
-git clone git@github.com:ThemeGrill/themegrill-qa.git ~/src/themegrill-qa
-mkdir -p ~/.claude/skills
-for s in verify-fix pr-qa-review regression-sweep full-test knowledge-init; do
-  ln -s ~/src/themegrill-qa/.claude/skills/$s ~/.claude/skills/$s
-done
-echo 'export THEMEGRILL_QA_HOME="$HOME/src/themegrill-qa"' >> ~/.zshrc
-source ~/.zshrc
+git clone git@github.com:ThemeGrill/themegrill-qa.git
+cd themegrill-qa
+node install.mjs
 ```
 
-Symlinks rather than copies, so `git pull` in one place updates everyone.
+Then open a new terminal.
+
+Once the tooling settles, roll it out as a plugin instead — an organisation owner
+enables it once in managed settings and every developer has the commands with no
+setup at all. [INSTALL.md](INSTALL.md) covers all three routes and the trade-offs.
 
 > **Done when:** open Claude Code in any product repo, type `/`, and see
 > `verify-fix` in the list.
@@ -105,7 +113,7 @@ CI, no cost risk beyond a few local runs.
 In your ColorMag checkout:
 
 ```bash
-node "$THEMEGRILL_QA_HOME/scripts/boot-wp.mjs" --engine playground
+node "$THEMEGRILL_QA_HOME/plugins/themegrill-qa/scripts/boot-wp.mjs" --engine playground
 ```
 
 This is the **first thing to run and the most likely thing to break**, because it
@@ -122,7 +130,7 @@ config; the script prints a hint saying so.
 ### 2.2 Ingest the docs
 
 ```bash
-node $THEMEGRILL_QA_HOME/scripts/ingest-docs.mjs \
+node $THEMEGRILL_QA_HOME/plugins/themegrill-qa/scripts/ingest-docs.mjs \
   https://docs.themegrill.com/colormag/sitemap.xml --out .themegrill-qa
 ```
 

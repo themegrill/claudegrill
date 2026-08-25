@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 
 const isWindows = process.platform === "win32";
 const qaHome = path.dirname(fileURLToPath(import.meta.url));
-const skillsSrc = path.join(qaHome, ".claude", "skills");
+const skillsSrc = path.join(qaHome, "plugins", "themegrill-qa", "skills");
 const skillsDest = path.join(os.homedir(), ".claude", "skills");
 
 const SKILLS = [
@@ -167,7 +167,7 @@ if (alreadySet) {
 try {
   const out = execFileSync(
     process.execPath,
-    [path.join(qaHome, "scripts", "detect-product.mjs"), qaHome],
+    [path.join(qaHome, "plugins", "themegrill-qa", "scripts", "detect-product.mjs"), qaHome],
     { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
   warn(`detect-product ran but thinks this repo is a product: ${out.trim().slice(0, 60)}`);
@@ -195,7 +195,7 @@ console.log(`Installed.
 
 Next, in a NEW terminal, from inside your ColorMag checkout:
 
-  node "${path.join(qaHome, "scripts", "boot-wp.mjs")}"
+  node "${path.join(qaHome, "plugins", "themegrill-qa", "scripts", "boot-wp.mjs")}"
 
 That boots a disposable WordPress with ColorMag mounted. If it works, open
 Claude Code there and run /verify-fix. Full walkthrough: SETUP-COLORMAG.md

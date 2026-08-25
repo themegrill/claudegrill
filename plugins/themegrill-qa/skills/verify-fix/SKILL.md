@@ -8,6 +8,24 @@ pass-arguments: true
 
 # Verify the change in the working tree
 
+## Where the scripts live — resolve this first
+
+Commands below refer to `$QA`, this plugin's own directory. Resolve it once
+before anything else:
+
+```bash
+QA="${CLAUDE_PLUGIN_ROOT:-${THEMEGRILL_QA_HOME:-..}/plugins/themegrill-qa}"
+node "$QA/scripts/detect-product.mjs" >/dev/null && echo "QA=$QA"
+```
+
+`CLAUDE_PLUGIN_ROOT` is set automatically when this runs as an installed plugin,
+which is the normal case; the fallback covers a plain `git clone` install. If the
+shell is not bash — PowerShell on a Windows machine, say — use that shell's
+equivalent rather than assuming this line works.
+
+If neither variable resolves to a directory containing `scripts/`, stop and say
+so. Guessing at a path produces a confusing failure several steps later.
+
 You are verifying an *uncommitted or unreleased change* to a WordPress theme or
 plugin. Assume you were given **no context**. Derive it. Do not ask the user
 what product this is, what changed, or how to reproduce — find out.
@@ -19,7 +37,7 @@ still run the derivation below.
 ## Step 1 — Work out what you are looking at
 
 ```bash
-scripts/detect-product.mjs
+node "$QA/scripts/detect-product.mjs"
 ```
 
 That gives you type (theme/plugin), slug, name, version, repo root, the branch,
@@ -63,7 +81,7 @@ confident, useless verification.
 ## Step 3 — Boot a site
 
 ```bash
-scripts/boot-wp.mjs --engine playground
+node "$QA/scripts/boot-wp.mjs" --engine playground
 ```
 
 Use `playground` by default: it boots in seconds and mounts the working tree

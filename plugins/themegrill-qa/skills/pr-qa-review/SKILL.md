@@ -7,6 +7,24 @@ pass-arguments: true
 
 # PR QA review
 
+## Where the scripts live — resolve this first
+
+Commands below refer to `$QA`, this plugin's own directory. Resolve it once
+before anything else:
+
+```bash
+QA="${CLAUDE_PLUGIN_ROOT:-${THEMEGRILL_QA_HOME:-..}/plugins/themegrill-qa}"
+node "$QA/scripts/detect-product.mjs" >/dev/null && echo "QA=$QA"
+```
+
+`CLAUDE_PLUGIN_ROOT` is set automatically when this runs as an installed plugin,
+which is the normal case; the fallback covers a plain `git clone` install. If the
+shell is not bash — PowerShell on a Windows machine, say — use that shell's
+equivalent rather than assuming this line works.
+
+If neither variable resolves to a directory containing `scripts/`, stop and say
+so. Guessing at a path produces a confusing failure several steps later.
+
 You are reviewing a pull request against a WordPress theme or plugin that ships
 to a large installed base of paying customers. You are the QA pass, not the code
 style pass. Your job is to answer one question with evidence:
@@ -19,7 +37,7 @@ work, and be explicit about what you could not check.
 ## Step 1 — Establish context
 
 ```bash
-scripts/detect-product.mjs
+node "$QA/scripts/detect-product.mjs"
 gh pr view "$PR_NUMBER" --json title,body,author,baseRefName,headRefName,files,additions,deletions
 gh pr diff "$PR_NUMBER"
 ```
@@ -75,7 +93,7 @@ Bias missions toward the failure modes that actually hurt this catalogue:
 ## Step 4 — Execute
 
 ```bash
-scripts/boot-wp.mjs --engine playground
+node "$QA/scripts/boot-wp.mjs" --engine playground
 ```
 
 Use `wp-env` instead when the diff touches SQL, mail, cron or multisite — those

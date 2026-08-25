@@ -15,28 +15,33 @@ knowledge file. Nothing is installed into them.
 ## Layout
 
 ```
-.claude/skills/          the judgement layer — one skill per entry point
-  verify-fix/            local: verify the change in the working tree
-  pr-qa-review/          CI: review a PR, post one comment
-  full-test/             manual: whole-product sweep, fans out to CI
-  regression-sweep/      the sweep body, invoked per shard
-  knowledge-init/        draft a product's knowledge file
-install.mjs              one-command install, Windows and macOS alike
-scripts/                 the deterministic layer — Node, zero dependencies
-  detect-product.mjs     identify the product from source → JSON
-  boot-wp.mjs            disposable WordPress, product mounted live
-  ingest-docs.mjs        docs site → intent layer + area list (REST or sitemap)
-  ingest-testsuite.mjs   an existing Selenium/Robot suite → specification
-  estimate-cost.mjs      spend model
+.claude-plugin/
+  marketplace.json       this repo IS the private plugin marketplace
+plugins/themegrill-qa/   the installable plugin — everything the skills need
+  .claude-plugin/plugin.json
+  skills/                the judgement layer — one skill per entry point
+    verify-fix/          local: verify the change in the working tree
+    pr-qa-review/        CI: review a PR, post one comment
+    full-test/           manual: whole-product sweep, fans out to CI
+    regression-sweep/    the sweep body, invoked per shard
+    knowledge-init/      draft a product's knowledge file
+  scripts/               the deterministic layer — Node, zero dependencies
+    detect-product.mjs   identify the product from source -> JSON
+    boot-wp.mjs          disposable WordPress, product mounted live
+    ingest-docs.mjs      docs site -> intent layer + area list (REST or sitemap)
+    ingest-testsuite.mjs an existing Selenium/Robot suite -> specification
+    estimate-cost.mjs    spend model
+  blueprints/            seeded WordPress state for theme / plugin testing
+install.mjs              clone-install fallback; not needed for plugin installs
 packages/core/           shared spec helpers — the suite layer
-  wp-cli.js              the one route for running PHP against a test site
-  fixtures.js            tagged fixtures with a teardown that removes everything
-  theme.js               theme helpers, incl. the three-way customizer check
-blueprints/              seeded WordPress state for theme / plugin testing
 knowledge/               templates and starter knowledge files
 examples/                a spec in the house style, to copy into a product repo
 .github/workflows/       reusable workflows + per-product caller examples
 ```
+
+Scripts and blueprints live **inside** the plugin because Claude Code copies a
+plugin into its own cache, and a copied plugin cannot reach files outside its
+directory. Anything a skill needs must travel with it.
 
 **[CONVENTIONS.md](CONVENTIONS.md) governs every spec.** Read it before writing
 one. Nine rules, drawn from a WordPress plugin suite that had already settled
