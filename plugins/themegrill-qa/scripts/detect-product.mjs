@@ -148,6 +148,16 @@ for (const c of candidates) {
   }
 }
 
+// The suite manifest. Unlike the knowledge file this has exactly one home —
+// a suite belongs to the product that owns it, so there is no central fallback
+// to search. Absent is a valid state: the product simply has no suite yet, and
+// every consumer of this field degrades gracefully rather than erroring.
+// Contract: SUITE.md §1.
+const suitePath = path.join(root, ".themegrill-qa", "suite.json");
+const suite = fs.existsSync(suitePath)
+  ? path.relative(root, suitePath).split(path.sep).join("/")
+  : null;
+
 // Branch and ticket key: a branch like fix/CM-1234-header-overlap tells the agent
 // which Jira issue this belongs to without anyone typing it.
 let branch = "";
@@ -177,6 +187,7 @@ process.stdout.write(
       textdomain: textdomain || null,
       root,
       knowledge,
+      suite,
       entry,
       branch,
       ticket,

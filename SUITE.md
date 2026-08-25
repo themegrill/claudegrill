@@ -1,0 +1,303 @@
+# The suite contract
+
+How a ThemeGrill product declares its Playwright suite to this platform, and what
+the platform promises in return.
+
+This document is the interface. `run-suite.mjs`, `suite-index.mjs`, the
+`write-spec` skill and every workflow are implementations of it. A product repo
+conforms to it by adding two files. Nothing else in either repo needs to change.
+
+---
+
+## Why this exists
+
+Stated as economics, because that is the reason for every decision below:
+
+- An agent finding costs tokens **on every run, forever**.
+- The same finding as a committed spec costs tokens **once**, then runs for
+  approximately free on every PR for the life of the product.
+
+So the platform runs a product's existing suite first and cheaply, spends agent
+tokens only on what the suite does not already cover, and converts every verified
+finding into a committed spec — so the expensive layer shrinks over time.
+
+A product with no suite loses nothing. Every part of this degrades to the
+platform's previous behaviour when `suite.json` is absent.
+
+---
+
+## 1. The manifest
+
+A product declares its suite at **`.themegrill-qa/suite.json`**, in the product
+repo. If the file is absent the product has no suite, and every consumer treats
+that as a valid state rather than an error.
+
+```json
+{
+  "runner": "playwright",
+  "package_manager": "pnpm",
+  "install": "pnpm install --frozen-lockfile",
+  "command": "pnpm exec playwright test",
+  "config": "playwright.config.ts",
+  "spec_dir": "tests/e2e/specs",
+  "spec_extension": ".spec.ts",
+  "json_report": "test-results/results.json",
+  "env": {
+    "base_url": "CM_BASE_URL",
+    "admin_user": "CM_ADMIN_USER",
+    "admin_pass": "CM_ADMIN_PASS"
+  },
+  "tiers": {
+    "fresh": "@fresh",
+    "demo": "@demo"
+  }
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `runner` | yes | Only `playwright` is implemented. Anything else is rejected with exit 2. |
+| `command` | yes | How to invoke the runner. Platform flags are appended to it. |
+| `spec_dir` | yes | Where specs live, repo-relative. `suite-index.mjs` globs this. |
+| `json_report` | yes | Where the JSON reporter writes, repo-relative. |
+| `package_manager` | no | Inferred from the lockfile. |
+| `install` | no | Skipped entirely when absent; `--install` then does nothing. |
+| `config` | no | Inferred from a conventional `playwright.config.*` at the repo root. |
+| `spec_extension` | no | Defaults to `.spec.ts`, then `.spec.js`. |
+| `env` | no | See §4. Absent means only the generic `TGQA_*` names are exported. |
+| `tiers` | no | Defaults to `{"fresh": "@fresh", "demo": "@demo"}`. |
+
+**`env` maps the platform's generic concepts onto whatever variable names the
+product's suite already uses**, so no product has to rename its variables to join
+in.
+
+Anything inferred rather than declared is **named on stderr** — "config: inferred
+playwright.config.ts", "package_manager: inferred pnpm from pnpm-lock.yaml" — so
+a wrong inference is visible rather than silent.
+
+---
+
+## 2. Tiers
+
+This is the single most important design decision in the contract.
+
+A product's specs cannot all run everywhere, and pretending otherwise is what
+makes a green run a lie. ColorMag's suite was written against a hand-maintained
+Local site with the ThemeGrill "Main" demo imported. A fresh `boot-wp` site has
+none of that.
+
+So every test carries a tier tag **in its title**, because the title is what
+Playwright's `--grep` matches:
+
+| Tag | Runs on | Meaning |
+|---|---|---|
+| `@fresh` | a clean `boot-wp` site seeded only by the blueprint | CI-safe. This is the tier that gates PRs. |
+| `@demo` | a site with the product's demo content imported | Local / nightly only. **Not CI coverage.** |
+
+Rules, enforced in code and not merely documented:
+
+- **A test with no tier tag is treated as `@demo`** — the conservative reading.
+  Never assume untagged means safe. `suite-index.mjs` counts untagged tests under
+  `demo` and reports them separately as a hygiene number.
+- **CI only ever runs `@fresh`.** A `@demo` test must never gate a PR, because it
+  cannot be reproduced on a runner.
+- **Every spec the agent writes is `@fresh`**, or it does not get written. If a
+  finding can only be reproduced on a demo-imported site, the spec's blueprint
+  requirement *is itself the finding* — report that and write no spec.
+
+### The area dimension
+
+Additive and optional: an `@area` tag matching an area name from the product's
+knowledge file — `@header`, `@content`, `@customizer`. This is what lets a sweep
+shard run only its own area's specs, and what lets `suite-index.mjs` tell the
+agent which areas it does not need to look at.
+
+Tags are lowercase, hyphenated, and match the knowledge file's critical-flow
+names exactly. A tag that matches nothing in the knowledge file is reported as
+unrecognised rather than silently accepted.
+
+---
+
+## 3. Spec annotation
+
+Every test carries a docblock immediately above it. `suite-index.mjs` parses it
+with a regex over source text — there is no TypeScript parser anywhere in this
+platform and there will not be one.
+
+```js
+/**
+ * @area    header
+ * @tier    fresh
+ * @guards  CMAG-1234
+ * @source  verify-fix 2026-08-24
+ * @why     Switching to the centered header layout dropped the tagline entirely.
+ *          Guards the regression, not the layout's styling.
+ */
+test('centered header keeps the tagline @fresh @header', async ({ page }) => {
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `@why` | **yes** | Why this spec exists. `CONVENTIONS.md` rule 6 already requires it; this makes it machine-readable. |
+| `@area` | recommended | Matches the title's `@area` tag. Redundancy is deliberate: the title drives `--grep`, the docblock drives the index, and a mismatch between them is a reportable hygiene error. |
+| `@tier` | recommended | Same. |
+| `@guards` | when applicable | The Jira key or bug identifier this spec exists to prevent recurring. Comma-separated for several. |
+| `@source` | when written by the platform | Which skill wrote it and when — `verify-fix 2026-08-24`, `regression-sweep 2026-08-24`, or `human`. |
+
+A missing field is `null`, never a crash. The count of tests with an incomplete
+docblock is reported, so the suite's own hygiene is visible.
+
+---
+
+## 4. Environment variables
+
+`run-suite.mjs` exports these before invoking the runner, mapping through the
+manifest's `env` block:
+
+| Concept | Generic name | Also exported as |
+|---|---|---|
+| Site URL | `TGQA_BASE_URL` | whatever `env.base_url` names |
+| Admin user | `TGQA_ADMIN_USER` | whatever `env.admin_user` names |
+| Admin password | `TGQA_ADMIN_PASS` | whatever `env.admin_pass` names |
+| Environment label | `TGQA_ENV` | — (`playground` \| `wp-env` \| `local`) |
+| Tier being run | `TGQA_TIER` | — |
+
+Exporting both means a product's existing suite keeps working unchanged, while
+new specs can be written against the generic names.
+
+**Credentials are never written to a file this repo tracks.** They come from the
+environment, from a gitignored `.env.local` in the product repo, or from CI
+secrets. If you find yourself typing a password into a spec, a config or a
+workflow, stop.
+
+---
+
+## 5. The output contract
+
+`run-suite.mjs` emits **exactly one line of JSON on stdout** and nothing else.
+All human-readable progress goes to stderr.
+
+```json
+{
+  "ok": false,
+  "suite": true,
+  "runner": "playwright",
+  "tier": "fresh",
+  "env": "playground",
+  "base_url": "http://127.0.0.1:9400",
+  "duration_ms": 91234,
+  "total": 61, "passed": 57, "failed": 2, "skipped": 1, "flaky": 1,
+  "failures": [
+    {
+      "title": "centered header keeps the tagline @fresh @header",
+      "file": "tests/e2e/specs/header-layout.spec.ts",
+      "line": 31,
+      "area": "header",
+      "guards": ["CMAG-1234"],
+      "error": "first 400 chars of the failure message",
+      "attachments": ["test-results/.../screenshot.png"],
+      "retries": 1
+    }
+  ],
+  "fixme": [{ "title": "...", "guards": ["CMAG-733"] }]
+}
+```
+
+When there is no manifest:
+
+```json
+{ "ok": true, "suite": false, "reason": "no suite manifest" }
+```
+
+`ok` is `false` on any failure. `flaky` counts tests that passed on retry —
+surface it, because a flaky suite erodes trust faster than a failing one.
+
+### Exit codes
+
+Callers need to distinguish "tests failed" from "harness broken", and before this
+contract nothing did.
+
+| Code | Meaning |
+|---|---|
+| `0` | Suite passed, or there is no suite |
+| `1` | The suite ran and tests failed |
+| `2` | Could not run — no base URL, install failed, runner missing, bad manifest, timeout |
+
+---
+
+## 6. The index contract
+
+`suite-index.mjs` emits one line of JSON describing what the suite covers.
+
+```json
+{
+  "suite": true,
+  "spec_files": 18,
+  "tests": 61,
+  "by_tier": { "fresh": 44, "demo": 17 },
+  "by_area": { "header": 9, "content": 14, "customizer": 12 },
+  "guards": { "CMAG-733": ["tests/e2e/specs/console.spec.ts:12"] },
+  "fixme": [{ "title": "...", "file": "...", "guards": ["CMAG-733"], "why": "..." }],
+  "areas_covered": ["header", "content", "customizer"],
+  "areas_uncovered": ["footer", "widgets", "front-page", "activation"],
+  "thinnest_areas": ["footer", "widgets"]
+}
+```
+
+**`areas_uncovered` is the cost lever.** It is the difference between the areas
+declared in the product's `.themegrill-qa/knowledge.md` (or `docs-index.json`'s
+`suggested_areas`) and the areas the suite actually covers, and **it is what the
+agent should spend its budget on**. An area with green `@fresh` specs does not
+need an agent shard; an area with none does.
+
+`thinnest_areas` ranks covered-but-barely areas — fewer than three `@fresh` tests
+— so a sweep can top them up rather than treating one smoke test as coverage.
+
+---
+
+## 7. What a product repo adds
+
+Two files, and nothing else:
+
+```
+.themegrill-qa/
+  suite.json         the manifest above
+  spec-queue.jsonl   source changes with no spec yet (committed, see §8)
+```
+
+`knowledge.md` and the findings ledger already live there. No dependency on this
+repo is added to the product; the workflows check this repo out at run time.
+
+---
+
+## 8. The spec queue
+
+`.themegrill-qa/spec-queue.jsonl` is one JSON object per line, appended never
+rewritten, and **committed**:
+
+```json
+{"ts":"2026-08-25T09:12:00Z","branch":"fix/CMAG-1234-header","jira":"CMAG-1234","files":["inc/customizer/header.php"],"sha":"<HEAD>","status":"pending"}
+```
+
+The `spec-guard` hook appends a `pending` record when a session changes product
+source without touching `spec_dir`. `/write-spec` with no arguments drains the
+oldest pending item. `/verify-fix` marks its item `done` when it graduates a
+finding. `pr-qa-review` reads the queue and adds a one-line nudge to its comment.
+
+It is committed rather than gitignored on purpose: the queue being visible in the
+repo is what makes it get drained.
+
+---
+
+## 9. Where work lives, and which way it moves
+
+| Layer | Remembers | Where | Cost per run |
+|---|---|---|---|
+| `knowledge.md` | how the product is *meant* to work | product repo | free (read) |
+| findings ledger `.jsonl` | every confirmed finding, fingerprinted | product repo | free (read) |
+| `tests/e2e/**` | the bug, frozen as a deterministic assertion | product repo | runner minutes |
+| agent exploration | anything not yet in the three above | — | **tokens, every run** |
+
+**Work moves downward through those layers, never upward.** Something the agent
+discovered becomes a spec; something a spec proved becomes a line in the
+knowledge file. Nothing that is already a spec goes back to being explored.

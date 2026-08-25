@@ -27,35 +27,12 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-const isWindows = process.platform === "win32";
+import { resolveQaHome } from "./lib/qa-home.mjs";
+import { isWindows, killTree, npxCommand, shellQuote } from "./lib/platform.mjs";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-/**
- * The plugin root — the directory holding `scripts/` and `blueprints/`.
- *
- * Resolved from this file's own location first, which is correct whether we are
- * running from an installed plugin (the Claude Code plugin cache), a git clone,
- * or a CI checkout. `THEMEGRILL_QA_HOME` is honoured only as a fallback, and
- * tolerates being pointed at either the plugin directory or the repository root
- * above it, because both are things people reasonably set it to.
- */
-function resolveQaHome() {
-  const selfRelative = path.resolve(here, "..");
-  if (fs.existsSync(path.join(selfRelative, "blueprints"))) return selfRelative;
-
-  const env = process.env.THEMEGRILL_QA_HOME;
-  if (env) {
-    for (const candidate of [
-      path.resolve(env),
-      path.resolve(env, "plugins", "themegrill-qa"),
-    ]) {
-      if (fs.existsSync(path.join(candidate, "blueprints"))) return candidate;
-    }
-  }
-  return selfRelative; // let the blueprint check below report the miss
-}
-
-const qaHome = resolveQaHome();
+const qaHome = resolveQaHome(here);
 
 const stateFile = path.join(os.tmpdir(), "themegrill-qa-playground.json");
 const logFile = path.join(os.tmpdir(), "themegrill-qa-playground.log");
@@ -89,50 +66,6 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 // ------------------------------------------------------------------- helpers
-
-/** npx, spelled correctly for the platform. */
-function npxCommand() {
-  return isWindows ? "npx.cmd" : "npx";
-}
-
-/**
- * Quote one argument for Windows' `shell: true` spawn path.
- *
- * `.cmd` files (npx.cmd) can only be launched with `shell: true`, and Node
- * does not escape array-form arguments for that path the way it does for a
- * plain (non-shell) spawn — it just joins them with spaces. Any argument
- * containing a space (a `--path=` flag built from `Local Sites\...`,
- * `Program Files\...`, a synced-folder path, anything under a directory a
- * human named) then splits into two shell tokens and the child process
- * receives garbage. Confirmed breaking `--path=` this way when the mounted
- * theme lives under `Local Sites`. Wrapping the whole token in double quotes
- * is enough here — every value this script builds is a path, version string
- * or slug, none of which legitimately contain a `"`.
- */
-function shellQuote(arg) {
-  return isWindows && /\s/.test(arg) ? `"${arg}"` : arg;
-}
-
-/** Kill a process and everything it started. */
-function killTree(pid) {
-  try {
-    if (isWindows) {
-      execFileSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
-        stdio: "ignore",
-      });
-    } else {
-      process.kill(-pid, "SIGTERM"); // negative: the whole process group
-    }
-    return true;
-  } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-      return true;
-    } catch {
-      return false;
-    }
-  }
-}
 
 /**
  * Wait for a site that actually serves WordPress.
