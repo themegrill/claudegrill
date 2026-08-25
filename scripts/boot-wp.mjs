@@ -71,6 +71,18 @@ function npxCommand() {
   return isWindows ? "npx.cmd" : "npx";
 }
 
+/**
+ * Windows `spawn`/`execFileSync` with `shell: true` (required for a `.cmd`
+ * file) builds the child's command line by joining argv with plain spaces —
+ * it does not quote anything. Any argument containing a space (a "Local
+ * Sites" WordPress install, "OneDrive", "My Documents") silently splits into
+ * two arguments. Quoting is therefore the caller's job on this platform;
+ * elsewhere argv is passed straight through and quoting would corrupt it.
+ */
+function winQuote(arg) {
+  return isWindows && /\s/.test(arg) ? `"${arg}"` : arg;
+}
+
 /** Kill a process and everything it started. */
 function killTree(pid) {
   try {
@@ -100,12 +112,28 @@ function killTree(pid) {
  * any status here hands the agent a broken site and produces a confusing failure
  * three steps later, so require a non-error status *and* markup that looks like
  * WordPress before declaring victory.
+ *
+ * A cold boot fetches WordPress core and PHP-WASM over the network, then runs
+ * the full blueprint (category, post, page, menu and widget seeding) before
+ * the CLI prints "Ready!" — on a slow connection or under heavy antivirus
+ * scanning of the SQLite/WASM files this has been observed to still be
+ * answering 502 several minutes in, so the ceiling here is generous. The
+ * heartbeat exists so a long wait is visibly still trying rather than
+ * indistinguishable from hung.
  */
-async function waitForServer(url, childAlive, timeoutMs = 180000) {
+async function waitForServer(url, childAlive, timeoutMs = 600000) {
   const started = Date.now();
   let lastStatus = null;
+  let lastHeartbeat = started;
 
   while (Date.now() - started < timeoutMs) {
+    const elapsed = Date.now() - started;
+    if (elapsed - (lastHeartbeat - started) >= 30000) {
+      lastHeartbeat = Date.now();
+      console.error(
+        `... still waiting (${Math.round(elapsed / 1000)}s elapsed, last status ${lastStatus ?? "none yet"})`,
+      );
+    }
     try {
       const res = await fetch(url, { redirect: "follow" });
       lastStatus = res.status;
@@ -228,7 +256,7 @@ if (opt.engine === "playground") {
   }
 
   const out = fs.openSync(logFile, "w");
-  const child = spawn(npxCommand(), args, {
+  const child = spawn(npxCommand(), args.map(winQuote), {
     cwd: info.root,
     stdio: ["ignore", out, out],
     detached: !isWindows, // own process group, so we can kill the tree
@@ -314,11 +342,15 @@ if (opt.engine === "wp-env") {
   }
 
   const run = (args) =>
-    execFileSync(npxCommand(), ["--yes", "@wordpress/env@latest", ...args], {
-      cwd: info.root,
-      stdio: "inherit",
-      shell: isWindows,
-    });
+    execFileSync(
+      npxCommand(),
+      ["--yes", "@wordpress/env@latest", ...args].map(winQuote),
+      {
+        cwd: info.root,
+        stdio: "inherit",
+        shell: isWindows,
+      },
+    );
 
   run(["start"]);
   try {
