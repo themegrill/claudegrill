@@ -1,7 +1,19 @@
-# Drop this into each product repo as .github/workflows/qa.yml
-# This is the entire per-product footprint — everything else lives in themegrill-qa.
+# Drop this into each product repo as .github/workflows/qa-review.yml
+#
+# The AGENT tier — advisory, not a required check. It costs tokens, so it is
+# gated on the PR being non-draft and on the diff containing functional changes,
+# and it skips itself entirely when the suite's harness failed.
+#
+# This is one of three thin workflows a product repo needs; the whole per-product
+# footprint is these three files plus .themegrill-qa/:
+#
+#   qa-suite.yml    caller-suite.yml    free, required check, every PR
+#   qa-review.yml   this file           agent, advisory
+#   qa-command.yml  caller-command.yml  @themegrill-qa
+#
+# Everything else lives in themegrill-qa.
 
-name: QA
+name: QA review
 
 on:
   pull_request:

@@ -123,11 +123,17 @@ Bias missions toward the failure modes that actually hurt this catalogue:
 node "$QA/scripts/boot-wp.mjs" --engine playground
 ```
 
+**If you were handed a URL for an already-running site, use that one and do not
+boot another.** In CI the workflow boots the site and runs the suite before
+handing over, so booting again wastes several minutes and leaves two Playgrounds
+competing for a port.
+
 Use `wp-env` instead when the diff touches SQL, mail, cron or multisite — those
 are wrong or absent under Playground's SQLite runtime and a green result would be
 meaningless.
 
-**Run the suite against the booted site before any mission:**
+**Run the suite against the booted site before any mission** — unless the
+workflow already did and gave you `suite-result.json`, in which case read that:
 
 ```bash
 node "$QA/scripts/run-suite.mjs" --tier fresh --base-url <the booted URL>

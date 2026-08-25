@@ -41,6 +41,14 @@ on:
         required: false
         type: number
         default: 80
+      skip_agent_on_suite_harness_failure:
+        description: >
+          When run-suite.mjs exits 2 — the harness broke, as opposed to tests
+          failing — skip the agent rather than spending tokens exploring an
+          environment that is already known not to work.
+        required: false
+        type: boolean
+        default: true
     secrets:
       ANTHROPIC_API_KEY:
         required: true
@@ -128,8 +136,55 @@ jobs:
           mkdir -p product/.claude && cp -r themegrill-qa/plugins/themegrill-qa/skills product/.claude/skills
           # nothing to chmod: the scripts are Node
 
-      - name: QA review
+      # The cheap layer runs first, and its result is handed to the agent rather
+      # than rediscovered by it. Booting here (not inside the agent's session)
+      # also means one boot per run instead of two.
+      - name: Boot a disposable WordPress
+        id: boot
         if: steps.triage.outputs.run == 'true'
+        working-directory: product
+        env:
+          WP_VERSION: ${{ inputs.wp_version }}
+          PHP_VERSION: ${{ inputs.php_version }}
+        run: |
+          set -o pipefail
+          node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs \
+            --engine playground | tee ../boot.json
+          URL="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("../boot.json","utf8")).url)')"
+          echo "TGQA_BASE_URL=$URL" >> "$GITHUB_ENV"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Run the suite (fresh tier)
+        id: suite
+        if: steps.triage.outputs.run == 'true'
+        working-directory: product
+        run: |
+          set +e
+          node ../themegrill-qa/plugins/themegrill-qa/scripts/run-suite.mjs \
+            --tier fresh --install --json --base-url "$TGQA_BASE_URL" > ../suite.json
+          CODE=$?
+          echo "exit=$CODE" >> "$GITHUB_OUTPUT"
+          cat ../suite.json
+          cp ../suite.json ./suite-result.json
+          # Exit 2 is a broken harness. Exploring on top of one wastes the whole
+          # budget producing findings about the environment, not the product.
+          if [ "$CODE" = "2" ] && [ "${{ inputs.skip_agent_on_suite_harness_failure }}" = "true" ]; then
+            echo "skip_agent=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::suite harness failed — skipping the agent review"
+          else
+            echo "skip_agent=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Suite index — what the agent does not need to look at
+        if: steps.triage.outputs.run == 'true'
+        working-directory: product
+        run: |
+          node ../themegrill-qa/plugins/themegrill-qa/scripts/suite-index.mjs --pretty \
+            > ./suite-index.json 2>/dev/null || echo '{"suite":false}' > ./suite-index.json
+          cat ./suite-index.json
+
+      - name: QA review
+        if: steps.triage.outputs.run == 'true' && steps.suite.outputs.skip_agent != 'true'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -143,6 +198,25 @@ jobs:
             Base branch: ${{ github.event.pull_request.base.ref }}
             Head SHA: ${{ github.event.pull_request.head.sha }}
             Target environment: WordPress ${{ inputs.wp_version }}, PHP ${{ inputs.php_version }}
+
+            A WordPress site is ALREADY RUNNING at ${{ steps.boot.outputs.url }}
+            with the PR's code mounted. Use it — do not boot another.
+
+            The suite has already run against it. Read these two files FIRST and
+            do not rediscover what they already tell you:
+
+              ./product/suite-result.json  — the run: pass/fail counts, and each
+                                             failure with its file, line, area,
+                                             guards and error
+              ./product/suite-index.json   — what the suite covers. Derive your
+                                             missions from `areas_uncovered`, and
+                                             say in the comment which areas you
+                                             skipped because the suite covers them
+
+            If suite-result.json lists failures, **triaging them is mission M1** —
+            it is the cheapest useful work available and it is not optional.
+            Cross-check each against the base branch and label anything that also
+            fails there as pre-existing.
 
             Work inside the ./product directory. Follow the pr-qa-review skill
             exactly. Post exactly one comment on the PR carrying the
@@ -175,12 +249,20 @@ jobs:
           name: qa-evidence-pr-${{ github.event.pull_request.number }}
           path: |
             /tmp/qa-evidence/**
+            suite.json
+            product/playwright-report/**
+            product/test-results/**
             product/**/*.png
             product/**/*.webm
             product/**/trace*.zip
             /tmp/playground.log
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Stop the site
+        if: always() && steps.triage.outputs.run == 'true'
+        working-directory: product
+        run: node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs --stop || true
 
       # Mirror the verdict onto the Actions run page, so the run itself is
       # readable without going back to the PR conversation.

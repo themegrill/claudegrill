@@ -1,0 +1,33 @@
+# Drop this into each product repo as .github/workflows/qa-command.yml
+#
+# Re-run QA on an existing PR by commenting `@themegrill-qa`.
+#
+#   @themegrill-qa               full re-review — suite plus agent
+#   @themegrill-qa suite         suite only, no API key used, free
+#   @themegrill-qa verify <text> focused agent run, small budget
+#   @themegrill-qa specs         write regression specs and open a spec PR
+#   @themegrill-qa areas <a,b>   agent run restricted to those areas
+#   @themegrill-qa help          post the table above
+#
+# The reusable workflow gates on author_association, so only owners, members and
+# collaborators can trigger a run. That check is not optional: without it anyone
+# who can comment on a public PR can spend the Anthropic budget in a loop.
+#
+# Note that `issue_comment` reads this workflow from the DEFAULT branch, never
+# from the PR branch. That is deliberate — a pull request must not be able to
+# rewrite the workflow that reviews it.
+
+name: QA command
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  command:
+    uses: ThemeGrill/themegrill-qa/.github/workflows/pr-command.yml@main
+    with:
+      product_slug: colormag
+      product_type: theme
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

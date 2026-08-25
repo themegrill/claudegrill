@@ -1,0 +1,358 @@
+name: QA command (reusable)
+
+# Re-trigger QA on an existing PR by commenting `@themegrill-qa`.
+#
+# `issue_comment` is an awkward event and most of the care in this file is about
+# its three sharp edges:
+#
+#   1. The payload has NO head SHA and NO branch. Both must be resolved with
+#      `gh pr view` before anything can be checked out.
+#   2. The workflow file is read from the DEFAULT branch, not the PR branch. So
+#      checking out the PR head gives you the PR's code running under the base
+#      branch's workflow. That is correct and desirable here — a PR must not be
+#      able to rewrite the workflow that reviews it — so do not "fix" it.
+#   3. It fires on issue comments too, not only PR comments. Hence the
+#      `issue.pull_request != null` gate.
+#
+# The author-association check is not optional. Without it, anyone who can
+# comment on a public PR can spend the Anthropic budget in a loop.
+
+on:
+  workflow_call:
+    inputs:
+      product_slug:
+        required: true
+        type: string
+      product_type:
+        required: true
+        type: string
+      wp_version:
+        required: false
+        type: string
+        default: "latest"
+      php_version:
+        required: false
+        type: string
+        default: "8.3"
+      qa_ref:
+        required: false
+        type: string
+        default: "main"
+      model:
+        required: false
+        type: string
+        default: "claude-sonnet-5"
+      budget_usd:
+        description: >
+          Spend cap for a comment-triggered run. Deliberately lower than the
+          automatic PR review's default: a comment is usually "just check this
+          one thing", and the full-review budget is the wrong shape for that.
+          The `@themegrill-qa` full re-review raises it to the PR default itself.
+        required: false
+        type: string
+        default: "0.75"
+      full_budget_usd:
+        description: "Cap for a full re-review requested by a bare @themegrill-qa."
+        required: false
+        type: string
+        default: "1.50"
+      max_turns:
+        required: false
+        type: number
+        default: 80
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+
+jobs:
+  command:
+    # Gate hard, and in this order, before doing ANY work.
+    if: |
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '@themegrill-qa') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      pull-requests: write   # post and edit the verdict comment
+      issues: write          # reactions live on the issues API, not the PR API
+
+    concurrency:
+      group: qa-command-${{ github.event.issue.number }}
+      cancel-in-progress: true
+
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.issue.number }}
+      COMMENT_ID: ${{ github.event.comment.id }}
+
+    steps:
+      # Acknowledge FIRST, before the long steps. A commenter who gets no
+      # feedback for four minutes assumes it did not fire and comments again.
+      - name: React 👀
+        run: |
+          gh api -X POST "repos/$REPO/issues/comments/$COMMENT_ID/reactions" \
+            -f content=eyes >/dev/null || true
+
+      - name: Resolve the PR — the comment payload has neither SHA nor branch
+        id: pr
+        run: |
+          gh pr view "$PR" --repo "$REPO" \
+            --json headRefName,headRefOid,isDraft,baseRefName > pr.json
+          cat pr.json
+          {
+            echo "head_ref=$(jq -r .headRefName pr.json)"
+            echo "head_sha=$(jq -r .headRefOid pr.json)"
+            echo "base_ref=$(jq -r .baseRefName pr.json)"
+            echo "is_draft=$(jq -r .isDraft pr.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Parse the command
+        id: cmd
+        run: |
+          # The first @themegrill-qa occurrence and the rest of THAT line.
+          # Anything after a newline belongs to the human's prose, not the command.
+          LINE="$(printf '%s' "${{ toJSON(github.event.comment.body) }}" \
+            | jq -r . \
+            | grep -m1 -o '@themegrill-qa.*' || true)"
+          REST="$(printf '%s' "$LINE" | sed -e 's/^@themegrill-qa[[:space:]]*//')"
+          SUB="$(printf '%s' "$REST" | awk '{print tolower($1)}')"
+          ARGS="$(printf '%s' "$REST" | sed -e 's/^[^[:space:]]*[[:space:]]*//')"
+
+          case "$SUB" in
+            ""|"review")  MODE=full ;;
+            "suite")      MODE=suite ;;
+            "verify")     MODE=verify ;;
+            "specs")      MODE=specs ;;
+            "areas")      MODE=areas ;;
+            "help")       MODE=help ;;
+            # Never guess at an unknown subcommand — post help and stop.
+            *)            MODE=help; echo "unknown subcommand: $SUB" ;;
+          esac
+
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
+          echo "Parsed: mode=$MODE args=$ARGS"
+
+      - name: Post the help table and stop
+        if: steps.cmd.outputs.mode == 'help'
+        run: |
+          cat > help.md <<'MD'
+          <!-- themegrill-qa-bot-help -->
+          ### `@themegrill-qa` commands
+
+          | Comment | Effect |
+          |---|---|
+          | `@themegrill-qa` | Full re-review — suite plus agent |
+          | `@themegrill-qa suite` | Suite only. **No API key used, no agent, free.** |
+          | `@themegrill-qa verify <text>` | Focused agent run on `<text>` only, small budget |
+          | `@themegrill-qa specs` | Write regression specs for this PR's verified findings, and open a spec PR |
+          | `@themegrill-qa areas <a,b>` | Agent run restricted to those areas |
+          | `@themegrill-qa help` | This table |
+
+          Only repository owners, members and collaborators can trigger a run.
+          MD
+          gh pr comment "$PR" --repo "$REPO" --body-file help.md
+
+      - name: Check out the product at the PR head
+        if: steps.cmd.outputs.mode != 'help'
+        uses: actions/checkout@v4
+        with:
+          # `ref` must be explicit: issue_comment defaults to the default branch,
+          # so without this the run would review the wrong code entirely.
+          ref: ${{ steps.pr.outputs.head_sha }}
+          fetch-depth: 0
+          path: product
+
+      - name: Check out shared QA tooling
+        if: steps.cmd.outputs.mode != 'help'
+        uses: actions/checkout@v4
+        with:
+          repository: ThemeGrill/themegrill-qa      # <-- change to your org/repo
+          ref: ${{ inputs.qa_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: themegrill-qa
+
+      - uses: actions/setup-node@v4
+        if: steps.cmd.outputs.mode != 'help'
+        with:
+          node-version: 20
+
+      - name: Install Chromium
+        if: steps.cmd.outputs.mode != 'help'
+        run: npx --yes playwright@latest install --with-deps chromium
+
+      - name: Boot a disposable WordPress
+        if: steps.cmd.outputs.mode != 'help'
+        working-directory: product
+        env:
+          WP_VERSION: ${{ inputs.wp_version }}
+          PHP_VERSION: ${{ inputs.php_version }}
+        run: |
+          set -o pipefail
+          node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs \
+            --engine playground | tee ../boot.json
+          echo "TGQA_BASE_URL=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("../boot.json","utf8")).url)')" >> "$GITHUB_ENV"
+
+      - name: Run the suite
+        if: steps.cmd.outputs.mode != 'help'
+        working-directory: product
+        run: |
+          set +e
+          node ../themegrill-qa/plugins/themegrill-qa/scripts/run-suite.mjs \
+            --tier fresh --install --json --base-url "$TGQA_BASE_URL" > ../suite.json
+          echo "run-suite exit $?"
+          cat ../suite.json
+
+      # `suite` is the free path and it ends here — no agent, no API key spent.
+      - name: Post the suite result and stop
+        if: steps.cmd.outputs.mode == 'suite'
+        run: |
+          node - <<'JS' > body.md
+          const fs = require("fs");
+          const r = JSON.parse(fs.readFileSync("suite.json", "utf8"));
+          const out = ["<!-- themegrill-qa-bot-suite -->", "## QA suite", ""];
+          if (r.suite === false) {
+            out.push("This product has no `.themegrill-qa/suite.json` yet — nothing to run.");
+          } else if (!r.failures) {
+            out.push(`The suite could not run: \`${r.reason ?? "unknown"}\`.`, "",
+                     "That is a harness failure, not a test failure.");
+          } else {
+            out.push(`**${r.passed} passed · ${r.failed} failed · ${r.skipped} skipped · ${r.flaky} flaky** — tier \`${r.tier}\`, env \`${r.env}\``);
+            if (r.failures.length) {
+              out.push("", "<details><summary>Failures</summary>", "");
+              for (const f of r.failures) out.push(`- \`${f.file}:${f.line}\` ${f.title}`);
+              out.push("</details>");
+            }
+          }
+          out.push("", "<sub>No agent was run — this command costs runner minutes only.</sub>");
+          fs.writeFileSync(1, out.join("\n"));
+          JS
+          gh pr comment "$PR" --repo "$REPO" --body-file body.md
+
+      - name: Assemble MCP config
+        if: steps.cmd.outputs.mode != 'help' && steps.cmd.outputs.mode != 'suite'
+        run: |
+          mkdir -p .qa
+          cat > .qa/mcp.json <<'JSON'
+          {
+            "mcpServers": {
+              "playwright": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated",
+                         "--browser", "chromium", "--no-sandbox",
+                         "--viewport-size", "1440x900",
+                         "--save-session",
+                         "--output-dir", "/tmp/qa-evidence"]
+              }
+            }
+          }
+          JSON
+          cp -r themegrill-qa/plugins/themegrill-qa/scripts themegrill-qa/plugins/themegrill-qa/blueprints product/ 2>/dev/null || true
+          cp -r themegrill-qa/knowledge product/ 2>/dev/null || true
+          mkdir -p product/.claude && cp -r themegrill-qa/plugins/themegrill-qa/skills product/.claude/skills
+          cp suite.json product/suite-result.json 2>/dev/null || true
+
+      - name: Agent run
+        if: steps.cmd.outputs.mode != 'help' && steps.cmd.outputs.mode != 'suite'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            ${{ steps.cmd.outputs.mode == 'specs' && '/write-spec' || '/pr-qa-review' }}
+
+            Triggered by a comment on pull request #${{ github.event.issue.number }}
+            in ${{ github.repository }}.
+
+            Command:   ${{ steps.cmd.outputs.mode }}
+            Arguments: ${{ steps.cmd.outputs.args }}
+
+            Product:   ${{ inputs.product_slug }} (${{ inputs.product_type }})
+            Base:      ${{ steps.pr.outputs.base_ref }}
+            Head SHA:  ${{ steps.pr.outputs.head_sha }}
+            Target:    WordPress ${{ inputs.wp_version }}, PHP ${{ inputs.php_version }}
+
+            The suite has already run. Its JSON result is at
+            ./product/suite-result.json — read it FIRST and do not rediscover
+            what it already reports. If it lists failures, triaging them is your
+            first mission.
+
+            Work inside ./product.
+
+            ${{ steps.cmd.outputs.mode == 'verify' && format('Scope: check ONLY this, and nothing else — {0}', steps.cmd.outputs.args) || '' }}
+            ${{ steps.cmd.outputs.mode == 'areas' && format('Scope: restrict the review to these areas only — {0}', steps.cmd.outputs.args) || '' }}
+            ${{ steps.cmd.outputs.mode == 'specs' && 'Write regression specs for this PR''s verified findings. Commit each on its own qa/spec-* branch. Do NOT push and do NOT open a PR — the workflow step after you handles that.' || '' }}
+
+            Post exactly one comment carrying the <!-- themegrill-qa-bot -->
+            marker, editing your previous marked comment if one exists rather
+            than adding another.
+
+            You have no merge authority. Do not commit to the PR branch, do not
+            push, and do not submit a formal GitHub review. Comment only.
+          claude_args: >-
+            --model ${{ inputs.model }}
+            --mcp-config .qa/mcp.json
+            --allowedTools "Bash,Read,Grep,Glob,Skill,mcp__playwright__*,mcp__github__*"
+            --permission-mode dontAsk
+            --max-turns ${{ inputs.max_turns }}
+            --max-budget-usd ${{ steps.cmd.outputs.mode == 'full' && inputs.full_budget_usd || inputs.budget_usd }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WP_VERSION: ${{ inputs.wp_version }}
+          PHP_VERSION: ${{ inputs.php_version }}
+          PRODUCT_SLUG: ${{ inputs.product_slug }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+
+      # `specs` is the one mode that produces a branch worth pushing. It goes to
+      # its own branch and its own PR — never onto the PR under review, which the
+      # agent has no authority to write to.
+      - name: Open a spec PR
+        if: steps.cmd.outputs.mode == 'specs'
+        working-directory: product
+        run: |
+          BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+          case "$BRANCH" in
+            qa/spec-*) ;;
+            *) echo "No qa/spec-* branch was created — nothing to open."; exit 0 ;;
+          esac
+          git push origin "$BRANCH"
+          gh pr create --repo "$REPO" \
+            --base "${{ steps.pr.outputs.head_ref }}" \
+            --head "$BRANCH" \
+            --title "Add regression spec(s) for #$PR" \
+            --body "Generated by \`@themegrill-qa specs\` on #$PR. Each spec was proved against both the fixed and the broken code — see the commit messages.
+
+          🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+
+      - name: Upload evidence
+        if: always() && steps.cmd.outputs.mode != 'help' && steps.cmd.outputs.mode != 'suite'
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-command-pr-${{ github.event.issue.number }}-${{ github.run_id }}
+          path: |
+            /tmp/qa-evidence/**
+            suite.json
+            product/playwright-report/**
+            product/test-results/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Stop the site
+        if: always() && steps.cmd.outputs.mode != 'help'
+        working-directory: product
+        run: node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs --stop || true
+
+      # Close the loop the 👀 opened. A commenter should never have to open the
+      # Actions tab to find out whether their command worked.
+      - name: React 🚀 or 😕
+        if: always()
+        run: |
+          CONTENT="rocket"
+          [ "${{ job.status }}" = "success" ] || CONTENT="confused"
+          gh api -X POST "repos/$REPO/issues/comments/$COMMENT_ID/reactions" \
+            -f content="$CONTENT" >/dev/null || true

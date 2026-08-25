@@ -1,0 +1,208 @@
+name: QA suite (reusable)
+
+# The AI-free tier. THIS WORKFLOW NEEDS NO ANTHROPIC_API_KEY and spends nothing
+# but runner minutes — which is the whole point of it, and the reason it runs on
+# every PR including drafts.
+#
+# It is therefore the natural **required** status check. The agent review
+# (pr-qa.yml) should stay advisory: it is probabilistic, and a required check
+# that is occasionally wrong for unexplainable reasons is a check people learn
+# to bypass.
+#
+# Only the `fresh` tier ever runs here. A `@demo` spec needs the product's demo
+# content imported, which a disposable runner site does not have, so running one
+# would fail for reasons that have nothing to do with the pull request.
+
+on:
+  workflow_call:
+    inputs:
+      product_slug:
+        description: "Product slug, must match a file in knowledge/<slug>.md"
+        required: true
+        type: string
+      product_type:
+        description: "theme or plugin"
+        required: true
+        type: string
+      wp_version:
+        required: false
+        type: string
+        default: "latest"
+      php_version:
+        required: false
+        type: string
+        default: "8.3"
+      qa_ref:
+        description: "Ref of the shared themegrill-qa repo to use"
+        required: false
+        type: string
+        default: "main"
+      node_version:
+        required: false
+        type: string
+        default: "20"
+      engine:
+        description: "playground | wp-env"
+        required: false
+        type: string
+        default: "playground"
+      timeout_ms:
+        description: "Hard ceiling on the suite run itself, in milliseconds."
+        required: false
+        type: number
+        default: 900000
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Read-only except for the checks the annotations produce. No comment is
+    # posted and nothing is written back to the PR: the job's own pass/fail is
+    # the signal, which is what a required check should be.
+    permissions:
+      contents: read
+
+    concurrency:
+      group: qa-suite-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Check out the product
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: product
+
+      - name: Check out shared QA tooling
+        uses: actions/checkout@v4
+        with:
+          repository: ThemeGrill/themegrill-qa      # <-- change to your org/repo
+          ref: ${{ inputs.qa_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: themegrill-qa
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      # Does this product even have a suite? No suite is a valid state, and the
+      # job should be a visible skip rather than a confusing green.
+      - name: Look for a suite manifest
+        id: manifest
+        working-directory: product
+        run: |
+          if [ -f .themegrill-qa/suite.json ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No .themegrill-qa/suite.json — this product has no suite yet." >> "$GITHUB_STEP_SUMMARY"
+            echo "See SUITE.md in ThemeGrill/themegrill-qa for what to add." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Only Chromium. The full `playwright install --with-deps` pulls three
+      # engines and adds minutes to every run for coverage nobody reads.
+      - name: Install Chromium
+        if: steps.manifest.outputs.found == 'true'
+        run: npx --yes playwright@latest install --with-deps chromium
+
+      - name: Boot a disposable WordPress
+        if: steps.manifest.outputs.found == 'true'
+        working-directory: product
+        env:
+          WP_VERSION: ${{ inputs.wp_version }}
+          PHP_VERSION: ${{ inputs.php_version }}
+        run: |
+          set -o pipefail
+          node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs \
+            --engine "${{ inputs.engine }}" | tee ../boot.json
+          echo "TGQA_BASE_URL=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("../boot.json","utf8")).url)')" >> "$GITHUB_ENV"
+
+      - name: Run the suite (fresh tier)
+        id: suite
+        if: steps.manifest.outputs.found == 'true'
+        working-directory: product
+        run: |
+          set +e
+          node ../themegrill-qa/plugins/themegrill-qa/scripts/run-suite.mjs \
+            --tier fresh --install --json \
+            --timeout-ms ${{ inputs.timeout_ms }} \
+            --base-url "$TGQA_BASE_URL" > ../suite.json
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          cat ../suite.json
+
+      # Annotations land in the Files-changed view, which is where the author is
+      # already looking. A failure they have to go hunting for in a log is a
+      # failure they will not read.
+      - name: Annotate failures onto the PR
+        if: always() && steps.manifest.outputs.found == 'true'
+        run: |
+          node - <<'JS'
+          const fs = require("fs");
+          let r;
+          try { r = JSON.parse(fs.readFileSync("suite.json", "utf8")); }
+          catch { console.log("::warning::run-suite.mjs produced no parseable JSON"); process.exit(0); }
+
+          if (r.suite === false) { console.log("::notice::no suite manifest"); process.exit(0); }
+
+          // Exit 2 means the harness broke, which is NOT the same as tests
+          // failing and must never be reported as a test failure.
+          if (r.ok === false && !r.failures) {
+            console.log(`::error::suite could not run — ${r.reason ?? "unknown"}`);
+            process.exit(0);
+          }
+
+          for (const f of r.failures ?? []) {
+            const msg = String(f.error ?? "").replace(/\r?\n/g, "%0A");
+            console.log(`::error file=${f.file},line=${f.line ?? 1}::${f.title} — ${msg}`);
+          }
+          for (const f of r.fixme ?? []) {
+            console.log(`::notice file=${f.file},line=${f.line ?? 1}::fixme, still open: ${f.title}`);
+          }
+
+          const s = [
+            `## QA suite — ${r.ok ? "passed" : "failed"}`, "",
+            `**${r.passed} passed · ${r.failed} failed · ${r.skipped} skipped · ${r.flaky} flaky**`,
+            `tier \`${r.tier}\` · env \`${r.env}\` · ${Math.round((r.duration_ms ?? 0) / 1000)}s`, "",
+          ];
+          if (r.flaky > 0) {
+            s.push(`> ${r.flaky} test(s) passed only on retry. A flaky suite erodes trust faster than a failing one — fix or quarantine these.`, "");
+          }
+          if ((r.failures ?? []).length) {
+            s.push("| Spec | Failure |", "|---|---|");
+            for (const f of r.failures) {
+              s.push(`| \`${f.file}:${f.line}\` | ${f.title} |`);
+            }
+          }
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, s.join("\n") + "\n");
+          JS
+
+      - name: Upload the Playwright report
+        if: always() && steps.manifest.outputs.found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-suite-${{ inputs.product_slug }}-${{ github.event.pull_request.number || github.run_id }}
+          path: |
+            product/playwright-report/**
+            product/test-results/**
+            suite.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Stop the site
+        if: always() && steps.manifest.outputs.found == 'true'
+        working-directory: product
+        run: node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs --stop || true
+
+      # Exit non-zero so this can be a required check. The distinction matters:
+      # exit 1 is "your tests failed", exit 2 is "the harness broke" — and the
+      # second must not be silently reported as the first.
+      - name: Fail the job on suite failure
+        if: steps.manifest.outputs.found == 'true'
+        run: |
+          CODE="${{ steps.suite.outputs.exit }}"
+          case "$CODE" in
+            0) echo "suite passed" ;;
+            1) echo "::error::suite failed — see annotations above"; exit 1 ;;
+            *) echo "::error::suite could not run (exit $CODE) — this is a harness failure, not a test failure"; exit 1 ;;
+          esac
