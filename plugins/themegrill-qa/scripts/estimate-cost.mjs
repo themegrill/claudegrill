@@ -59,6 +59,16 @@ const o = {
   smokeShards: 6,
   fullShards: 18,
   publicRepos: false,
+
+  // --- the suite offset -----------------------------------------------------
+  // Fraction of a product's declared areas covered by GREEN @fresh specs, i.e.
+  // `areas_covered.length / areas_declared.length` from suite-index.mjs. Zero by
+  // default, so every number above stays exactly what it was before the suite
+  // layer existed.
+  suiteCoverage: 0,
+  projectionMonths: 0,
+  specsPerMonth: 4,
+  areasPerProduct: 9,
 };
 
 const argv = process.argv.slice(2);
@@ -75,6 +85,10 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--smoke-shards") o.smokeShards = n();
   else if (a === "--full-shards") o.fullShards = n();
   else if (a === "--public-repos") o.publicRepos = true;
+  else if (a === "--suite-coverage") o.suiteCoverage = n();
+  else if (a === "--projection") o.projectionMonths = n();
+  else if (a === "--specs-per-month") o.specsPerMonth = n();
+  else if (a === "--areas-per-product") o.areasPerProduct = n();
   else {
     console.error(`unknown flag: ${a}`);
     process.exit(2);
@@ -106,6 +120,60 @@ const reconCost = agentRunCost(o.model, RECON);
 const smoke = o.smokeShards * shardCost + reconCost;
 const full = o.fullShards * shardCost + reconCost;
 
+// --- the suite offset -------------------------------------------------------
+//
+// An area covered by green @fresh specs costs RUNNER MINUTES instead of an agent
+// shard. That is the entire economic argument for the suite layer, and until now
+// nothing in this repo expressed it as a number.
+//
+// Two assumptions, stated rather than buried, because they are what the curve
+// below stands on:
+//
+//   1. Shards scale linearly with uncovered areas. A covered area's shard is
+//      simply not dispatched.
+//   2. A PR review does NOT scale to zero with coverage. Reading the diff,
+//      classifying risk, triaging suite failures and writing the comment happen
+//      whatever the coverage is; only the missions scale. PR_FIXED_SHARE is the
+//      fraction that does not move.
+//
+// Both are estimates. Replace them with observed figures once the pilot has
+// produced a dozen runs — the same caveat as the token shapes above.
+const PR_FIXED_SHARE = 0.4;
+
+// Minutes the suite itself costs, which is what replaces the agent work.
+const SUITE_MIN_PER_PR = 6;
+const SUITE_MIN_PER_SWEEP = 10;
+
+/** Everything one product costs in a month at a given spec coverage, 0..1. */
+function perProductAt(coverage) {
+  const cov = Math.min(Math.max(coverage, 0), 1);
+
+  const runs = o.prsPerMonth * o.triagePassRate;
+  const prAt = prCost * (PR_FIXED_SHARE + (1 - PR_FIXED_SHARE) * (1 - cov));
+
+  const smokeShards = o.smokeShards * (1 - cov);
+  const fullShards = o.fullShards * (1 - cov);
+  const smokeAt = smokeShards * shardCost + reconCost;
+  const fullAt = fullShards * shardCost + reconCost;
+
+  const claude =
+    runs * prAt + o.smokeSweepsPerMonth * smokeAt + o.fullSweepsPerMonth * fullAt;
+
+  // Actions minutes: a PR run ~12 min; each shard ~25 min; recon ~5 min. The
+  // suite adds minutes back — cheap ones, which is the whole point.
+  const mins =
+    runs * 12 +
+    o.smokeSweepsPerMonth * (smokeShards * 25 + 5) +
+    o.fullSweepsPerMonth * (fullShards * 25 + 5) +
+    (cov > 0
+      ? runs * SUITE_MIN_PER_PR +
+        (o.smokeSweepsPerMonth + o.fullSweepsPerMonth) * SUITE_MIN_PER_SWEEP
+      : 0);
+
+  const ci = o.publicRepos ? 0 : mins * ACTIONS_PER_MIN_PRIVATE;
+  return { claude, ci, mins, runs, smokeShards, fullShards };
+}
+
 const money = (n) => `$${n.toFixed(2)}`.padStart(9);
 const row = (label, value, suffix = "") =>
   console.log(label.padEnd(34) + money(value) + suffix);
@@ -120,16 +188,11 @@ row(`smoke sweep (${o.smokeShards} shards + recon)`, smoke);
 row(`full sweep (${o.fullShards} shards + recon)`, full);
 console.log();
 
-const runs = o.prsPerMonth * o.triagePassRate;
-const perProduct =
-  runs * prCost + o.smokeSweepsPerMonth * smoke + o.fullSweepsPerMonth * full;
-
-// Actions minutes: a PR run ~12 min; each shard ~25 min; recon ~5 min.
-const mins =
-  runs * 12 +
-  o.smokeSweepsPerMonth * (o.smokeShards * 25 + 5) +
-  o.fullSweepsPerMonth * (o.fullShards * 25 + 5);
-const ci = o.publicRepos ? 0 : mins * ACTIONS_PER_MIN_PRIVATE;
+const here = perProductAt(o.suiteCoverage);
+const runs = here.runs;
+const perProduct = here.claude;
+const mins = here.mins;
+const ci = here.ci;
 
 const fmt = (n, d = 0) => n.toLocaleString("en-US", { maximumFractionDigits: d });
 
@@ -137,6 +200,17 @@ console.log(
   `per product / month  (${runs.toFixed(0)} PR runs, ` +
     `${+o.smokeSweepsPerMonth.toFixed(2)} smoke, ${+o.fullSweepsPerMonth.toFixed(2)} full)`,
 );
+if (o.suiteCoverage > 0) {
+  const base = perProductAt(0);
+  console.log(
+    `  suite coverage ${(o.suiteCoverage * 100).toFixed(0)}% of areas` +
+      ` — shards ${o.fullShards} → ${here.fullShards.toFixed(1)} on a full sweep`,
+  );
+  console.log(
+    `  Claude without the suite would be ${money(base.claude).trim()}` +
+      ` — saving ${money(base.claude - here.claude).trim()}/product/month`,
+  );
+}
 row("  Claude", perProduct);
 row(`  Actions (${fmt(mins)} min)`, ci, o.publicRepos ? "  [free — public repo]" : "");
 row("  subtotal", perProduct + ci);
@@ -153,8 +227,75 @@ if (!o.publicRepos) {
   );
 }
 
+// ---------------------------------------------------------------- projection
+//
+// The declining curve. This is the entire argument for the suite layer, and
+// until it existed nothing in this repo showed it — the model could only ever
+// print a flat monthly cost, which made "specs pay for themselves" a claim
+// rather than a number.
+//
+// The coverage model is deliberately crude and deliberately pessimistic:
+// specs accumulate at a fixed rate, each area needs several before it counts as
+// covered, and coverage saturates at 100% rather than continuing to pay off.
+if (o.projectionMonths > 0) {
+  const SPECS_PER_AREA = 3; // matches suite-index.mjs's `thinnest_areas` threshold
+
+  console.log();
+  console.log(
+    `projection — ${o.specsPerMonth} spec${o.specsPerMonth === 1 ? "" : "s"}/product/month, ` +
+      `${o.areasPerProduct} areas, ${SPECS_PER_AREA} specs to cover one`,
+  );
+  console.log("=".repeat(62));
+  console.log(
+    "month".padEnd(8) +
+      "coverage".padStart(10) +
+      "Claude".padStart(12) +
+      "Actions".padStart(11) +
+      "total/mo".padStart(12),
+  );
+
+  let cumulative = 0;
+  let baselineCumulative = 0;
+  const base = perProductAt(0);
+
+  for (let month = 1; month <= o.projectionMonths; month++) {
+    const specs = o.specsPerMonth * month;
+    const coverage = Math.min(specs / (o.areasPerProduct * SPECS_PER_AREA), 1);
+    const p = perProductAt(coverage);
+
+    const totalMonth = (p.claude + p.ci) * o.products;
+    cumulative += totalMonth;
+    baselineCumulative += (base.claude + base.ci) * o.products;
+
+    // Every month for the first year, then annually — a 36-month table nobody
+    // reads is worse than a 12-row one they do.
+    if (month <= 12 || month % 12 === 0) {
+      console.log(
+        String(month).padEnd(8) +
+          `${(coverage * 100).toFixed(0)}%`.padStart(10) +
+          money(p.claude * o.products).slice(-12).padStart(12) +
+          money(p.ci * o.products).slice(-11).padStart(11) +
+          money(totalMonth).slice(-12).padStart(12),
+      );
+    }
+  }
+
+  console.log();
+  row(`cumulative over ${o.projectionMonths} months`, cumulative);
+  row("  same period, no suite", baselineCumulative);
+  row("  saved", baselineCumulative - cumulative);
+  console.log(
+    `\nThat gap is what the suite layer buys. It is not a discount — it is work` +
+      `\nmoved from the priced column into the runner-minutes column, permanently.`,
+  );
+}
+
 console.log(`
 The lever that actually moves this number is not the model choice.
 It is moving coverage from agent runs into committed Playwright specs,
 which cost Actions minutes only. Every spec you accumulate permanently
-removes work from the priced column.`);
+removes work from the priced column.
+
+  --suite-coverage 0.55        model today's coverage (from suite-index.mjs:
+                               areas_covered.length / areas_declared.length)
+  --projection 24              show the curve as coverage grows`);
