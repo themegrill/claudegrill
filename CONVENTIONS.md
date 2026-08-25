@@ -4,8 +4,9 @@ Every spec in every ThemeGrill product repo follows these. They are lifted from 
 working WordPress plugin suite that had already settled them in practice, adapted
 for a catalogue that is part themes and part plugins.
 
-Nine rules. The first four are about not writing brittle tests; the rest are about
-tests that still mean something in a year.
+Ten rules. The first four are about not writing brittle tests; the next five are
+about tests that still mean something in a year; the tenth is about a test being
+runnable at all in the place it is meant to run.
 
 ---
 
@@ -187,6 +188,55 @@ For plugins, activating a different theme must not change any assertion — that
 what rule 1 buys you. For themes, the varied axis is what is *installed
 alongside*, and the assertions are mostly visual, which is what snapshots are
 for.
+
+## 10. Tier every test, and match the harness the product already has
+
+### Tiering
+
+A spec that cannot run where it is meant to run is not coverage — it is a red
+tick somebody will learn to ignore. So every test declares where it can run, as
+a tag **in its title**, because the title is what Playwright's `--grep` matches:
+
+| Tag | Runs on | Meaning |
+|---|---|---|
+| `@fresh` | a clean `boot-wp` site seeded only by the blueprint | CI-safe. This is the tier that gates PRs. |
+| `@demo` | a site with the product's demo content imported | Local / nightly only. **Not CI coverage.** |
+
+```js
+test('centered header keeps the tagline @fresh @header', async ({ page }) => {
+```
+
+Three consequences, and none of them is negotiable:
+
+- **An untagged test is treated as `@demo`.** The conservative reading. A test
+  nobody tiered was written against whatever site its author had open, and
+  assuming that was a clean one is how a green CI run becomes a lie.
+- **CI runs `@fresh` only.** A `@demo` test cannot be reproduced on a runner, so
+  it must never gate a pull request.
+- **If a bug only reproduces on a demo-imported site, the blueprint requirement
+  is itself the finding.** Report what the blueprint would need to seed. Do not
+  write a `@demo` spec and call the area covered.
+
+Add an `@area` tag matching a critical flow from the product's knowledge file —
+`@header`, `@customizer` — so a sweep shard can run only its own area, and so
+`suite-index.mjs` can tell the agent which areas it does *not* need to explore.
+
+Each test also carries the docblock from `SUITE.md` §3: `@area`, `@tier`,
+`@guards`, `@source`, and the `@why` that rule 6 already requires.
+
+### Match the existing harness
+
+Earlier drafts of this document assumed `.spec.js`. ColorMag's suite is
+TypeScript on pnpm. **The suite is the reality and the convention yields to it:
+match the product's existing harness and do not introduce a second one.**
+
+If the product writes TypeScript on pnpm, write TypeScript on pnpm — not
+JavaScript, not a new config, not a different test-utility package because you
+prefer it. A product with two harnesses has neither: the second rots, because
+only the person who added it ever runs it.
+
+The examples throughout this document are JavaScript for readability. They are
+illustrations of a rule, not a statement about which language to write in.
 
 ---
 

@@ -28,6 +28,7 @@ const skillsDest = path.join(os.homedir(), ".claude", "skills");
 
 const SKILLS = [
   "verify-fix",
+  "write-spec",
   "pr-qa-review",
   "regression-sweep",
   "full-test",

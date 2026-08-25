@@ -2,6 +2,7 @@
 
 > **Start here:** [SETUP.md](SETUP.md) is the ordered onboarding runbook.
 > [CONVENTIONS.md](CONVENTIONS.md) governs every spec written against this.
+> [SUITE.md](SUITE.md) is the contract between this platform and a product's suite.
 > [STORAGE.md](STORAGE.md) says where every artifact is kept.
 > [SETUP-COLORMAG.md](SETUP-COLORMAG.md) is the concrete first-product walkthrough.
 > [INSTALL.md](INSTALL.md) says who needs a local install (fewer people than you think).
@@ -10,7 +11,7 @@
 
 
 The QA loop you already run by hand in Claude Code — diff, boot WordPress,
-validate with Playwright, assess risk, report — packaged into three entry points
+validate with Playwright, assess risk, report — packaged into four entry points
 so it runs without you.
 
 | # | Entry point | Trigger | Output |
@@ -18,6 +19,62 @@ so it runs without you.
 | 1 | `/verify-fix` | You, locally, in Claude Code | A verdict in your terminal |
 | 2 | PR QA runner | Automatically on every PR | One comment on the PR |
 | 3 | Regression sweep | Weekly cron, or manual after a release | A report artifact, and Jira tickets only when asked |
+| 4 | `/write-spec` | A verified finding, or the spec queue | A committed `@fresh` regression spec on its own branch |
+
+---
+
+## Three CI checks, split by what they cost
+
+A product repo gets three thin workflows. The split is the point: the free one is
+the gate, the expensive one is advisory.
+
+| Check | Costs | Runs on | Required? |
+|---|---|---|---|
+| **QA suite** (`suite.yml`) | runner minutes only — **no `ANTHROPIC_API_KEY`** | every PR, drafts included | **yes** — make this the required check |
+| **QA review** (`pr-qa.yml`) | tokens | non-draft PRs with functional changes | no, advisory |
+| **QA command** (`pr-command.yml`) | tokens, except `suite` | a `@themegrill-qa` comment | no |
+
+The agent review stays advisory deliberately. A required check that is
+occasionally wrong for reasons nobody can reconstruct is a check people learn to
+bypass — and then it gates nothing anyway.
+
+### `@themegrill-qa` — re-run QA from a PR comment
+
+| Comment | Effect |
+|---|---|
+| `@themegrill-qa` | Full re-review — suite plus agent |
+| `@themegrill-qa suite` | Suite only. **No API key used, no agent, free.** |
+| `@themegrill-qa verify <text>` | Focused agent run on `<text>` only, small budget |
+| `@themegrill-qa specs` | Write regression specs for this PR's verified findings and open a spec PR |
+| `@themegrill-qa areas <a,b>` | Agent run restricted to those areas |
+| `@themegrill-qa help` | Post the table above |
+
+Only repository owners, members and collaborators can trigger a run. That gate is
+not optional: without it, anyone who can comment on a public PR can spend the
+Anthropic budget in a loop.
+
+---
+
+## The suite layer — why cost goes down over time
+
+An agent finding costs tokens on **every run, forever**. The same finding as a
+committed spec costs tokens **once**, then runs for approximately free on every
+PR for the life of the product.
+
+So the platform runs a product's own Playwright suite first and cheaply, spends
+agent budget only on the areas the suite does not cover, and converts every
+verified finding into a committed spec. **[SUITE.md](SUITE.md)** is the contract:
+a product opts in with `.themegrill-qa/suite.json`, and everything degrades
+gracefully when that file is absent.
+
+```
+node plugins/themegrill-qa/scripts/suite-index.mjs   # what the suite covers, and does not
+node plugins/themegrill-qa/scripts/run-suite.mjs     # run it; one line of JSON out
+node plugins/themegrill-qa/scripts/estimate-cost.mjs --projection 24
+```
+
+That last command prints the declining curve, which is the entire argument for
+this design.
 
 One shared repo, seven products. Each product repo gets a ~15-line caller
 workflow and a knowledge file; everything else lives here.
@@ -30,8 +87,9 @@ workflow and a knowledge file; everything else lives here.
 themegrill-qa/                     ← this repo is also the plugin marketplace
 ├── .claude-plugin/marketplace.json
 ├── plugins/themegrill-qa/         ← the installable plugin
-│   ├── skills/                    the five commands
+│   ├── skills/                    the six commands
 │   ├── scripts/                   Node helpers, zero dependencies
+│   ├── hooks/                     the spec-guard Stop hook
 │   └── blueprints/                seeded WordPress for theme / plugin testing
 ├── packages/core/                 shared spec helpers
 ├── knowledge/                     starter knowledge files and the template
@@ -113,12 +171,23 @@ Honest accounting, so you know where to look first when something breaks.
 - `detect-product.mjs` against a theme (`style.css` header), a plugin (PHP header),
   invocation from a subdirectory, Jira-key extraction from a branch name, pro
   companion detection, and a clean failure on a non-WordPress directory.
-- All YAML parses; all JSON parses; both scripts pass `bash -n`.
+- All YAML parses; all JSON parses; every `.mjs` passes `node --check`.
+- `run-suite.mjs` and `suite-index.mjs` against a real Playwright 1.62.1 fixture:
+  tier and area filtering, all three exit codes, graceful degradation with no
+  manifest and with a mangled spec, and a test count agreeing exactly with
+  `playwright test --list`.
+- `spec-guard.mjs` across six cases — silent in all but the one that matters.
+- `estimate-cost.mjs` still reproduces its previous output to the cent.
 - Playground CLI flags confirmed against `wp-playground start --help`.
 - Playground correctly auto-detects a theme directory and mounts it at
   `/wordpress/wp-content/themes/<slug>`, and accepts the blueprint file.
 
-**Not yet verified end to end:** a completed Playground boot. The environment
+**Not yet verified end to end:** a completed Playground boot; any CI run at all,
+including the two new workflows; `run-suite.mjs` against a real product rather
+than the fixture; and the `spec-guard` hook firing as an actual registered plugin
+hook rather than being invoked by hand.
+
+On the Playground boot: The environment
 this was built in blocks egress to `wordpress.org` and
 `playground.wordpress.net`, so the run got as far as mounting and blueprint
 parsing and then failed fetching WordPress itself. Everything before the network

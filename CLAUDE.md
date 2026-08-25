@@ -25,12 +25,19 @@ plugins/themegrill-qa/   the installable plugin — everything the skills need
     full-test/           manual: whole-product sweep, fans out to CI
     regression-sweep/    the sweep body, invoked per shard
     knowledge-init/      draft a product's knowledge file
+    write-spec/          verified finding -> committed regression spec
   scripts/               the deterministic layer — Node, zero dependencies
     detect-product.mjs   identify the product from source -> JSON
     boot-wp.mjs          disposable WordPress, product mounted live
+    run-suite.mjs        run the product's own Playwright suite -> JSON
+    suite-index.mjs      what the suite covers, and what it does NOT
     ingest-docs.mjs      docs site -> intent layer + area list (REST or sitemap)
     ingest-testsuite.mjs an existing Selenium/Robot suite -> specification
-    estimate-cost.mjs    spend model
+    estimate-cost.mjs    spend model, incl. the coverage projection
+    lib/                 shared: qa-home, platform, spec-parse, suite-manifest
+  hooks/
+    hooks.json           Stop hook registration
+    spec-guard.mjs       notices source changed with no spec; queues it
   blueprints/            seeded WordPress state for theme / plugin testing
 install.mjs              clone-install fallback; not needed for plugin installs
 packages/core/           shared spec helpers — the suite layer
@@ -38,6 +45,10 @@ knowledge/               templates and starter knowledge files
 examples/                a spec in the house style, to copy into a product repo
 .github/workflows/       reusable workflows + per-product caller examples
 ```
+
+**[SUITE.md](SUITE.md) is the contract between this platform and a product's own
+Playwright suite.** A product declares itself with `.themegrill-qa/suite.json`;
+absent that file, everything degrades gracefully to the pre-suite behaviour.
 
 Scripts and blueprints live **inside** the plugin because Claude Code copies a
 plugin into its own cache, and a copied plugin cannot reach files outside its
@@ -68,18 +79,27 @@ These are load-bearing. Changing one is a design decision, not a refactor.
    human passes `--file-tickets`, capped at five, into a triage state. Scheduled
    runs can never file tickets.
 
-5. **A finding requires reproduction twice plus cited evidence.** The five-part
+5. **A finding requires reproduction twice plus cited evidence.** The six-part
    gate in `regression-sweep` is the reason this is trusted. Do not relax it, and
-   do not let any agent report a defect it only saw once.
+   do not let any agent report a defect it only saw once. The sixth part — *is a
+   green spec already guarding this?* — exists because a deterministic check
+   disagreeing with an agent's single observation is nearly always the agent.
 
 6. **Knowledge files live in the product repo** at `.themegrill-qa/knowledge.md`,
    so the PR that renames an option updates its description in the same commit.
    `detect-product.mjs` checks that path first.
 
 7. **Never edit product source to make a check pass.** These skills verify; they
-   do not fix.
+   do not fix. `write-spec` is bound by this too — if a product needs an owned
+   selector to be testable, that is a reviewed PR by a human, not a side effect.
 
-8. **Specs select on markup we own, never on theme or third-party class names.**
+8. **Every test carries a tier tag, and CI runs only `@fresh`.** A `@demo` spec
+   needs the product's demo content imported and cannot run on a runner, so it
+   must never gate a PR. **An untagged test counts as `@demo`** — the
+   conservative reading, because assuming otherwise turns a green CI run into a
+   lie. See `SUITE.md` §2.
+
+9. **Specs select on markup we own, never on theme or third-party class names.**
    Borrowed from `wpmake22/post-purchase-hub`, which states the reason exactly: a
    spec reaching for a theme's class names passes on the theme it was written
    against and fails on every other one, which is the opposite of the point.
@@ -90,6 +110,33 @@ These are load-bearing. Changing one is a design decision, not a refactor.
      renders is WooCommerce or block output we cannot annotate. Reserve owned
      data attributes for theme-specific chrome: header layouts, footer columns,
      customizer-driven regions.
+
+## Where work lives — the three-layer memory
+
+This is the shape of the whole platform, and the reason the suite layer exists.
+
+| Layer | Remembers | Where | Cost per run |
+|---|---|---|---|
+| `knowledge.md` | how the product is *meant* to work | product repo | free (read) |
+| findings ledger `.jsonl` | every confirmed finding, fingerprinted | product repo | free (read) |
+| `tests/e2e/**` | the bug, frozen as a deterministic assertion | product repo | runner minutes |
+| agent exploration | anything not yet in the three above | — | **tokens, every run** |
+
+**Work moves downward through those layers, never upward.**
+
+Something the agent discovered becomes a spec. Something a spec proved becomes a
+line in the knowledge file. Nothing that is already a spec goes back to being
+explored — that is what `suite-index.mjs`'s `areas_uncovered` is for, and why
+every skill reads it before deriving missions.
+
+Stated as economics, because it is the reason for every decision in the suite
+layer: an agent finding costs tokens on **every run, forever**; the same finding
+as a committed spec costs tokens **once**, then runs for approximately free on
+every PR for the life of the product. A verified finding that does not become a
+spec is a finding you have arranged to pay for again.
+
+`node plugins/themegrill-qa/scripts/estimate-cost.mjs --projection 24` prints
+that curve.
 
 ## Conventions
 
@@ -139,6 +186,27 @@ These are load-bearing. Changing one is a design decision, not a refactor.
   - `theme-test.json` hardcoded `sidebar-1` (a `_s`-starter-theme convention).
     ColorMag registers `colormag_right_sidebar` etc. and the widget-seed step
     failed outright. Fixed to discover the first registered sidebar at runtime.
+- `run-suite.mjs` against a **real Playwright 1.62.1 suite** — a fixture theme
+  with a manifest, a two-line config, and specs across two tiers and three
+  areas. Confirmed: tier filtering (`fresh` 4, `demo` 2, `all` 6 on that
+  fixture), area filtering, the untagged-means-demo rule, all three exit codes
+  (0 pass / 1 tests failed / 2 harness broken — install failure, missing runner
+  binary, timeout, malformed manifest, no base URL), the one-JSON-line stdout
+  contract, and repo-relative attachment paths
+- **Playwright's grep semantics, checked rather than assumed** (1.62.1): two
+  `--grep` flags do *not* and-together, the second wins — so tier+area uses one
+  pattern with two lookaheads, confirmed to intersect correctly.
+  `--grep-invert` composes with `--grep`, which is what makes the demo tier
+  expressible
+- `suite-index.mjs` against the same fixture, including a deliberately mangled
+  spec file: it degrades rather than crashing, and its test count agrees
+  **exactly** with `playwright test --list` (9 in 3 files)
+- `spec-guard.mjs` across six cases: clean tree, source-only, source+spec,
+  a second run on the same branch, a non-WordPress git repo, a directory that
+  is not a repo, and a missing stdin payload. Silent in every case but
+  source-only
+- `estimate-cost.mjs` still reproduces its three previous baselines byte for
+  byte with no new flags passed
 - All YAML and JSON parses; every `.mjs` passes `node --check`
 
 **Not verified**
@@ -159,7 +227,25 @@ These are load-bearing. Changing one is a design decision, not a refactor.
   `@wp-playground/cli` directly (no wrapper) to confirm it's upstream, and
   either file it there or fall back to `--engine wp-env` by default on
   Windows.
-- Any live CI run. No workflow has executed.
+- **Any live CI run. No workflow in this repo has ever executed.** That now
+  includes the two new ones, `suite.yml` and `pr-command.yml`, plus the suite
+  steps folded into `pr-qa.yml`. Their YAML parses and the shell inside them is
+  written carefully; neither is evidence that they run.
+- **`run-suite.mjs` against a real product.** It has been proved against a
+  fixture, never against ColorMag — so the manifest inference, the `--install`
+  path on a pnpm lockfile, and `--boot` handing off from `boot-wp.mjs` are all
+  untested against the real thing. `--boot` in particular is blocked behind
+  task 1 below.
+- **`spec-guard.mjs` wired as an actual plugin hook.** The script is verified by
+  invoking it directly with a Stop-shaped payload; that Claude Code loads
+  `hooks/hooks.json` and fires it on `Stop` is not. Two things to know when
+  testing it: `Stop` fires at the end of **every turn**, not once per session,
+  which is why the dedup-by-branch matters; and on exit 0 a hook's **stderr goes
+  to the debug log, not to the user**, so the one-line nudge is visible under
+  `claude --debug` and the mechanism that actually reaches a human is the
+  committed queue file plus the PR-comment nudge.
+- **The `write-spec` proof gate end to end.** No spec has been generated,
+  stashed against broken code, and committed by it yet.
 - `ingest-docs.mjs` against the real docs sites.
 - Jira filing end to end (needs Rovo API-token auth enabled).
 - Every `TODO` in `knowledge/colormag.md` and `knowledge/zakra.md` — those are
@@ -168,12 +254,29 @@ These are load-bearing. Changing one is a design decision, not a refactor.
 ## Next tasks, in order
 
 1. **Make `boot-wp.mjs` work end to end** on a machine with network access. Fix
-   whatever the blueprint gets wrong. Everything else is blocked behind this.
-2. **Run `/verify-fix` on 3+ already-hand-verified ColorMag fixes** and compare
-   verdicts. This is the cheapest test of whether the approach works.
-3. **Resolve the knowledge-file TODOs** for ColorMag with a maintainer.
-4. **First live PR run** on ColorMag only. Check that trivial PRs are skipped.
-5. **Port the existing spec harness, do not invent one.**
+   whatever the blueprint gets wrong. **Everything else is still blocked behind
+   this** — including `run-suite.mjs --boot`, `suite.yml`, and every CI path,
+   all of which reach the environment only through that one script.
+2. **Point `run-suite.mjs` at ColorMag's real suite.** It is proved against a
+   fixture, never against a product. Write ColorMag's `.themegrill-qa/suite.json`,
+   tier its existing specs, and check that the manifest inference, `--install` on
+   a pnpm lockfile, and the JSON report parse all survive contact. Cheap, and it
+   is what the whole suite layer rests on.
+3. **Run `/verify-fix` on 3+ already-hand-verified ColorMag fixes** and compare
+   verdicts. Still the cheapest test of whether the approach works — and now it
+   also exercises Step 3.5 and the `write-spec` handoff.
+4. **Prove the `write-spec` gate once, by hand.** Take one known ColorMag fix,
+   let the skill write the spec, and confirm it genuinely fails against the
+   stashed code with an assertion failure rather than a timeout. If that gate
+   does not hold, every spec this platform generates is decorative.
+5. **Resolve the knowledge-file TODOs** for ColorMag with a maintainer. These
+   now matter more than they did: `suite-index.mjs` derives `areas_uncovered`
+   from the knowledge file's critical-flows list, so a wrong area list sends the
+   agent's whole budget to the wrong place.
+6. **First live CI run** on ColorMag only — `suite.yml` first, since it needs no
+   API key and can fail for free. Then `pr-qa.yml`, checking that trivial PRs
+   are skipped. Then one `@themegrill-qa help` comment to confirm the gating.
+7. **Port the existing spec harness, do not invent one.**
    `wpmake22/post-purchase-hub` already has a working Playwright suite with
    settled conventions: wp-env, two projects (desktop 1440×900, mobile 375×812),
    per-theme visual snapshots, owned-selector rule, and a full unit /
@@ -182,18 +285,20 @@ These are load-bearing. Changing one is a design decision, not a refactor.
    deterministic, costs no tokens, and is the fastest route to an accumulating
    suite. Transpose the matrix for themes — one theme × N plugins, not one
    plugin × N themes.
-6. **Spec generation on top of that harness.** Verified findings arrive as a PR
-   containing a spec written in the house style. Wire Playwright's Generator
-   agent (`npx playwright init-agents --loop=claude`); do not write an
-   orchestrator. Until this exists, cost per run never falls.
-7. **Invert the default** once the suite is trusted: suite on every PR, agent on
+8. **Invert the default** once the suite is trusted: suite on every PR, agent on
    HIGH-risk diffs only. PR reviews are ~64% of spend, so this is where the
-   savings are.
-8. **Snapshot diff triage** — the agent's best-fitting job in the whole system.
+   savings are. The pieces now exist — `suite.yml` is the free tier and
+   `pr-qa.yml` is gated — so this is a change to the callers, not new code.
+9. **Snapshot diff triage** — the agent's best-fitting job in the whole system.
    Six themes × two viewports × N specs is a large snapshot set, and
    `--update-snapshots` makes rubber-stamping a real regression as easy as
    accepting an intended restyle. Classifying those diffs has no good
    non-AI answer.
+
+**Done, previously task 6:** spec generation. `write-spec` writes the spec,
+`suite-index.mjs` says where it is needed, and `spec-guard` notices when one is
+missing. What remains is proving the gate against a real fix — task 4 — because
+the mechanism existing and the mechanism working are different claims.
 
 Deliberately **not** on the list: a dashboard (GitHub and Jira already are one),
 a vector database, a custom agent framework, merge authority, or a healer allowed

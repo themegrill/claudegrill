@@ -37,13 +37,55 @@ cd themegrill-qa
 node install.mjs
 ```
 
-Links the five skills into `~/.claude/skills` (junctions on Windows, so no
+Links the six skills into `~/.claude/skills` (junctions on Windows, so no
 administrator rights) and sets `THEMEGRILL_QA_HOME`. Update with `git pull` — and
 re-run `node install.mjs` if it reported that it had to copy rather than link.
 
 Note the precedence: **a skill in `~/.claude/skills` wins over a plugin's copy.**
 That is what makes this route right for developing the tooling, and it also means
 you can adopt a plugin route later without this install fighting it.
+
+#### The spec-guard hook is opt-in on this route
+
+The plugin routes below register the `spec-guard` hook automatically, through the
+plugin's own `hooks/hooks.json`. A clone does not — Claude Code only reads that
+file for installed plugins — so add it by hand if you want it, in
+`~/.claude/settings.json` or a project's `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$THEMEGRILL_QA_HOME/plugins/themegrill-qa/hooks/spec-guard.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Deliberately opt-in.** It runs at the end of every turn, and a hook somebody
+did not ask for is a hook they disable — along with everything else you later
+want to put on that event.
+
+What it does: if the repo has a `.themegrill-qa/suite.json`, and this session
+changed product source (`.php`, `.js`, `.ts`, `.scss`, `.css` outside `tests/`)
+without touching the spec directory, it appends one `pending` record to
+`.themegrill-qa/spec-queue.jsonl`. Once per branch, never twice. It never blocks
+and it exits 0 on every failure path.
+
+One thing worth knowing before you judge whether it is working: **on exit 0 a
+hook's stderr goes to Claude Code's debug log, not to your terminal.** So the
+one-line nudge shows up under `claude --debug`; the thing you will actually
+notice is the queue file appearing in `git status`. That is the intended
+mechanism — the queue is committed precisely so it is visible in the repo, and
+`/write-spec` with no arguments drains the oldest entry.
 
 ---
 
@@ -100,8 +142,9 @@ owner before then.
 ```
 plugins/themegrill-qa/
 ├── .claude-plugin/plugin.json
-├── skills/          the five commands
+├── skills/          the six commands
 ├── scripts/         the Node helpers the skills invoke
+├── hooks/           the spec-guard Stop hook
 └── blueprints/      seeded WordPress state
 ```
 
