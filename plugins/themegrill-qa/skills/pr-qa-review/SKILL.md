@@ -1,7 +1,7 @@
 ---
 name: pr-qa-review
 description: Diff a PR, validate it in a live WordPress with Playwright, assess risk, post a verdict
-allowed-tools: Bash, Read, Grep, Glob, mcp__playwright__*, mcp__github*
+allowed-tools: Bash, Read, Grep, Glob, Skill, mcp__playwright__*, mcp__github*
 pass-arguments: true
 ---
 
@@ -70,6 +70,33 @@ attributes, or changes to existing markup and CSS.
 State the classification and the reason in one line. For LOW, skip to Step 5 and
 say so — do not burn a browser session on a typo fix.
 
+## Step 2.5 — Read what the suite already covers
+
+One command, before you derive a single mission. It needs no site and no browser,
+so it is free — and it changes what the rest of the run should do.
+
+```bash
+node "$QA/scripts/suite-index.mjs" --pretty
+```
+
+`suite-index.mjs` tells you what the product's own specs already assert.
+**Derive your 3–6 missions preferentially from `areas_uncovered`.** An area with
+green `@fresh` specs does not need an agent mission: the specs assert what you
+would go and look at, deterministically, for runner minutes instead of tokens.
+An area with none is the only place your budget buys anything new.
+
+`thinnest_areas` is the second call on your budget — areas with one or two specs
+are smoke-tested, not covered.
+
+**Say in the PR comment which areas you skipped because the suite covers them.**
+That sentence is the visible proof this is accumulating, and it is the number
+that should shrink over the coming months. Do not omit it because it looks like
+housekeeping.
+
+Leave a mission slot free. The suite itself runs in Step 4 against the booted
+site, and if it fails, triaging those failures becomes M1 ahead of anything you
+derived here.
+
 ## Step 3 — Derive test missions from the diff
 
 Do not run a generic smoke test. Write 3–6 specific missions targeted at what
@@ -99,6 +126,24 @@ node "$QA/scripts/boot-wp.mjs" --engine playground
 Use `wp-env` instead when the diff touches SQL, mail, cron or multisite — those
 are wrong or absent under Playground's SQLite runtime and a green result would be
 meaningless.
+
+**Run the suite against the booted site before any mission:**
+
+```bash
+node "$QA/scripts/run-suite.mjs" --tier fresh --base-url <the booted URL>
+```
+
+Only the `fresh` tier, ever. A `@demo` spec needs demo content this runner does
+not have, so it would fail for reasons that have nothing to do with the PR.
+
+If it reports failures, **triaging them is mission M1.** That is the cheapest
+useful work available on this PR and it is not optional — the suite has already
+done the exploring and handed you a reproduction, a file and a line. Re-run each
+failure against the base branch and label anything that also fails there as
+pre-existing.
+
+If `suite` is `false`, note it and carry on. A product with no suite is a valid
+state, not a blocker.
 
 Run each mission with the Playwright MCP tools. Collect, per mission:
 screenshots at the decisive states, console errors, failed network requests, and
@@ -144,6 +189,15 @@ rather than adding a new one — find your previous comment by its
 <!-- themegrill-qa-bot -->
 ## QA review — <VERDICT>
 
+**Suite** — 57 passed · 2 failed · 1 skipped · 1 flaky  (fresh tier, WP 6.8 / PHP 8.3)
+<details><summary>Failures</summary>
+
+- `header-layout.spec.ts:31` centered header keeps the tagline — *also fails on base branch, pre-existing*
+- `entry-summary.spec.ts:12` summary spacing — **new on this branch**
+</details>
+
+**Agent review** — 4 missions, areas not covered by the suite: footer, widgets
+
 **Risk:** HIGH / MEDIUM / LOW — <one line why>
 **Env:** Playground · WP <ver> · PHP <ver>  (or wp-env)
 **Commit:** <sha>
@@ -175,6 +229,13 @@ product knowledge file can be corrected.</sub>
 - **Reproduce twice** before calling anything a defect.
 - **Do not modify the PR.** No commits, no pushes, no fixes. Report only.
 - Distinguish "this PR broke it" from "this was already broken" every time.
+  **Suite failures that also fail on the base branch are pre-existing and never
+  block this PR.** Label them so and move on — blocking a PR on a failure it did
+  not cause is the fastest way to get the whole check ignored.
+- **Read `.themegrill-qa/spec-queue.jsonl`.** If this PR's diff touches product
+  source and the queue has pending records for its branch, add one line to the
+  comment: *"This change has no regression spec; comment `@themegrill-qa specs`
+  and one will be written."* A nudge, never a block.
 - If the environment will not boot, post that as the comment and exit non-zero.
   A silent pass is worse than a visible failure.
 - Keep the comment short enough to read on a phone. Detail goes in the workflow

@@ -2,7 +2,7 @@
 name: verify-fix
 description: Boot a disposable WordPress and verify the current fix or feature with Playwright
 argument-hint: "[optional: what to check, or a Jira key]"
-allowed-tools: Bash, Read, Grep, Glob, mcp__playwright__*, mcp__atlassian__*
+allowed-tools: Bash, Read, Grep, Glob, Skill, mcp__playwright__*, mcp__atlassian__*
 pass-arguments: true
 ---
 
@@ -100,6 +100,28 @@ Say which engine you chose and why.
 If the product has a pro companion and the diff touches licensed code, mount it
 too: `--with <slug>-pro=../<slug>-pro`.
 
+## Step 3.5 — Run the existing suite first
+
+```bash
+node "$QA/scripts/run-suite.mjs" --tier fresh --base-url <the booted URL>
+```
+
+This is the cheap layer, and it runs before you spend a single token exploring.
+Every failure it hands you is evidence you did not have to go and find.
+
+If `suite` is `false`, note it and carry on — a product with no suite is a valid
+state, not a blocker.
+
+If there are failures, **triage those first.** A pre-existing suite failure on a
+freshly booted clean site is either a real regression this diff caused or a
+broken spec, and either way it is cheaper evidence than anything you can find by
+exploring. **Cross-check each failure against the base branch before attributing
+it to this diff** — a failure that also fails on base is pre-existing and is not
+this change's problem.
+
+Read `failures[].guards` too. A failing spec that names a Jira key is telling you
+which regression has come back, which is usually the fastest route to the cause.
+
 ## Step 4 — Verify, adversarially
 
 Drive the site with the Playwright MCP tools. Three passes, in this order:
@@ -153,6 +175,9 @@ Product: <name> <version> (<type>)
 Change:  <files touched, one line>
 Claim:   <what it was supposed to do>
 
+Suite      <n> passed, <n> failed, <n> skipped (tier: fresh) — or "no suite"
+Spec added <path>, branch <name> — or why not
+
 Evidence
   Before fix: <what you observed, + screenshot path>
   After fix:  <what you observed, + screenshot path>
@@ -169,6 +194,23 @@ Not checked
 
 That last section is mandatory. An honest list of gaps is more useful than an
 implied claim of total coverage.
+
+## Step 6 — Graduate the finding
+
+A verdict that does not become a spec is a verdict you will pay to reach again.
+
+- On **VERIFIED** — invoke the `write-spec` skill to add a `@fresh` regression
+  spec guarding what you just confirmed.
+- On **REGRESSION** or **INCOMPLETE** — write a `test.fixme()` spec naming the
+  open key, so it flips green the day it is fixed.
+- On **CANNOT VERIFY** — write nothing.
+
+Report the branch name and the proof-gate result (3/3 against the fixed code,
+fails against the broken code) in the verdict block. If `write-spec` declined to
+write one, say which row of its mapping table applied.
+
+If a record in `.themegrill-qa/spec-queue.jsonl` covers this branch, mark it
+`done` by appending an updated record.
 
 ## Rules
 

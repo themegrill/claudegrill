@@ -2,7 +2,7 @@
 name: regression-sweep
 description: Exploratory regression pass over a released product version, filing verified bugs to Jira
 argument-hint: "<product-slug> [version] [--file-tickets]"
-allowed-tools: Bash, Read, Grep, Glob, mcp__playwright__*, mcp__atlassian__*
+allowed-tools: Bash, Read, Grep, Glob, Skill, mcp__playwright__*, mcp__atlassian__*
 pass-arguments: true
 ---
 
@@ -65,6 +65,24 @@ Sweeps are the right place to vary the matrix. If the workflow passed a
 WP/PHP combination, use it and name it in the report — "works on PHP 8.3, fatals
 on 8.1" is exactly the kind of finding this job exists to catch.
 
+## Step 1a — Run this shard's specs before exploring it
+
+```bash
+node "$QA/scripts/run-suite.mjs" --tier fresh --area "<this shard's area>" --base-url <the booted URL>
+```
+
+The specs for your area run in seconds and assert what somebody already proved
+matters. Read the result before you drive anything:
+
+- **Failures are your starting point**, not a distraction. A failing spec is a
+  reproduction someone else already wrote down, with a file and a line.
+- **Green specs mark ground you do not need to re-cover.** Explore around them,
+  not over them.
+- `fixme` entries name bugs already known and open. Do not re-report one.
+
+If `suite` is `false`, or the area has no specs, carry on — that is precisely the
+case this sweep exists for, and it is worth saying so in the report.
+
 ## Step 1b — If ingested docs are present, they are your specification
 
 Check for `.themegrill-qa/docs/<your-area>.md`. If it exists, read it before exploring.
@@ -118,7 +136,7 @@ amount of clicking will find them — only comparison will.
 
 ## Step 3 — The verification gate
 
-**Nothing becomes a finding until it passes all five.** This gate is the whole
+**Nothing becomes a finding until it passes all six.** This gate is the whole
 value of the job; without it you are a random-noise generator.
 
 1. **Reproduced twice**, from a clean site state, with the exact same steps.
@@ -148,6 +166,26 @@ value of the job; without it you are a random-noise generator.
    Append, never rewrite: several shards run in parallel, and one object per line
    means appends do not conflict.
 
+6. **Not already guarded by a green spec.**
+
+   ```bash
+   node "$QA/scripts/suite-index.mjs" --pretty
+   ```
+
+   Look up the area and the behaviour in the `guards` map. If a spec guards this
+   and that spec is **green**, then the deterministic check that exists precisely
+   to catch this says it is not happening — and you saw it once, through a
+   browser, with an agent's eyes. **Re-verify before reporting.** The overwhelmingly
+   likely explanation is your own misreading: a stale page, a different site
+   state, a control you drove differently than the spec does.
+
+   Report it only if you can say *why the spec misses it* — a narrower viewport,
+   a role the spec does not exercise, a path it does not walk. That sentence is
+   the finding, and it is also the spec's next improvement.
+
+   If a spec guards it and the spec is **failing**, you have independent
+   confirmation rather than a contradiction. Say so; that is a strong finding.
+
 Anything that fails the gate goes in a separate **"Suspicious, unverified"**
 section of the report. That section is useful. Do not delete it — just never file
 it as a ticket.
@@ -160,6 +198,8 @@ Always write the full report to `sweep-report.md` for upload as an artifact:
 # Regression sweep — <Product> <version>
 Env: WP <ver> · PHP <ver> · <engine> · <date>
 Flows exercised: <n>  ·  Verified findings: <n>  ·  Unverified: <n>
+Suite: <n> passed, <n> failed (tier: <tier>) — or "no suite"
+Areas already covered by specs (not swept): <list>
 
 ## Verified findings
 ### F1 — <one-line title>
@@ -172,6 +212,7 @@ Actual: ...
 Why this is wrong: <citation>
 Evidence: <screenshots, console, network>
 Jira: <key, or "not filed — report-only run">
+Spec: <branch and path, or why none — e.g. "not mechanically observable">
 
 ## Suspicious, unverified
 ### S1 — <title>  (why it did not pass the gate)
@@ -180,6 +221,25 @@ Jira: <key, or "not filed — report-only run">
 Exercised: <list>
 Not exercised: <list, with reason>
 ```
+
+## Step 4b — Every verified finding becomes a spec
+
+A ticket records a bug. A spec prevents it coming back. File the first, always
+write the second.
+
+For each finding that cleared all six parts of the gate, invoke the `write-spec`
+skill. Its proof gate applies unchanged — 3/3 against the fixed code, a real
+assertion failure against the broken code — and a finding that cannot clear it is
+reported as not mechanically observable rather than committed as a spec that
+proves nothing.
+
+The sweep's output then carries **two** lists: the ticket list and a **spec-PR
+list**, one branch per finding.
+
+**Maximum 5 spec PRs per sweep**, for the same reason as the ticket cap: a flood
+of generated PRs is ignored, and an ignored PR queue defeats the point of
+generating them. If you verified more than five, write specs for the five most
+severe and list the rest in the report as unguarded.
 
 **If and only if `--file-tickets` was passed**, create a Jira issue per verified
 finding via the Atlassian MCP:

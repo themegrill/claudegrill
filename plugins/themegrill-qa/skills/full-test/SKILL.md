@@ -60,6 +60,44 @@ If the knowledge file has no critical-flows list, stop and say so. Sweeping a
 product with no defined areas produces a shallow pass over everything, which is
 the failure mode this whole structure exists to avoid.
 
+## Step 1b — Run the suite first, and subtract what it covers
+
+A full pass is the run where the suite saves the most money, because it is the
+run with the most shards to cancel.
+
+```bash
+node "$QA/scripts/suite-index.mjs" --pretty
+node "$QA/scripts/run-suite.mjs" --tier all --boot playground --install
+```
+
+`--tier all` here, not `fresh`. A manual full pass is run by a human who may
+legitimately have a demo-imported site available, and the demo tier is exactly
+the coverage CI can never give you. Say in the report which tiers actually ran —
+a `@demo` spec that was skipped is not coverage, and the report must not imply
+it was.
+
+Then **fold the result into the estimate**, and print both numbers so the saving
+is visible rather than merely claimed:
+
+```
+Product:  colormag 4.0.1 (theme)
+Version:  v4.0.1
+Suite:    61 tests · 44 fresh · 7 of 9 areas covered · 2 failed
+Areas:    9  →  2 need agent shards (footer, widgets)
+Shards:   18 shards → 11 shards
+Est cost: ~$47.18 → ~$28.85
+Tickets:  disabled
+```
+
+Rules for the subtraction, so it stays honest:
+
+- Only an area with **green** `@fresh` specs is subtracted. An area whose specs
+  failed is the *opposite* of covered — it needs a shard more than an untested
+  one does, because something there is already broken.
+- `thinnest_areas` are not subtracted. One or two specs is a smoke test.
+- If the suite could not run at all (exit 2), subtract nothing and say so. A
+  broken harness is not coverage.
+
 ## Step 2 — Dispatch to CI
 
 ```bash
@@ -114,6 +152,9 @@ triage, only with `--tickets`.
 
 - **Never dispatch without printing the estimated cost first.** A command that
   can spend $50 should say so before it does.
+- **Never subtract a shard for a suite you did not run.** The saving is real
+  only when the specs actually executed and passed; asserting it from the index
+  alone converts a coverage claim into a coverage assumption.
 - Do not fan out more than the workflow's `max_shards` cap. If the area list
   exceeds it, say which areas are being dropped rather than silently truncating.
 - A full test is for releases and release candidates. If someone runs this on
