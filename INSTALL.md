@@ -12,9 +12,65 @@ Install it for the people who will use it, and add more later.
 
 ---
 
-## Three routes, in order of preference
+## Which route, and when
 
-### A. Managed settings — nobody installs anything · recommended
+**Right now: the clone.** While the skills are still changing week to week, a
+clone with symlinks means an edit takes effect on the next run. The plugin
+routes copy the skills into a cache, so every change would need a commit, a
+version bump and an update — friction on exactly the loop you are in.
+
+Switch to the plugin **when both** of these are true, not before:
+
+- the skills have stopped changing weekly, and
+- more than about three people want `/verify-fix` on their own machine.
+
+Until then the plugin manifests sit in the repo doing nothing, which costs
+nothing. Do not delete them; you will want them later.
+
+---
+
+### Now — git clone
+
+```
+git clone git@github.com:ThemeGrill/themegrill-qa.git
+cd themegrill-qa
+node install.mjs
+```
+
+Links the five skills into `~/.claude/skills` (junctions on Windows, so no
+administrator rights) and sets `THEMEGRILL_QA_HOME`. Update with `git pull` — and
+re-run `node install.mjs` if it reported that it had to copy rather than link.
+
+Note the precedence: **a skill in `~/.claude/skills` wins over a plugin's copy.**
+That is what makes this route right for developing the tooling, and it also means
+you can adopt a plugin route later without this install fighting it.
+
+---
+
+### Later — plugin install, one command per person
+
+```
+/plugin marketplace add ThemeGrill/themegrill-qa
+/plugin install themegrill-qa@themegrill
+```
+
+Both typed inside Claude Code. The repo is private, so this uses the developer's
+existing git credentials — GitHub shorthand resolves over SSH, so anyone who can
+already `git clone` your repos has what they need.
+
+Updates: `/plugin update themegrill-qa@themegrill`. Claude Code also refreshes
+marketplaces hourly and offers the update. One wrinkle: background refresh runs
+`git pull` with credential helpers disabled, so **SSH remotes update silently and
+HTTPS ones may not** — add the marketplace by shorthand rather than an `https://`
+URL and the issue does not arise.
+
+The real reason to get here eventually is version control over what the team
+runs. With clones, everyone is on whatever they last pulled; a bad skill change
+produces wrong QA verdicts across the team with no way to pin them back.
+
+---
+
+### Later still — managed settings, nobody installs anything
 
 An organisation owner adds this once in **claude.ai → Admin Settings → Claude
 Code → Managed settings**:
@@ -32,56 +88,10 @@ Code → Managed settings**:
 }
 ```
 
-Every developer's Claude Code picks it up automatically. No clone, no commands,
-no environment variables, and managed settings cannot be accidentally disabled by
-an individual. Updates arrive when you bump the version in
-`.claude-plugin/marketplace.json`.
-
-This is the right answer for a team of any size, and it is one person's five
-minute job.
-
-### B. Plugin install — one command per person
-
-If you would rather not use managed settings, or want to pilot with two people
-first:
-
-```
-/plugin marketplace add ThemeGrill/themegrill-qa
-/plugin install themegrill-qa@themegrill
-```
-
-Both are typed inside Claude Code. The marketplace repo is private, so this uses
-the developer's existing git credentials — GitHub shorthand resolves over SSH, so
-anyone with a working `git clone` of your repos already has what they need.
-
-Updates: `/plugin update themegrill-qa@themegrill`. Claude Code also refreshes
-marketplaces hourly in the background and will offer the update.
-
-One wrinkle worth knowing: background refresh runs `git pull` with credential
-helpers disabled, so **SSH remotes update silently and HTTPS ones may not**.
-Adding the marketplace by shorthand (`ThemeGrill/themegrill-qa`) rather than an
-`https://` URL avoids the issue.
-
-### C. Git clone — the fallback
-
-Only if plugins are unavailable to you, or you are developing the QA tooling
-itself and want to edit skills and see the change immediately:
-
-```
-git clone git@github.com:ThemeGrill/themegrill-qa.git
-cd themegrill-qa
-node install.mjs
-```
-
-`install.mjs` links the five skills into `~/.claude/skills` (junctions on
-Windows, so no administrator rights needed) and sets `THEMEGRILL_QA_HOME`. Update
-with `git pull` — and re-run `node install.mjs` if it reported that it had to
-copy rather than link.
-
-**Precedence matters here:** a skill in `~/.claude/skills` wins over the plugin's
-copy. That is what makes route C useful for development, and also means you
-should not mix C with A or B on the same machine unless you intend the local copy
-to override.
+Every developer's Claude Code picks it up — no clone, no commands, no environment
+variable, and an individual cannot disable it by accident. Worth doing when the
+tooling is stable and you want it everywhere; not worth the dependency on an org
+owner before then.
 
 ---
 
@@ -118,8 +128,13 @@ them beyond their own caller workflow and knowledge file.
 
 ## Recommended rollout
 
-1. **Now:** you alone, route C, so you can fix the tooling as you go.
-2. **After `/verify-fix` earns its keep:** route A for the whole org, which
-   costs one settings change and gives everyone the command with no setup.
-3. **Never:** copying the skills into each product repository. Seven divergent
+1. **Now:** you alone, cloned, so you can fix the tooling as you go.
+2. **When the skills settle and a second or third person wants `/verify-fix`:**
+   plugin install, one command each.
+3. **When it is everywhere and stable:** managed settings, so nobody installs
+   anything.
+4. **Never:** copying the skills into each product repository. Seven divergent
    copies is the one arrangement that reliably rots.
+
+Do not skip to 3. The plugin cache is the wrong place for code you are still
+editing, and the setup cost of the earlier steps is minutes.
