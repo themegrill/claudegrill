@@ -46,8 +46,8 @@
     },
 
     {
-      "step": "wp-cli",
-      "command": "wp widget add search sidebar-1 --title='Search'"
+      "step": "runPHP",
+      "code": "<?php require '/wordpress/wp-load.php'; global $wp_registered_sidebars; if (!empty($wp_registered_sidebars)) { $sidebar_id = array_key_first($wp_registered_sidebars); $search = get_option('widget_search', ['_multiwidget' => 1]); $next = 2; foreach (array_keys($search) as $k) { if (is_numeric($k) && $k >= $next) { $next = $k + 1; } } $search[$next] = ['title' => 'Search']; update_option('widget_search', $search); $sidebars_widgets = wp_get_sidebars_widgets(); $sidebars_widgets[$sidebar_id][] = \"search-$next\"; wp_set_sidebars_widgets($sidebars_widgets); }"
     },
 
     { "step": "setSiteOptions", "options": {

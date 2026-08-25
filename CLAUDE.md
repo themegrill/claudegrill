@@ -127,14 +127,38 @@ These are load-bearing. Changing one is a design decision, not a refactor.
 - `boot-wp.mjs` — Playground auto-mount and blueprint loading confirmed; the
   readiness check correctly *rejects* the 502s Playground emits while failing,
   and prints the blocked-network hint
+- `boot-wp.mjs` against a real ColorMag checkout on Windows: mounted correctly,
+  `theme-test.json` ran to completion, and the resulting site served the real
+  page (confirmed via a cookie-aware request — `<title>QA Test Site …</title>`,
+  the blueprint's own `setSiteOptions` value). Two real bugs found and fixed in
+  the process — both were Windows/portability bugs, not test-environment
+  artifacts:
+  - `spawn(npx.cmd, {shell:true})` doesn't auto-quote array args for `.cmd`
+    files, so any mount path containing a space (`Local Sites`, `Program
+    Files`, …) broke `--path=`. Fixed with a `shellQuote()` helper.
+  - `theme-test.json` hardcoded `sidebar-1` (a `_s`-starter-theme convention).
+    ColorMag registers `colormag_right_sidebar` etc. and the widget-seed step
+    failed outright. Fixed to discover the first registered sidebar at runtime.
 - All YAML and JSON parses; every `.mjs` passes `node --check`
 
 **Not verified**
 
-- **A completed Playground boot.** The build environment blocked
-  `wordpress.org` and `playground.wordpress.net`, so the run reached mounting and
-  blueprint parsing and then failed fetching WordPress. Blueprint steps, the
-  readiness poll and the JSON handoff are untested. **Fix this first.**
+- **Reliable Playground readiness detection on Windows.** The site above
+  genuinely works, but `waitForServer()`'s own polling never once got a
+  qualifying response across 600 one-second attempts (600s budget), seeing
+  `502` on its very last check — while a manual cookie-aware request against
+  the same running site, around the same time, got a clean `200`. Playground
+  reports "Ready! … (6 workers)"; the log also carries repeated
+  `lockWholeFile: unlock failed` warnings against the SQLite database files,
+  which is the likely link — worker-level inconsistency, not overall
+  slowness. `@wp-playground/cli --help` exposes no worker-count flag to
+  reduce that contention, so there's no client-side knob to pull from
+  `boot-wp.mjs`. Raising the timeout (180s → 600s, both confirmed too short at
+  least once) does not fix this — it's not a matter of waiting longer.
+  Next step if this keeps blocking real use: reproduce against
+  `@wp-playground/cli` directly (no wrapper) to confirm it's upstream, and
+  either file it there or fall back to `--engine wp-env` by default on
+  Windows.
 - Any live CI run. No workflow has executed.
 - `ingest-docs.mjs` against the real docs sites.
 - Jira filing end to end (needs Rovo API-token auth enabled).

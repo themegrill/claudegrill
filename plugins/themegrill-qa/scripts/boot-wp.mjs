@@ -95,6 +95,24 @@ function npxCommand() {
   return isWindows ? "npx.cmd" : "npx";
 }
 
+/**
+ * Quote one argument for Windows' `shell: true` spawn path.
+ *
+ * `.cmd` files (npx.cmd) can only be launched with `shell: true`, and Node
+ * does not escape array-form arguments for that path the way it does for a
+ * plain (non-shell) spawn — it just joins them with spaces. Any argument
+ * containing a space (a `--path=` flag built from `Local Sites\...`,
+ * `Program Files\...`, a synced-folder path, anything under a directory a
+ * human named) then splits into two shell tokens and the child process
+ * receives garbage. Confirmed breaking `--path=` this way when the mounted
+ * theme lives under `Local Sites`. Wrapping the whole token in double quotes
+ * is enough here — every value this script builds is a path, version string
+ * or slug, none of which legitimately contain a `"`.
+ */
+function shellQuote(arg) {
+  return isWindows && /\s/.test(arg) ? `"${arg}"` : arg;
+}
+
 /** Kill a process and everything it started. */
 function killTree(pid) {
   try {
@@ -124,8 +142,20 @@ function killTree(pid) {
  * any status here hands the agent a broken site and produces a confusing failure
  * three steps later, so require a non-error status *and* markup that looks like
  * WordPress before declaring victory.
+ *
+ * 180s was too tight: a first-time boot for a given site hash (or any
+ * `--reset`) downloads WordPress core + PHP.wasm and then runs every
+ * blueprint step — term/post/menu creation, widget seeding — through an
+ * emulated PHP runtime, which is slower than native PHP. Confirmed against a
+ * real machine: 300s still was not enough for `theme-test.json`'s ~15 steps
+ * (a 12-post insert loop with full block-markup bodies, among others) to
+ * finish inside Playground's WASM PHP — Playground's own "Ready!" printed
+ * moments after this function had already given up and killed the child, at
+ * *both* the 180s and the 300s mark. A cached, non-reset boot is fast; this
+ * budget only matters for the slow first-provision path, so it costs nothing
+ * on the common path.
  */
-async function waitForServer(url, childAlive, timeoutMs = 180000) {
+async function waitForServer(url, childAlive, timeoutMs = 600000) {
   const started = Date.now();
   let lastStatus = null;
 
@@ -252,7 +282,7 @@ if (opt.engine === "playground") {
   }
 
   const out = fs.openSync(logFile, "w");
-  const child = spawn(npxCommand(), args, {
+  const child = spawn(npxCommand(), args.map(shellQuote), {
     cwd: info.root,
     stdio: ["ignore", out, out],
     detached: !isWindows, // own process group, so we can kill the tree
@@ -338,11 +368,15 @@ if (opt.engine === "wp-env") {
   }
 
   const run = (args) =>
-    execFileSync(npxCommand(), ["--yes", "@wordpress/env@latest", ...args], {
-      cwd: info.root,
-      stdio: "inherit",
-      shell: isWindows,
-    });
+    execFileSync(
+      npxCommand(),
+      ["--yes", "@wordpress/env@latest", ...args].map(shellQuote),
+      {
+        cwd: info.root,
+        stdio: "inherit",
+        shell: isWindows,
+      },
+    );
 
   run(["start"]);
   try {
