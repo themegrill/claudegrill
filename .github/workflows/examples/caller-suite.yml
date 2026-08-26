@@ -1,13 +1,30 @@
 # Drop this into each product repo as .github/workflows/qa-suite.yml
 #
-# The free tier: no ANTHROPIC_API_KEY, no agent, runner minutes only. Because it
-# costs nothing but time it runs on EVERY pull request including drafts, and it
-# is the one that should be a required status check.
+# THIS IS THE ONLY PR CHECK MOST PRODUCTS NEED.
 #
-# The agent review (qa-review.yml) stays advisory. A required check that is
-# occasionally wrong for unexplainable reasons is a check people learn to bypass.
+# No ANTHROPIC_API_KEY. No agent. No API cost of any kind — runner minutes only.
+# It runs on EVERY pull request including drafts, and it is the required status
+# check.
+#
+# It works without AI because the developer already wrote the spec: they ran
+# /themegrill-qa:verify-fix locally, write-spec added a @fresh spec to their
+# branch, and they committed it with the fix. By the time CI sees the PR, the
+# regression is already expressed as a deterministic assertion. There is nothing
+# left here that needs judgement.
+#
+# What this job does, all deterministically:
+#   1. runs the FULL @fresh tier — the whole regression net, not just the areas
+#      the diff touched (that narrower run already happened on the developer's
+#      machine, where tokens are the scarce resource)
+#   2. annotates each failure onto the Files-changed view
+#   3. warns when a PR changes product source but adds no spec
+#   4. reports which areas have no @fresh coverage at all
+#
+# The agent workflows (qa-review.yml, qa-command.yml) are OPTIONAL and off by
+# default under this model. Add them back only for a product where the suite is
+# still too thin to trust.
 
-name: QA suite
+name: QA suite (required)
 
 on:
   pull_request:

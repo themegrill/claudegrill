@@ -1,6 +1,6 @@
 ---
 name: write-spec
-description: Turn a verified finding into a committed @fresh regression spec, proved against both the broken and the fixed code
+description: Turn a verified finding into a @fresh regression spec on the current branch, proved against both the broken and the fixed code
 argument-hint: "[what to guard, or a Jira key — empty drains the spec queue]"
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write, mcp__playwright__*, mcp__atlassian__*
 pass-arguments: true
@@ -146,15 +146,40 @@ proved is a guess with a green tick next to it.
 | Runtime | under 30s, or justify it in `@why` |
 
 ```bash
-# fixed code, three times
+# 1. fixed code, three times — must pass 3/3
 for i in 1 2 3; do
-  node "$QA/scripts/run-suite.mjs" --tier fresh --grep "<your test title>" --base-url "$URL" || echo "RUN $i FAILED"
+  node "$QA/scripts/run-suite.mjs" --tier fresh --grep "<your test title>" --json \
+    || echo "RUN $i FAILED"
 done
 
-# broken code
-git stash
-node "$QA/scripts/run-suite.mjs" --tier fresh --grep "<your test title>" --base-url "$URL"   # must exit 1
+# 2. broken code — stash ONLY the source files, never the spec
+git stash push -- <the source files the fix touched>
+node "$QA/scripts/run-suite.mjs" --tier fresh --grep "<your test title>" --json  # must exit 1
 git stash pop
+```
+
+**Use the pathspec. Do not rely on a bare `git stash` here.** Checked against
+real git rather than assumed:
+
+| What you do | Bare `git stash` | Result |
+|---|---|---|
+| Spec left untracked | does not stash untracked files | spec survives — happens to work |
+| Spec `git add`-ed first | stashes staged files too | **spec disappears** |
+| `git stash push -- <source files>` | touches only those paths | spec survives, always |
+
+So a bare stash works only as long as nobody stages the spec first, and staging
+it is a completely natural thing to do. When it does go wrong the failure is
+silent and misleading: the spec is gone, Playwright reports "no tests found", and
+you would read that as the spec failing against the broken code. It did not
+fail — it did not run, and a spec that never ran has proved nothing.
+
+Name the source files and leave the spec out of it.
+
+Confirm before you trust the result:
+
+```bash
+git stash list          # your stash, holding source only
+git status              # the spec still present, the fix gone
 ```
 
 Read the broken-code failure message before accepting it. A spec that fails
@@ -179,24 +204,36 @@ Do this explicitly. A `git stash pop` that silently conflicted leaves the workin
 tree on the broken code, and every subsequent step then reports on the wrong
 thing.
 
-## Step 7 — Commit, on a branch, and stop
+## Step 7 — Leave the spec on the current branch, and stop
+
+**Write the spec into the branch the developer is already working on.** Do not
+create a branch, do not switch branches, do not push, do not open a PR.
+
+The spec and the fix it guards belong in the same commit history: a reviewer
+seeing the fix should see the test for it in the same PR, and CI running that PR
+should run that spec against that fix. Splitting them across two branches means
+the spec lands separately, reviewed by someone with no context, and CI on the
+original PR never runs it.
 
 ```bash
-git checkout -b "qa/spec-<jira-key>"     # or qa/spec-<slug>-<date>
-git add <the new spec file> <any fixture it needed>
-git commit -m "Add regression spec for <KEY>: <one line>"
+git branch --show-current    # confirm you are on the developer's branch
+git status --short           # the fix, plus your new spec
 ```
 
-Commit **only** the new spec plus any fixture it needed. Never the product fix,
-never unrelated files, never a snapshot update — `CONVENTIONS.md` is explicit
-that a snapshot update in the same commit as a behaviour change destroys the only
-evidence of what changed.
+**Do not commit.** The developer commits and pushes, alongside their fix. You
+have just written a test for someone else's change on their branch — they get to
+read it first.
 
-If a queue record drove this, mark it `done` by appending an updated record to
-`.themegrill-qa/spec-queue.jsonl` (append, never rewrite — parallel shards).
+Report the path and let them take it from there:
 
-**Never push. Never open a PR unless told to.** In CI, the `pr-command` workflow
-handles the PR; locally, report the branch name and stop.
+```
+Spec written: tests/e2e/specs/header/centered-header-tagline.spec.ts
+On branch:    fix/CMAG-1234-header
+Commit it with your fix — CI runs the full @fresh tier on the PR.
+```
+
+If a queue record in `.themegrill-qa/spec-queue.jsonl` covers this branch, append
+an updated record marking it `done`. Append, never rewrite.
 
 ---
 

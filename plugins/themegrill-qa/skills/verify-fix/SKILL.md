@@ -127,53 +127,91 @@ lacks them, and a green result there would be meaningless.
 If the product has a pro companion and the diff touches licensed code, mount it
 too: `--with <slug>-pro=../<slug>-pro`.
 
-## Step 3.5 — Run the existing suite first, and run it cheaply
+## Step 3.5 — Run only the specs your diff could have broken
+
+**Do not run the whole suite here.** Run the specs covering the areas your diff
+touches, and nothing else.
+
+That is a deliberate division of labour, and it is why it is safe:
+
+| Where | What runs | Cost |
+|---|---|---|
+| **Here, on the developer's machine** | only the affected areas | seconds, a few hundred tokens |
+| **CI, on every PR** | the entire `@fresh` tier | runner minutes, **no tokens at all** |
+
+The full regression net still exists — it just runs where it is free. Paying an
+agent to sit through 20 specs when the diff touched the header is spending the
+expensive budget on something the free tier does better.
+
+### Work out which areas
 
 ```bash
-node "$QA/scripts/run-suite.mjs" --tier fresh --json
+node "$QA/scripts/suite-index.mjs" --pretty
 ```
+
+`by_area` and `areas_declared` give you the vocabulary. Map the changed files to
+areas using the knowledge file's critical-flows list — you already did this work
+in Step 2 as "blast radius". Then:
+
+```bash
+node "$QA/scripts/run-suite.mjs" --tier fresh --area header,global --json
+```
+
+`--area` takes a comma-separated list and ORs them, so one invocation covers
+every area the diff touches.
+
+Three rules for choosing:
+
+- **Be generous, not minimal.** Specs are seconds each. If you are unsure whether
+  the customizer area is affected, include it. The failure mode you are avoiding
+  is a missed regression, not a slow run.
+- **If the branch names a Jira key, always include the specs that `@guards` it**,
+  whatever area they are in — `suite-index.mjs`'s `guards` map has the file and
+  line. A fix for CMAG-1234 that breaks the spec guarding CMAG-1234 is the single
+  most important thing this step can catch.
+- **If you genuinely cannot map the diff to any area** — a build-config change, a
+  broad refactor, `functions.php` — run the whole `@fresh` tier and say why. It
+  is ~47s on ColorMag. Guessing narrowly on a diff you do not understand is worse
+  than running everything.
+
+### Run it cheaply
 
 **Always `--json`.** This is a cost instruction, not a formatting one.
 
-The suite itself costs nothing — it is plain Node and Playwright, no model, no
-API call, no tokens. The only thing that costs anything is *you reading its
-output*. Without `--json` the runner prints a progress line per test; on ColorMag
-that is ~2.5KB of chatter you pay to read and that tells you nothing a developer
-could not get from the log. With `--json` you get one line of about 300
-characters, and the runner's full output goes to a file named in the `log` field.
+The suite itself costs nothing — plain Node and Playwright, no model, no API
+call, no tokens. The only thing that costs anything is *you reading its output*.
+Without `--json` the runner prints a progress line per test, which you pay to
+read and which tells you nothing a developer could not get from the log. With it
+you get one line of ~300 characters and the runner's output goes to the file
+named in `log`.
 
-So:
+- **Do not remove `--json`**, and do not re-run without it "to see more".
+- **Do not `cat` the log** unless a failure cannot be understood from
+  `failures[].error`, which already carries the first 400 characters.
+- **Do not quote the JSON back verbatim.** Read `ok`, the counts, `failures[]`.
 
-- **Do not remove `--json`.** Do not re-run without it to "see more".
-- **Do not `cat` the log file** unless a failure genuinely cannot be understood
-  from `failures[].error`, which already carries the first 400 characters.
-- **Do not quote the JSON back verbatim.** Read `ok`, the counts and
-  `failures[]`. That is all of it.
+No `--base-url` is needed — `run-suite.mjs` resolves the site by the same
+precedence you used in Step 3. Add `--boot playground` only if you fell through
+to booting.
 
-No `--base-url` is needed: `run-suite.mjs` resolves the site by the same
-precedence you used in Step 3, `.env.local` included. Add `--boot playground`
-only if you fell through to booting.
+Only `@fresh` runs. `@demo` specs need demo content and are excluded, so this is
+not full coverage and your report must not imply it is.
 
-**Note the tier.** Only `@fresh` runs. `@demo` specs need the demo content
-imported and are excluded, so this is not full coverage and your report must not
-imply it is.
-
-The whole `@fresh` tier runs, **not only the areas your diff touches**. That is
-the point of it: a regression net that only looks where you were already looking
-is not a net. On ColorMag it is ~47s for 19 specs.
-
-What to do with the result:
+### What to do with the result
 
 - `suite: false` — no suite. Note it and carry on.
-- **Failures: triage those first.** A failure on the site the fix is being made
-  on is either a real regression this diff caused or a broken spec, and either
-  way it is cheaper evidence than anything you can find by exploring.
-  **Cross-check each against the base branch before blaming this diff** —
-  `git stash`, re-run just that spec with `--grep "<title>"`, `git stash pop`. A
-  failure that also fails on base is pre-existing and is not this PR's problem.
-- Read `failures[].guards`. A failing spec naming a Jira key is telling you which
-  regression has come back, which is usually the fastest route to the cause.
+- **Failures: triage those first.** A failure on the site the fix is being made on
+  is either a regression this diff caused or a broken spec, and either way it is
+  cheaper evidence than anything you can find by exploring.
+  **Cross-check against the base branch before blaming this diff** — `git stash`,
+  re-run that spec with `--grep "<title>"`, `git stash pop`. A failure that also
+  fails on base is pre-existing.
+- Read `failures[].guards` — a failing spec naming a Jira key tells you which
+  regression has come back.
 - `flaky > 0` — say so. A flaky suite erodes trust faster than a failing one.
+
+State in the report **which areas you ran and which you skipped**, so the reader
+knows what this verdict does and does not cover.
 
 ## Step 4 — Verify, adversarially
 

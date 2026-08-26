@@ -37,7 +37,7 @@ const qaHome = resolveQaHome(here);
 
 const opt = {
   tier: "fresh",
-  area: null,
+  area: null, // null | string[]
   baseUrl: null,
   boot: null, // null | "playground" | "wp-env"
   install: false,
@@ -50,7 +50,14 @@ const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === "--tier") opt.tier = argv[++i];
-  else if (a === "--area") opt.area = argv[++i];
+  else if (a === "--area") {
+    // Comma-separated: `--area header,global`. A diff rarely touches exactly
+    // one area, and running one area per invocation would boot and tear down
+    // the runner N times for no reason.
+    opt.area = (opt.area ?? []).concat(
+      argv[++i].split(",").map((x) => x.trim()).filter(Boolean),
+    );
+  }
   else if (a === "--base-url") opt.baseUrl = argv[++i];
   else if (a === "--boot") {
     // Optional value: `--boot` alone means playground.
@@ -406,7 +413,16 @@ if (m.env.admin_pass) runEnv[m.env.admin_pass] = adminPass;
  */
 function buildFilters() {
   const fresh = m.tiers.fresh;
-  const areaTag = opt.area ? (opt.area.startsWith("@") ? opt.area : `@${opt.area}`) : null;
+
+  // Several areas are an OR: a diff touching the header and the customizer
+  // wants both areas' specs, not their (empty) intersection.
+  const areaTags = (opt.area ?? []).map((a) => (a.startsWith("@") ? a : `@${a}`));
+  const areaAlt =
+    areaTags.length === 0
+      ? null
+      : areaTags.length === 1
+        ? escapeRe(areaTags[0])
+        : `(?:${areaTags.map(escapeRe).join("|")})`;
   const args = [];
 
   if (opt.grep) {
@@ -419,15 +435,15 @@ function buildFilters() {
 
   if (opt.tier === "fresh") {
     args.push(
-      areaTag
-        ? `--grep=(?=.*${escapeRe(fresh)})(?=.*${escapeRe(areaTag)})`
+      areaAlt
+        ? `--grep=(?=.*${escapeRe(fresh)})(?=.*${areaAlt})`
         : `--grep=${escapeRe(fresh)}`,
     );
   } else if (opt.tier === "demo") {
     args.push(`--grep-invert=${escapeRe(fresh)}`);
-    if (areaTag) args.push(`--grep=${escapeRe(areaTag)}`);
-  } else if (areaTag) {
-    args.push(`--grep=${escapeRe(areaTag)}`);
+    if (areaAlt) args.push(`--grep=${areaAlt}`);
+  } else if (areaAlt) {
+    args.push(`--grep=${areaAlt}`);
   }
 
   return args;
@@ -500,7 +516,7 @@ async function main() {
 
   say(`running: ${m.command} ${args.join(" ")}`);
   say(`  base URL  ${baseUrl}`);
-  say(`  tier      ${opt.tier}${opt.area ? ` · area ${opt.area}` : ""}`);
+  say(`  tier      ${opt.tier}${opt.area?.length ? ` · areas ${opt.area.join(", ")}` : ""}`);
 
   const started = Date.now();
   const r = await runInProduct(

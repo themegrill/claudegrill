@@ -177,6 +177,70 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, s.join("\n") + "\n");
           JS
 
+      # Deterministic, no AI: did a PR that changes product source also add or
+      # change a spec? A nudge in the summary, never a failure — some changes
+      # genuinely need no spec, and a hard gate here would train people to add
+      # an empty one to get past it.
+      - name: Note whether this PR carries a spec
+        if: always() && steps.manifest.outputs.found == 'true' && github.event_name == 'pull_request'
+        working-directory: product
+        run: |
+          SPEC_DIR="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(".themegrill-qa/suite.json","utf8")).spec_dir||"tests/e2e/specs")')"
+          BASE="origin/${{ github.event.pull_request.base.ref }}"
+          git fetch origin "${{ github.event.pull_request.base.ref }}" --depth=1 -q || true
+          FILES="$(git diff --name-only "$BASE"...HEAD || true)"
+
+          SRC="$(printf '%s\n' "$FILES" | grep -E '\.(php|js|jsx|ts|tsx|scss|css)$' | grep -vE "^($SPEC_DIR/|tests?/)" || true)"
+          SPECS="$(printf '%s\n' "$FILES" | grep -E "^$SPEC_DIR/|\.spec\.[cm]?[jt]sx?$" || true)"
+
+          if [ -n "$SRC" ] && [ -z "$SPECS" ]; then
+            {
+              echo ""
+              echo "### No regression spec in this PR"
+              echo ""
+              echo "This PR changes product source but adds no spec. If the change fixes a"
+              echo "bug, run \`/themegrill-qa:verify-fix\` locally and let \`write-spec\` add one"
+              echo "to this branch — a finding without a spec is one you pay to rediscover."
+              echo ""
+              echo "<details><summary>Source files changed</summary>"
+              echo ""
+              echo '```'
+              printf '%s\n' "$SRC"
+              echo '```'
+              echo ""
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::This PR changes product source but adds no regression spec."
+          fi
+
+      # Coverage, deterministically. No agent, no tokens — suite-index.mjs is
+      # plain Node reading the specs and the knowledge file.
+      - name: Report coverage gaps
+        if: always() && steps.manifest.outputs.found == 'true'
+        working-directory: product
+        run: |
+          node ../themegrill-qa/plugins/themegrill-qa/scripts/suite-index.mjs \
+            > ../index.json 2>/dev/null || echo '{"suite":false}' > ../index.json
+          node - <<'JS' >> "$GITHUB_STEP_SUMMARY"
+          const fs = require("fs");
+          const j = JSON.parse(fs.readFileSync("../index.json", "utf8"));
+          if (!j.suite) process.exit(0);
+          const out = ["", "### Suite coverage", "",
+            `${j.tests} tests in ${j.spec_files} files · ${j.by_tier.fresh} fresh, ${j.by_tier.demo} demo`, ""];
+          if ((j.areas_uncovered ?? []).length) {
+            out.push(`**Areas with no \`@fresh\` specs:** ${j.areas_uncovered.join(", ")}`, "",
+              "Nothing automated covers these. They are where a bug ships unnoticed.", "");
+          }
+          if ((j.thinnest_areas ?? []).length) {
+            out.push(`**Thin (fewer than 3 specs):** ${j.thinnest_areas.join(", ")}`, "");
+          }
+          const h = j.hygiene ?? {};
+          if (h.incomplete_docblocks || h.untagged_tier) {
+            out.push(`Hygiene: ${h.incomplete_docblocks} incomplete docblock(s), ${h.untagged_tier} untagged tier(s) — untagged counts as \`@demo\` and never runs here.`, "");
+          }
+          console.log(out.join("\n"));
+          JS
+
       - name: Upload the Playwright report
         if: always() && steps.manifest.outputs.found == 'true'
         uses: actions/upload-artifact@v4
