@@ -139,11 +139,34 @@ jobs:
             echo "See SUITE.md in ThemeGrill/themegrill-qa for what to add." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # Only Chromium. The full `playwright install --with-deps` pulls three
-      # engines and adds minutes to every run for coverage nobody reads.
-      - name: Install Chromium
+      # The browser build is pinned to the Playwright VERSION, so it has to be
+      # downloaded by the product's OWN Playwright — which means installing the
+      # product's dependencies first, here rather than only inside
+      # run-suite.mjs.
+      #
+      # `npx --yes playwright@latest install chromium` fetched whatever revision
+      # the newest release wanted while ColorMag pins @playwright/test 1.51.1,
+      # whose runner looks for revision 1161 and dies with "Executable doesn't
+      # exist at …/chromium_headless_shell-1161". A browser cache that is full
+      # of the wrong revision is indistinguishable from an empty one.
+      #
+      # Only Chromium: the full `--with-deps` install pulls three engines and
+      # adds minutes to every run for coverage nobody reads.
+      - name: Install the product's dependencies and its Chromium
         if: steps.manifest.outputs.found == 'true'
-        run: npx --yes playwright@latest install --with-deps chromium
+        working-directory: product
+        run: |
+          set -euo pipefail
+          pm=$(node -p 'require("./.themegrill-qa/suite.json").package_manager || "npm"')
+          install=$(node -p 'require("./.themegrill-qa/suite.json").install || ""')
+          if [ -n "$install" ]; then
+            echo "installing: $install"
+            sh -c "$install"
+          fi
+          # run-suite.mjs still runs the same install below — it owns reporting a
+          # failed install as a harness error, and a second identical install is
+          # a no-op that costs seconds.
+          "$pm" exec -- playwright install --with-deps chromium
 
       - name: Boot a disposable WordPress
         if: steps.manifest.outputs.found == 'true'
