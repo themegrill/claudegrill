@@ -41,6 +41,15 @@ on:
         required: false
         type: string
         default: "20"
+      scope:
+        description: >
+          "changed" runs only the areas the PR's diff maps to via area_paths,
+          falling back to the full tier whenever a changed source file matches
+          no pattern. "full" always runs the whole @fresh tier. Scheduled and
+          push runs should use "full".
+        required: false
+        type: string
+        default: "changed"
       engine:
         description: "playground | wp-env"
         required: false
@@ -147,6 +156,16 @@ jobs:
           node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs \
             --engine "${{ inputs.engine }}" | tee ../boot.json
           echo "TGQA_BASE_URL=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("../boot.json","utf8")).url)')" >> "$GITHUB_ENV"
+          # TGQA_ENV travels with the URL or the site gets misidentified.
+          #
+          # run-suite.mjs only infers the engine when IT boots the site. Here the
+          # boot is a separate step and the suite is handed a bare --base-url, so
+          # without this line run-suite falls back to TGQA_ENV=local and tells the
+          # product it is talking to a real MySQL WordPress. ColorMag's
+          # global-setup.ts believes it, runs its MySQL-only changeset cleanup,
+          # throws on a runner that has neither WP_DB_* nor a mysql binary, and
+          # Playwright reports 0 tests — a BROKEN suite, not a failing one.
+          echo "TGQA_ENV=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("../boot.json","utf8")).engine)')" >> "$GITHUB_ENV"
 
       - name: Run the suite (fresh tier)
         id: suite
@@ -154,8 +173,18 @@ jobs:
         working-directory: product
         run: |
           set +e
+          # --since narrows to the areas this diff maps to. The narrowing is
+          # SAFE by construction: any changed source file that matches no
+          # area_paths pattern falls back to the full tier, so an unmapped
+          # change costs runner time rather than coverage.
+          SCOPE_ARGS=""
+          if [ "${{ inputs.scope }}" = "changed" ] && [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin "${{ github.event.pull_request.base.ref }}" --depth=50 -q || true
+            SCOPE_ARGS="--since origin/${{ github.event.pull_request.base.ref }}"
+          fi
+
           node ../themegrill-qa/plugins/themegrill-qa/scripts/run-suite.mjs \
-            --tier fresh --install --json \
+            --tier fresh --install --json $SCOPE_ARGS \
             --timeout-ms ${{ inputs.timeout_ms }} \
             --base-url "$TGQA_BASE_URL" > ../suite.json
           echo "exit=$?" >> "$GITHUB_OUTPUT"
@@ -299,6 +328,10 @@ jobs:
               "do not read this as the change being safe.", "",
               "Likely causes: the grep matched nothing, `spec_dir` is wrong, or the",
               "install left no runner. The step log says which.");
+          } else if (r.scope?.mode === "none") {
+            out.push("## QA suite — nothing to run", "",
+              "This PR changes no product source, so no spec could be affected.",
+              "That is not a statement about the change being correct.");
           } else if (r.ok === undefined) {
             out.push("## QA suite — could not run", "",
               `\`${r.reason ?? "no parseable result"}\``, "",
@@ -308,9 +341,18 @@ jobs:
               `**${r.passed} passed · ${r.failed} failed · ${r.skipped} skipped · ${r.flaky} flaky**`,
               `tier \`${r.tier}\` · ${Math.round((r.duration_ms ?? 0) / 1000)}s · ${r.total} tests`, "");
 
+            // A scoped green tick is only meaningful if the reader can see what
+            // was skipped. Without this line "passed" reads as "everything passed".
+            const sc = r.scope;
+            if (sc?.mode === "changed") {
+              out.push(`**Scope: only the areas this diff maps to — \`${(sc.areas ?? []).join("`, `")}\`.**`,
+                "Other areas were not run on this PR. The nightly full run covers them.", "");
+            } else if (sc?.mode === "full") {
+              out.push(`**Scope: the full \`@fresh\` tier** — ${sc.reason}.`, "");
+            }
             if (r.ok) {
-              out.push("The `@fresh` tier passes. **This covers only the areas that have specs** —",
-                "see the coverage note below before treating it as full assurance.");
+              out.push("**This covers only the areas that have specs** — see the coverage note",
+                "below before treating it as full assurance.");
             }
             if ((r.failures ?? []).length) {
               out.push("", "<details open><summary>Failures</summary>", "", "| Spec | Test |", "|---|---|");

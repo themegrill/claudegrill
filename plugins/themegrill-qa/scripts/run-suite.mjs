@@ -29,6 +29,7 @@ import { resolveQaHome } from "./lib/qa-home.mjs";
 import { isWindows, killTree, shellQuote } from "./lib/platform.mjs";
 import { parseSpecFile } from "./lib/spec-parse.mjs";
 import { detectProduct, loadManifest } from "./lib/suite-manifest.mjs";
+import { affectedAreas, areasGuarding, changedFiles } from "./lib/affected.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const qaHome = resolveQaHome(here);
@@ -44,6 +45,7 @@ const opt = {
   grep: null,
   json: !process.stdout.isTTY,
   timeoutMs: 0, // 0 = no ceiling
+  since: null,  // git ref: narrow to the areas this diff could have broken
 };
 
 const argv = process.argv.slice(2);
@@ -67,6 +69,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--grep") opt.grep = argv[++i];
   else if (a === "--json" || a === "--quiet") opt.json = true;
   else if (a === "--timeout-ms") opt.timeoutMs = Number(argv[++i]);
+  else if (a === "--since") opt.since = argv[++i];
   else {
     console.error(`unknown flag: ${a}`);
     process.exit(2);
@@ -501,6 +504,62 @@ async function main() {
 
   indexSpecs();
 
+  // --since: narrow to the areas this diff could have broken.
+  //
+  // Safety rule, and the reason this can be trusted: any changed source file
+  // that matches no `area_paths` pattern falls back to the FULL tier. Narrowing
+  // on a diff nobody mapped is how a change ships with no coverage and a green
+  // tick over it. Silence costs time here, never coverage.
+  let scope = null;
+  if (opt.since) {
+    const specIndex = [...new Set(specIndexByLocation.values())];
+    const changed = changedFiles(root, opt.since);
+
+    if (!changed.ok) {
+      say(`could not diff against ${opt.since} — running the full tier`);
+      scope = { mode: "full", reason: `git diff against ${opt.since} failed` };
+    } else {
+      const a = affectedAreas(changed.files, m, specIndex);
+      // A fix for CMAG-1234 always runs the spec guarding CMAG-1234, whatever
+      // area it lives in. That is the single most important spec in the run.
+      const guarding = areasGuarding(info.ticket, specIndex);
+      const areas = [...new Set([...a.areas, ...guarding])];
+
+      if (a.full) {
+        say(`not narrowing: ${a.reason}`);
+        scope = { mode: "full", reason: a.reason, changed_files: changed.files.length };
+      } else if (areas.length === 0) {
+        say(`nothing to run: ${a.reason}`);
+        scope = { mode: "none", reason: a.reason, changed_files: changed.files.length };
+      } else {
+        opt.area = areas;
+        say(`narrowed to ${areas.join(", ")} (${a.reason})`);
+        scope = {
+          mode: "changed",
+          areas,
+          guarding,
+          reason: a.reason,
+          changed_files: changed.files.length,
+        };
+      }
+    }
+  }
+
+  // A diff that touches no product source has nothing to verify. Report it
+  // plainly rather than running zero tests and calling that a pass.
+  if (scope?.mode === "none") {
+    teardown();
+    emit(
+      {
+        ok: true, suite: true, runner: m.runner, tier: opt.tier, env: envLabel,
+        base_url: baseUrl, scope, total: 0, passed: 0, failed: 0, skipped: 0,
+        flaky: 0, failures: [], fixme: [],
+        reason: "no product source changed — nothing to run",
+      },
+      0,
+    );
+  }
+
   const reportPath = path.join(root, m.json_report);
   fs.mkdirSync(path.dirname(reportPath), { recursive: true });
   // A stale report from a previous run read as this run's result would be the
@@ -558,6 +617,7 @@ async function main() {
   }
 
   const result = summarise(report, durationMs);
+  if (scope) result.scope = scope;
   teardown();
 
   if (result.ran_nothing) {

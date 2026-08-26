@@ -105,6 +105,46 @@ Rules, enforced in code and not merely documented:
   finding can only be reproduced on a demo-imported site, the spec's blueprint
   requirement *is itself the finding* — report that and write no spec.
 
+### `area_paths` — which specs a diff could have broken
+
+Optional, and only needed if you want CI to narrow a PR to the areas it touches.
+It maps product source paths onto area names:
+
+```json
+"area_paths": {
+  "header":  ["inc/customizer/options/header-builder/**", "template-parts/header/**"],
+  "content": ["inc/colormag-wp-query.php", "template-parts/content/**"]
+}
+```
+
+`run-suite.mjs --since <base-ref>` diffs against that ref, maps the changed files
+through this table, and runs only those areas.
+
+**The safety rule, and the only reason narrowing can be trusted:**
+
+| What changed | What runs |
+|---|---|
+| source files, all matching a pattern | those areas only |
+| a source file matching **no** pattern | **the full tier** |
+| anything under `tests/` that is not a spec (fixtures, setup, helpers) | **the full tier** — a broken fixture can break any spec |
+| a spec file | that spec's own area |
+| no product source at all — docs, translations, CI | nothing, reported as `mode: "none"` |
+| the manifest declares no `area_paths` | **the full tier** |
+
+An omission in this table therefore costs **runner time, never coverage**. Err
+toward broad patterns. Narrowing on a diff nobody mapped is how a change ships
+with no coverage and a green tick over it.
+
+Two things are always included regardless of the mapping: the specs whose
+`@guards` names the branch's Jira key, and the areas of any spec file the branch
+itself changed.
+
+**Scoping trades total coverage per PR for speed, so something else has to run
+the full tier.** Once PR runs are scoped, nothing else does — a spec whose area
+is never touched stops executing entirely. Pair it with the scheduled full run in
+`examples/caller-suite.yml`. That schedule is not garnish; it is the half of the
+bargain that keeps the suite honest.
+
 ### The area dimension
 
 Additive and optional: an `@area` tag matching an area name from the product's

@@ -289,6 +289,13 @@ that curve.
   is trivially true when nothing ran. **Zero tests is now exit 2**, reported as a
   broken harness. Any required check built on the old behaviour was decorative.
 
+- **Diff-scoped CI**, via `area_paths` in the manifest and `run-suite.mjs
+  --since`. Verified against ColorMag's real branch: a source-only CMAG-741 diff
+  narrows to `content, header, activation, rtl`; a harness change forces the full
+  tier with that stated as the reason; a docs-only diff runs nothing; an unmapped
+  source file forces the full tier. The safety rule is that silence costs runner
+  time, never coverage.
+
 **Not verified**
 
 - **Reliable Playground readiness detection on Windows.** The site above
