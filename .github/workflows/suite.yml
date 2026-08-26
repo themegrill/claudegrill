@@ -96,6 +96,21 @@ jobs:
           token: ${{ secrets.QA_REPO_TOKEN || secrets.GITHUB_TOKEN }}
           path: themegrill-qa
 
+      # Products declare their own install/run commands in
+      # .themegrill-qa/suite.json, and every one of them so far is a pnpm
+      # project ("install": "pnpm install --frozen-lockfile"). The runner image
+      # ships npm and yarn but NOT pnpm, so without this step run-suite.mjs dies
+      # with `install failed to start: spawn pnpm ENOENT` before a single spec
+      # runs. Installing it unconditionally is a few seconds and keeps this
+      # workflow agnostic about which manager a given product picked.
+      #
+      # Pinned to 10 because the products' lockfiles are lockfileVersion 9.0,
+      # which pnpm 8 cannot read — it would fail `--frozen-lockfile` instead.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
