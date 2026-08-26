@@ -165,10 +165,41 @@ manifest's `env` block:
 Exporting both means a product's existing suite keeps working unchanged, while
 new specs can be written against the generic names.
 
+### Where the site and credentials come from
+
+`run-suite.mjs` resolves the base URL in strict precedence:
+
+1. `--base-url <url>`
+2. `TGQA_BASE_URL` in the environment
+3. **`.themegrill-qa/.env.local`** in the product repo — gitignored
+4. `--boot [playground|wp-env]`, which boots a disposable site and tears it down
+
+**The developer's existing site comes before booting a fresh one, deliberately.**
+Booting is the slow, network-dependent step, and someone fixing a bug already has
+the site that bug lives on. Playground is the fallback, not the default.
+
+`.env.local` is `KEY=value`, `#` comments, optional quotes. Both the generic
+names and the product's own mapped names are read:
+
+```
+TGQA_BASE_URL=http://test-colormag.local
+CM_ADMIN_USER=admin
+CM_ADMIN_PASS=password
+```
+
 **Credentials are never written to a file this repo tracks.** They come from the
-environment, from a gitignored `.env.local` in the product repo, or from CI
-secrets. If you find yourself typing a password into a spec, a config or a
-workflow, stop.
+environment, from that gitignored `.env.local`, or from CI secrets. If you find
+yourself typing a password into a spec, a config or a workflow, stop.
+
+Add `.env.local` to the product's `.gitignore` before writing one.
+
+### Running it cheaply
+
+`--json` (implied whenever stdout is not a TTY) suppresses all progress and sends
+the runner's own output to a log file named in the result's `log` field. **This
+matters for cost when an agent is the caller:** the suite is plain Node and
+spends no tokens, but every line it prints is a line the agent pays to read.
+Quiet mode is ~300 characters instead of ~2.5KB on ColorMag.
 
 ---
 

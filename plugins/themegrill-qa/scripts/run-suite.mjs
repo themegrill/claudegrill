@@ -20,6 +20,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -57,7 +58,7 @@ for (let i = 0; i < argv.length; i++) {
     opt.boot = next && !next.startsWith("--") ? argv[++i] : "playground";
   } else if (a === "--install") opt.install = true;
   else if (a === "--grep") opt.grep = argv[++i];
-  else if (a === "--json") opt.json = true;
+  else if (a === "--json" || a === "--quiet") opt.json = true;
   else if (a === "--timeout-ms") opt.timeoutMs = Number(argv[++i]);
   else {
     console.error(`unknown flag: ${a}`);
@@ -72,8 +73,26 @@ if (!["fresh", "demo", "all"].includes(opt.tier)) {
 
 // -------------------------------------------------------------------- output
 
-/** Progress for humans. Never stdout: stdout carries exactly one JSON line. */
-const say = (msg) => console.error(msg);
+/**
+ * Where the runner's own chatter goes when `--json` is in force.
+ *
+ * This matters for cost, not tidiness. When an agent invokes this script, every
+ * line the runner prints is a line the agent reads into its context and pays
+ * for — Playwright's per-test progress alone is ~20 lines on ColorMag. Under
+ * `--json` all of it goes to this file instead, and the agent sees exactly one
+ * line of JSON. The path is reported in that JSON so a human can still read it.
+ */
+const logFile = path.join(os.tmpdir(), "themegrill-qa-suite.log");
+
+/**
+ * Progress for humans. Never stdout: stdout carries exactly one JSON line.
+ * Silent under `--json`, which is the default when stdout is not a TTY — so a
+ * script or an agent capturing stdout gets the payload and nothing else.
+ */
+const say = (msg) => {
+  if (opt.json) return;
+  console.error(msg);
+};
 
 /** The single line of stdout, and the exit. */
 function emit(payload, code) {
@@ -161,10 +180,63 @@ function teardown() {
   booted = null;
 }
 
+/**
+ * Read `.themegrill-qa/.env.local` — the developer's own site, uncommitted.
+ *
+ * This is how a developer points the suite at the site they are actually fixing
+ * ColorMag on, without anyone writing a URL or a password into a tracked file
+ * (SUITE.md §4). Gitignored by convention; `KEY=value`, `#` comments, optional
+ * quotes. Values already present in the real environment win, so an explicit
+ * `TGQA_BASE_URL=... node run-suite.mjs` still overrides the file.
+ */
+function loadEnvLocal(productRoot) {
+  const file = path.join(productRoot, ".themegrill-qa", ".env.local");
+  if (!fs.existsSync(file)) return {};
+
+  const out = {};
+  for (const raw of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq < 1) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+const envLocal = loadEnvLocal(root);
+
+/**
+ * Which site to run against, in strict precedence.
+ *
+ * The developer's existing site comes BEFORE booting a fresh one, deliberately:
+ * booting is the slow, fragile, network-dependent step, and a developer fixing
+ * ColorMag already has the site the bug lives on. Playground is the fallback for
+ * when nothing else is available, not the default.
+ *
+ * The cost of that ordering is that the suite then runs against a site with real
+ * content and real settings, so a spec that mutates site-wide state must restore
+ * it in a fixture teardown — which CONVENTIONS.md already requires, and which
+ * ColorMag's suite already does.
+ */
+const envLocalUrl =
+  envLocal.TGQA_BASE_URL ?? (m.env.base_url ? envLocal[m.env.base_url] : null);
+
 if (opt.baseUrl) {
   baseUrl = opt.baseUrl;
 } else if (process.env.TGQA_BASE_URL) {
   baseUrl = process.env.TGQA_BASE_URL;
+} else if (envLocalUrl) {
+  baseUrl = envLocalUrl;
+  say(`base URL from .themegrill-qa/.env.local`);
 } else if (opt.boot) {
   const b = bootSite(opt.boot);
   if (!b.ok) cannotRun(b.reason);
@@ -173,12 +245,13 @@ if (opt.baseUrl) {
   booted = true;
 } else {
   cannotRun(
-    "no base URL. Pass --base-url <url>, set TGQA_BASE_URL, or pass --boot [playground|wp-env]",
+    "no base URL. Pass --base-url <url>, set TGQA_BASE_URL, write one into " +
+      ".themegrill-qa/.env.local, or pass --boot [playground|wp-env]",
   );
 }
 
-if (opt.baseUrl || process.env.TGQA_BASE_URL) {
-  envLabel = process.env.TGQA_ENV ?? "local";
+if (opt.baseUrl || process.env.TGQA_BASE_URL || envLocalUrl) {
+  envLabel = process.env.TGQA_ENV ?? envLocal.TGQA_ENV ?? "local";
 }
 
 // Tear the site down however we leave, including on Ctrl-C.
@@ -205,6 +278,24 @@ function argvOf(command) {
   return command.trim().split(/\s+/);
 }
 
+/**
+ * Where a child process's output goes: a log file under `--json`, our own
+ * stderr otherwise. Opened lazily and reused, so both streams share one fd and
+ * the ordering between them survives.
+ */
+let logFd = null;
+function sink() {
+  if (!opt.json) return process.stderr;
+  if (logFd === null) {
+    try {
+      logFd = fs.openSync(logFile, "w");
+    } catch {
+      logFd = "ignore"; // cannot open the log? then discard, never our stdout
+    }
+  }
+  return logFd;
+}
+
 /** Run a command in the product root, inheriting stdio. */
 function runInProduct(command, extraArgs = [], env = process.env, timeoutMs = 0) {
   const parts = argvOf(command);
@@ -222,7 +313,11 @@ function runInProduct(command, extraArgs = [], env = process.env, timeoutMs = 0)
         // file — and `"inherit"` here would hand the child our stdout and break
         // the one-JSON-line contract. Confirmed against the fixture, where
         // Playwright's list reporter landed in the middle of the payload.
-        stdio: ["ignore", process.stderr, process.stderr],
+        //
+        // Under `--json` it goes to a log file instead of our stderr, so an
+        // agent invoking this pays for one line of JSON rather than for every
+        // line Playwright prints.
+        stdio: ["ignore", sink(), sink()],
         shell: isWindows,
         detached: !isWindows, // own process group, so a timeout can kill the tree
         windowsHide: true,
@@ -266,8 +361,16 @@ function cmdName(bin) {
  * Credentials come from the environment or from CI secrets. Nothing here writes
  * one to a tracked file, and nothing should.
  */
-const adminUser = process.env.TGQA_ADMIN_USER ?? "admin";
-const adminPass = process.env.TGQA_ADMIN_PASS ?? "password";
+const adminUser =
+  process.env.TGQA_ADMIN_USER ??
+  envLocal.TGQA_ADMIN_USER ??
+  (m.env.admin_user ? envLocal[m.env.admin_user] : null) ??
+  "admin";
+const adminPass =
+  process.env.TGQA_ADMIN_PASS ??
+  envLocal.TGQA_ADMIN_PASS ??
+  (m.env.admin_pass ? envLocal[m.env.admin_pass] : null) ??
+  "password";
 
 const runEnv = {
   ...process.env,
@@ -553,6 +656,8 @@ function summarise(report, durationMs) {
     flaky,
     failures,
     fixme,
+    // Where the runner's own output went, when it was not printed here.
+    log: opt.json ? logFile : null,
   };
 }
 

@@ -1,6 +1,6 @@
 ---
 name: verify-fix
-description: Boot a disposable WordPress and verify the current fix or feature with Playwright
+description: Verify the current fix on your existing site (or a disposable WordPress), running the product's suite first
 argument-hint: "[optional: what to check, or a Jira key]"
 allowed-tools: Bash, Read, Grep, Glob, Skill, mcp__playwright__*, mcp__atlassian__*
 pass-arguments: true
@@ -78,49 +78,102 @@ Write out, explicitly, before proceeding:
 If you cannot form a claim, say so and stop. Guessing at intent produces
 confident, useless verification.
 
-## Step 3 — Boot a site
+## Step 3 — Get a site, preferring the one the fix is already on
 
-```bash
-node "$QA/scripts/boot-wp.mjs" --engine playground
-```
+**Use the developer's existing site first. Boot a fresh one only if you cannot.**
 
-Use `playground` by default: it boots in seconds and mounts the working tree
-live, so you are testing the actual edited code.
+That ordering is deliberate. Someone fixing ColorMag already has the site the bug
+lives on, with its content, its settings and its demo import. Booting is the
+slow, network-dependent, still-unproven step, and a clean Playground site does
+not resemble the site the bug was reported against.
 
-Switch to `--engine wp-env` when the diff touches any of:
+Resolve in this order and **say which one you used**:
 
-- raw SQL or `$wpdb` queries (Playground runs SQLite, not MySQL)
-- `wp_mail` / notification sending
-- WP-Cron scheduling
-- multisite
-- file upload / image processing paths that depend on real GD/Imagick
+1. **A URL in `$ARGUMENTS`** — "check the mobile menu on http://test-colormag.local".
+2. **`TGQA_BASE_URL`** already set in the environment.
+3. **`.themegrill-qa/.env.local`** in the product repo — the normal case.
+   `run-suite.mjs` reads this itself, so you do not have to parse it:
 
-Say which engine you chose and why.
+   ```
+   TGQA_BASE_URL=http://test-colormag.local
+   CM_ADMIN_USER=admin
+   CM_ADMIN_PASS=password
+   ```
+
+   It is gitignored. **Never write credentials anywhere else, and never echo the
+   password into your output.**
+4. **Fresh Playground**, only when none of the above yields a site:
+
+   ```bash
+   node "$QA/scripts/boot-wp.mjs" --engine playground
+   ```
+
+If you fall through to 4, say so explicitly and add a line to "Not checked":
+a clean site has none of the developer's content, so anything content-dependent
+was not really exercised.
+
+Two consequences of running against a real site, and you own both:
+
+- **Restore anything you change.** The suite's own fixtures do this already
+  (`CONVENTIONS.md` — teardown, not the happy path). *You*, driving the browser
+  by hand in Step 4, must do the same: revert every setting you publish.
+- **Never run `--tier demo` against a site whose demo content you cannot restore.**
+
+Switch to `--engine wp-env` — or ask for a wp-env site — when the diff touches
+raw SQL or `$wpdb`, `wp_mail`, WP-Cron, multisite, or upload/image processing
+that needs real GD/Imagick. Playground's SQLite runtime gets those wrong or
+lacks them, and a green result there would be meaningless.
 
 If the product has a pro companion and the diff touches licensed code, mount it
 too: `--with <slug>-pro=../<slug>-pro`.
 
-## Step 3.5 — Run the existing suite first
+## Step 3.5 — Run the existing suite first, and run it cheaply
 
 ```bash
-node "$QA/scripts/run-suite.mjs" --tier fresh --base-url <the booted URL>
+node "$QA/scripts/run-suite.mjs" --tier fresh --json
 ```
 
-This is the cheap layer, and it runs before you spend a single token exploring.
-Every failure it hands you is evidence you did not have to go and find.
+**Always `--json`.** This is a cost instruction, not a formatting one.
 
-If `suite` is `false`, note it and carry on — a product with no suite is a valid
-state, not a blocker.
+The suite itself costs nothing — it is plain Node and Playwright, no model, no
+API call, no tokens. The only thing that costs anything is *you reading its
+output*. Without `--json` the runner prints a progress line per test; on ColorMag
+that is ~2.5KB of chatter you pay to read and that tells you nothing a developer
+could not get from the log. With `--json` you get one line of about 300
+characters, and the runner's full output goes to a file named in the `log` field.
 
-If there are failures, **triage those first.** A pre-existing suite failure on a
-freshly booted clean site is either a real regression this diff caused or a
-broken spec, and either way it is cheaper evidence than anything you can find by
-exploring. **Cross-check each failure against the base branch before attributing
-it to this diff** — a failure that also fails on base is pre-existing and is not
-this change's problem.
+So:
 
-Read `failures[].guards` too. A failing spec that names a Jira key is telling you
-which regression has come back, which is usually the fastest route to the cause.
+- **Do not remove `--json`.** Do not re-run without it to "see more".
+- **Do not `cat` the log file** unless a failure genuinely cannot be understood
+  from `failures[].error`, which already carries the first 400 characters.
+- **Do not quote the JSON back verbatim.** Read `ok`, the counts and
+  `failures[]`. That is all of it.
+
+No `--base-url` is needed: `run-suite.mjs` resolves the site by the same
+precedence you used in Step 3, `.env.local` included. Add `--boot playground`
+only if you fell through to booting.
+
+**Note the tier.** Only `@fresh` runs. `@demo` specs need the demo content
+imported and are excluded, so this is not full coverage and your report must not
+imply it is.
+
+The whole `@fresh` tier runs, **not only the areas your diff touches**. That is
+the point of it: a regression net that only looks where you were already looking
+is not a net. On ColorMag it is ~47s for 19 specs.
+
+What to do with the result:
+
+- `suite: false` — no suite. Note it and carry on.
+- **Failures: triage those first.** A failure on the site the fix is being made
+  on is either a real regression this diff caused or a broken spec, and either
+  way it is cheaper evidence than anything you can find by exploring.
+  **Cross-check each against the base branch before blaming this diff** —
+  `git stash`, re-run just that spec with `--grep "<title>"`, `git stash pop`. A
+  failure that also fails on base is pre-existing and is not this PR's problem.
+- Read `failures[].guards`. A failing spec naming a Jira key is telling you which
+  regression has come back, which is usually the fastest route to the cause.
+- `flaky > 0` — say so. A flaky suite erodes trust faster than a failing one.
 
 ## Step 4 — Verify, adversarially
 
@@ -175,7 +228,8 @@ Product: <name> <version> (<type>)
 Change:  <files touched, one line>
 Claim:   <what it was supposed to do>
 
-Suite      <n> passed, <n> failed, <n> skipped (tier: fresh) — or "no suite"
+Site       <url> — existing site | fresh Playground | wp-env
+Suite      <n> passed, <n> failed, <n> skipped (tier: fresh only) — or "no suite"
 Spec added <path>, branch <name> — or why not
 
 Evidence
