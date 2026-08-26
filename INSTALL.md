@@ -1,139 +1,123 @@
-# Who installs what
+# Install
 
-**Most developers install nothing.** The PR reviewer runs in GitHub Actions, so
-every developer gets QA on their pull requests without touching their machine.
+**Nobody installs anything.** An organisation owner deploys the plugin once and
+it reaches every developer's Claude Code on their next restart.
 
-A local install is only for the optional `/verify-fix` command — checking a fix
-on your own machine before pushing. That is useful to whoever fixes bugs, which
-is probably two or three people to begin with, not the whole team.
-
-So the honest answer to "does every developer need to clone this?" is **no**.
-Install it for the people who will use it, and add more later.
+That is the whole story for the team. The rest of this document is for the owner
+doing the deploy, and for whoever works on the tooling itself.
 
 ---
 
-## Which route, and when
+## The developer's experience
 
-**Right now: the clone.** While the skills are still changing week to week, a
-clone with symlinks means an edit takes effect on the next run. The plugin
-routes copy the skills into a cache, so every change would need a commit, a
-version bump and an update — friction on exactly the loop you are in.
+1. Restart Claude Code.
+2. Run `/themegrill-qa:verify-fix` in a product checkout.
 
-Switch to the plugin **when both** of these are true, not before:
+**The commands are namespaced.** Plugin skills always are, so it is
+`/themegrill-qa:verify-fix`, not `/verify-fix`. This is the most likely day-one
+support question — say it in the announcement.
 
-- the skills have stopped changing weekly, and
-- more than about three people want `/verify-fix` on their own machine.
+Two things they do need per product, once, and neither involves this repo:
 
-Until then the plugin manifests sit in the repo doing nothing, which costs
-nothing. Do not delete them; you will want them later.
+```bash
+pnpm install
+pnpm exec playwright install chromium
+```
+
+and a gitignored `.themegrill-qa/.env.local` pointing at their own site:
+
+```
+TGQA_BASE_URL=http://test-colormag.local
+CM_ADMIN_USER=admin
+CM_ADMIN_PASS=password
+```
 
 ---
 
-### Now — git clone
+## Deploying it — organisation owner, once
 
-```
-git clone git@github.com:ThemeGrill/themegrill-qa.git
-cd themegrill-qa
-node install.mjs
-```
+### 1. Decide public or private first
 
-Links the six skills into `~/.claude/skills` (junctions on Windows, so no
-administrator rights) and sets `THEMEGRILL_QA_HOME`. Update with `git pull` — and
-re-run `node install.mjs` if it reported that it had to copy rather than link.
+Every developer's Claude Code **clones the marketplace repo with their own git
+credentials**. If this repo is private, each of them needs GitHub access to it
+before the plugin will load — and CI needs a `QA_REPO_TOKEN` on top of that.
 
-Note the precedence: **a skill in `~/.claude/skills` wins over a plugin's copy.**
-That is what makes this route right for developing the tooling, and it also means
-you can adopt a plugin route later without this install fighting it.
+There are no keys and no customer data in here. Making it public removes both
+problems. If you keep it private, confirm both settings now:
 
-#### The spec-guard hook is opt-in on this route
+- **Settings → Actions → General → Access** → *"Accessible from repositories in
+  the organization"*, or the CI `uses:` line cannot resolve at all
+- An org secret `QA_REPO_TOKEN` with `contents: read` on this repo
 
-The plugin routes below register the `spec-guard` hook automatically, through the
-plugin's own `hooks/hooks.json`. A clone does not — Claude Code only reads that
-file for installed plugins — so add it by hand if you want it, in
-`~/.claude/settings.json` or a project's `.claude/settings.json`:
+### 2. Version the release
 
 ```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"$THEMEGRILL_QA_HOME/plugins/themegrill-qa/hooks/spec-guard.mjs\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  }
-}
+// .claude-plugin/marketplace.json
+"version": "0.2.0"
 ```
 
-**Deliberately opt-in.** It runs at the end of every turn, and a hook somebody
-did not ask for is a hook they disable — along with everything else you later
-want to put on that event.
+**This is the only thing that triggers an update.** `plugin.json` deliberately
+carries no version — a version there would *win* over the marketplace entry and
+pin the plugin, so updates would stop reaching people. `claude plugin validate`
+warns about the missing version every time; that warning is correct, and
+silencing it moves release control to a file nobody bumps.
 
-What it does: if the repo has a `.themegrill-qa/suite.json`, and this session
-changed product source (`.php`, `.js`, `.ts`, `.scss`, `.css` outside `tests/`)
-without touching the spec directory, it appends one `pending` record to
-`.themegrill-qa/spec-queue.jsonl`. Once per branch, never twice. It never blocks
-and it exits 0 on every failure path.
+### 3. Validate
 
-One thing worth knowing before you judge whether it is working: **on exit 0 a
-hook's stderr goes to Claude Code's debug log, not to your terminal.** So the
-one-line nudge shows up under `claude --debug`; the thing you will actually
-notice is the queue file appearing in `git status`. That is the intended
-mechanism — the queue is committed precisely so it is visible in the repo, and
-`/write-spec` with no arguments drains the oldest entry.
-
----
-
-### Later — plugin install, one command per person
-
-```
-/plugin marketplace add ThemeGrill/themegrill-qa
-/plugin install themegrill-qa@themegrill
+```bash
+claude plugin validate .
+claude plugin validate ./plugins/themegrill-qa
 ```
 
-Both typed inside Claude Code. The repo is private, so this uses the developer's
-existing git credentials — GitHub shorthand resolves over SSH, so anyone who can
-already `git clone` your repos has what they need.
+One warning about the missing version is expected. Do not run `--strict` here —
+it treats that warning as an error, and it only matters for submissions to
+Anthropic's public community marketplace, which this is not.
 
-Updates: `/plugin update themegrill-qa@themegrill`. Claude Code also refreshes
-marketplaces hourly and offers the update. One wrinkle: background refresh runs
-`git pull` with credential helpers disabled, so **SSH remotes update silently and
-HTTPS ones may not** — add the marketplace by shorthand rather than an `https://`
-URL and the issue does not arise.
+### 4. Deploy through claude.ai
 
-The real reason to get here eventually is version control over what the team
-runs. With clones, everyone is on whatever they last pulled; a bad skill change
-produces wrong QA verdicts across the team with no way to pin them back.
-
----
-
-### Later still — managed settings, nobody installs anything
-
-An organisation owner adds this once in **claude.ai → Admin Settings → Claude
-Code → Managed settings**:
+**claude.ai → Admin Settings → Claude Code → Managed settings.** Fetched at
+startup and polled hourly, so it reaches everyone without touching a machine.
 
 ```json
 {
   "extraKnownMarketplaces": {
     "themegrill": {
-      "source": { "source": "github", "repo": "ThemeGrill/themegrill-qa" }
+      "source": { "source": "github", "repo": "ThemeGrill/themegrill-qa" },
+      "autoUpdate": true
     }
   },
-  "enabledPlugins": {
-    "themegrill-qa@themegrill": true
-  }
+  "enabledPlugins": { "themegrill-qa@themegrill": true }
 }
 ```
 
-Every developer's Claude Code picks it up — no clone, no commands, no environment
-variable, and an individual cannot disable it by accident. Worth doing when the
-tooling is stable and you want it everywhere; not worth the dependency on an org
-owner before then.
+`autoUpdate: true` is what stops you chasing people to update later.
+
+This installs at **managed scope**: developers cannot disable or uninstall it.
+
+> **Not on a claude.ai Team or Enterprise plan?** Deploy the same JSON as
+> `managed-settings.json` via MDM — `/Library/Application Support/ClaudeCode/`
+> on macOS, `C:\Program Files\ClaudeCode\` on Windows.
+
+### 5. Verify on one machine before rolling on
+
+```
+/status
+```
+
+The **Setting sources** line must read `Enterprise managed settings (remote)`. If
+that line is missing, no managed source was found and nothing else is true.
+
+```
+/plugin
+```
+
+`themegrill-qa` should appear under **managed** scope. Then confirm
+`/themegrill-qa:verify-fix` resolves.
+
+### 6. Shipping updates
+
+Edit → commit → **bump `version` in `marketplace.json`** → push. Developers pick
+it up within the hour or at next launch. Forget the bump and nobody gets it.
 
 ---
 
@@ -148,36 +132,52 @@ plugins/themegrill-qa/
 └── blueprints/      seeded WordPress state
 ```
 
-Scripts and blueprints ship **inside** the plugin deliberately. Claude Code
-copies a plugin into its own cache on install, and a copied plugin cannot reach
-files outside its directory — so anything the skills need has to travel with
-them. The skills resolve their own location through `CLAUDE_PLUGIN_ROOT`, and
-`boot-wp.mjs` resolves the plugin root from its own file path, which means it
-works identically from the plugin cache, a git clone, or a CI checkout.
+Scripts and blueprints ship **inside** the plugin deliberately: Claude Code
+copies a plugin into its own cache, and a copied plugin cannot reach files
+outside its own directory. The skills resolve their location through
+`CLAUDE_PLUGIN_ROOT`, and `boot-wp.mjs` resolves the plugin root from its own
+file path — so it behaves identically from the plugin cache or a CI checkout.
 
-That is also why there is no `THEMEGRILL_QA_HOME` requirement on routes A and B.
-It exists only for route C.
+The `spec-guard` Stop hook is registered automatically through the plugin's
+`hooks/hooks.json`. One thing worth knowing before you judge whether it works:
+**on exit 0 a hook's stderr goes to the debug log, not the terminal.** The
+visible signal is `.themegrill-qa/spec-queue.jsonl` appearing in `git status`.
 
 ---
 
 ## CI installs nothing either
 
-The reusable workflows check out this repository at run time and copy the
-plugin's `skills/`, `scripts/` and `blueprints/` into the runner for the duration
-of the job. Product repositories gain no dependency and nothing is committed to
-them beyond their own caller workflow and knowledge file.
+The reusable workflows check this repository out at run time. Product repos gain
+no dependency and commit nothing beyond their own caller workflow and their
+`.themegrill-qa/` directory.
 
 ---
 
-## Recommended rollout
+## Working on the tooling itself
 
-1. **Now:** you alone, cloned, so you can fix the tooling as you go.
-2. **When the skills settle and a second or third person wants `/verify-fix`:**
-   plugin install, one command each.
-3. **When it is everywhere and stable:** managed settings, so nobody installs
-   anything.
-4. **Never:** copying the skills into each product repository. Seven divergent
-   copies is the one arrangement that reliably rots.
+Not for the team — for whoever changes the skills or scripts.
 
-Do not skip to 3. The plugin cache is the wrong place for code you are still
-editing, and the setup cost of the earlier steps is minutes.
+```bash
+git clone git@github.com:ThemeGrill/themegrill-qa.git
+cd themegrill-qa
+npm run dev          # claude --plugin-dir ./plugins/themegrill-qa
+```
+
+`--plugin-dir` loads your working copy directly, and **takes precedence over the
+installed marketplace plugin for that session** — so you can test changes without
+uninstalling anything. `/reload-plugins` picks up edits without a restart.
+
+> **Never symlink skills into `~/.claude/skills`.** A skill there is
+> *unnamespaced* and **wins over the plugin's copy**, so you end up with both
+> `/verify-fix` (your stale local copy) and `/themegrill-qa:verify-fix` (the real
+> one) and no indication which just ran. That is how someone runs a months-old
+> skill for weeks without noticing. This repo used to ship an `install.mjs` that
+> did exactly that; it has been removed.
+
+Run the scripts directly from the checkout when you need them:
+
+```bash
+npm run suite:index      # what the suite covers
+npm run cost:projection  # the declining-spend curve
+npm run check            # every .mjs parses
+```

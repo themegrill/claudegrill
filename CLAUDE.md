@@ -39,7 +39,6 @@ plugins/themegrill-qa/   the installable plugin — everything the skills need
     hooks.json           Stop hook registration
     spec-guard.mjs       notices source changed with no spec; queues it
   blueprints/            seeded WordPress state for theme / plugin testing
-install.mjs              clone-install fallback; not needed for plugin installs
 packages/core/           shared spec helpers — the suite layer
 knowledge/               templates and starter knowledge files
 examples/                a spec in the house style, to copy into a product repo
@@ -197,7 +196,6 @@ that curve.
   test functions with multiline typed signatures and raw docstrings, area
   derivation, tag facet-vs-feature inventory
 - `estimate-cost.mjs` — agrees with the previous implementation to the cent
-- `install.mjs` — links the six skills, sets the env var, smoke-tests the scripts
 - `boot-wp.mjs` — Playground auto-mount and blueprint loading confirmed; the
   readiness check correctly *rejects* the 502s Playground emits while failing,
   and prints the blocked-network hint

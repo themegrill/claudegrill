@@ -31,6 +31,18 @@ branch with the fix → CI runs that spec forever, for free.
 - Per product: `pnpm install` and `pnpm exec playwright install chromium` in the
   checkout, once.
 
+**Who runs what.** Developers only ever type `/themegrill-qa:…` commands — they
+install nothing and need no copy of this repo. The setup steps below that invoke
+scripts directly are run **once per product by whoever does the onboarding**,
+from a checkout of this repo:
+
+```bash
+git clone git@github.com:ThemeGrill/themegrill-qa.git && cd themegrill-qa
+```
+
+Commands below written as `npm run …` assume that checkout is your working
+directory; `-- ` passes flags through to the script.
+
 ---
 
 ## Phase 0 — Decide: public or private · 5 min, and it saves hours
@@ -98,7 +110,8 @@ content and never gates anything.
 **An untagged test counts as `@demo`.** Check what you actually have:
 
 ```bash
-node "$THEMEGRILL_QA_HOME/plugins/themegrill-qa/scripts/suite-index.mjs" --pretty
+cd <the product checkout>
+node <themegrill-qa>/plugins/themegrill-qa/scripts/suite-index.mjs --pretty
 ```
 
 Read `by_tier`, `hygiene.untagged_tier`, and `areas_uncovered`.
@@ -125,7 +138,8 @@ Add `.env.local` to the product's `.gitignore` **before** writing it.
 Then confirm the whole chain works:
 
 ```bash
-node "$THEMEGRILL_QA_HOME/plugins/themegrill-qa/scripts/run-suite.mjs" --tier fresh --json
+cd <the product checkout>
+node <themegrill-qa>/plugins/themegrill-qa/scripts/run-suite.mjs --tier fresh --json
 ```
 
 Exit 0 with a real `total` is success. Exit 2 means the harness is broken — which
@@ -178,10 +192,11 @@ Under this model the suite is the **only** automated safety net. An area with no
 specs is an area where a regression ships unnoticed.
 
 ```bash
-node "$THEMEGRILL_QA_HOME/plugins/themegrill-qa/scripts/suite-index.mjs" --pretty
+node <themegrill-qa>/plugins/themegrill-qa/scripts/suite-index.mjs --pretty
 ```
 
-`areas_uncovered` is the backlog. Every `/themegrill-qa:verify-fix` that ends
+`areas_uncovered` is the backlog. The CI job prints the same list in its summary
+and PR comment, so developers see it without running anything. Every `/themegrill-qa:verify-fix` that ends
 VERIFIED should add one spec and shorten it.
 
 ## Phase 5 — Optional extras, in order of value
@@ -204,7 +219,7 @@ Repeat Phase 2 and 3. Nothing from Phase 0 or 1 repeats.
 | Symptom | Cause |
 |---|---|
 | `/verify-fix` not found | Plugin skills are namespaced — use `/themegrill-qa:verify-fix` |
-| Both `/verify-fix` and `/themegrill-qa:verify-fix` exist | A clone-installed copy in `~/.claude/skills` **wins** over the plugin. Remove it |
+| Both `/verify-fix` and `/themegrill-qa:verify-fix` exist | An old symlinked copy in `~/.claude/skills` **wins** over the plugin. Delete it — the clone install that created it is gone |
 | CI: 404 checking out themegrill-qa | `GITHUB_TOKEN` cannot read another private repo. See Phase 0 |
 | CI: "QA suite — passed, 0 tests" | Fixed — zero tests is now exit 2. Update your `qa_ref` |
 | Suite exits 2, "no base URL" | No `.env.local`, no `--base-url`, no `--boot` |

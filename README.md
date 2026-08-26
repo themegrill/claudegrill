@@ -134,8 +134,8 @@ day-one accuracy forever.
 
 Three documents, depending on what you need:
 
-- **[INSTALL.md](INSTALL.md)** — who needs a local install, and the three routes.
-  Short answer: most developers need nothing; CI covers them.
+- **[INSTALL.md](INSTALL.md)** — how the plugin reaches the team. Short answer:
+  an org owner deploys it once and nobody else installs anything.
 - **[SETUP.md](SETUP.md)** — the ordered onboarding runbook for the platform.
 - **[SETUP-COLORMAG.md](SETUP-COLORMAG.md)** — the concrete first-product
   walkthrough, with ColorMag's real values filled in.

@@ -20,7 +20,7 @@ Re-derive any of this at any time:
 
 ```bash
 cd <colormag checkout>
-node "$THEMEGRILL_QA_HOME/plugins/themegrill-qa/scripts/suite-index.mjs" --pretty
+node <themegrill-qa>/plugins/themegrill-qa/scripts/suite-index.mjs --pretty
 ```
 
 ## Two open problems
@@ -78,7 +78,7 @@ CM_ADMIN_PASS=password
 Gitignored — confirmed at `.gitignore:43`.
 
 ```bash
-node "$THEMEGRILL_QA_HOME/plugins/themegrill-qa/scripts/run-suite.mjs" --tier fresh --json
+node <themegrill-qa>/plugins/themegrill-qa/scripts/run-suite.mjs --tier fresh --json
 ```
 
 Measured runtimes: ~47s for the full `@fresh` tier against the Local site, ~35s

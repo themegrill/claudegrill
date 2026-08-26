@@ -10,7 +10,6 @@
   },
   "comment": "No dependencies, by design. ThemeGrill develops on Windows and macOS, so everything here runs on plain Node with nothing to install.",
   "scripts": {
-    "install-qa": "node install.mjs",
     "detect": "node plugins/themegrill-qa/scripts/detect-product.mjs",
     "boot": "node plugins/themegrill-qa/scripts/boot-wp.mjs",
     "boot:wp-env": "node plugins/themegrill-qa/scripts/boot-wp.mjs --engine wp-env",
@@ -18,9 +17,10 @@
     "ingest:docs": "node plugins/themegrill-qa/scripts/ingest-docs.mjs",
     "ingest:suite": "node plugins/themegrill-qa/scripts/ingest-testsuite.mjs",
     "cost": "node plugins/themegrill-qa/scripts/estimate-cost.mjs",
-    "check": "node --check plugins/themegrill-qa/scripts/detect-product.mjs && node --check plugins/themegrill-qa/scripts/boot-wp.mjs && node --check plugins/themegrill-qa/scripts/run-suite.mjs && node --check plugins/themegrill-qa/scripts/suite-index.mjs && node --check plugins/themegrill-qa/scripts/ingest-docs.mjs && node --check plugins/themegrill-qa/scripts/ingest-testsuite.mjs && node --check plugins/themegrill-qa/scripts/estimate-cost.mjs && node --check plugins/themegrill-qa/scripts/lib/qa-home.mjs && node --check plugins/themegrill-qa/scripts/lib/platform.mjs && node --check plugins/themegrill-qa/scripts/lib/spec-parse.mjs && node --check plugins/themegrill-qa/scripts/lib/suite-manifest.mjs && node --check plugins/themegrill-qa/hooks/spec-guard.mjs && node --check install.mjs",
+    "check": "node --check plugins/themegrill-qa/scripts/detect-product.mjs && node --check plugins/themegrill-qa/scripts/boot-wp.mjs && node --check plugins/themegrill-qa/scripts/run-suite.mjs && node --check plugins/themegrill-qa/scripts/suite-index.mjs && node --check plugins/themegrill-qa/scripts/ingest-docs.mjs && node --check plugins/themegrill-qa/scripts/ingest-testsuite.mjs && node --check plugins/themegrill-qa/scripts/estimate-cost.mjs && node --check plugins/themegrill-qa/scripts/lib/qa-home.mjs && node --check plugins/themegrill-qa/scripts/lib/platform.mjs && node --check plugins/themegrill-qa/scripts/lib/spec-parse.mjs && node --check plugins/themegrill-qa/scripts/lib/suite-manifest.mjs && node --check plugins/themegrill-qa/hooks/spec-guard.mjs",
     "suite": "node plugins/themegrill-qa/scripts/run-suite.mjs",
     "suite:index": "node plugins/themegrill-qa/scripts/suite-index.mjs",
-    "cost:projection": "node plugins/themegrill-qa/scripts/estimate-cost.mjs --projection 24"
+    "cost:projection": "node plugins/themegrill-qa/scripts/estimate-cost.mjs --projection 24",
+    "dev": "claude --plugin-dir ./plugins/themegrill-qa"
   }
 }

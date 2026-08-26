@@ -18,7 +18,8 @@ node "$QA/scripts/detect-product.mjs" >/dev/null && echo "QA=$QA"
 ```
 
 `CLAUDE_PLUGIN_ROOT` is set automatically when this runs as an installed plugin,
-which is the normal case; the fallback covers a plain `git clone` install. If the
+which is the normal case; the fallback covers a CI checkout, where the scripts are
+copied into the runner rather than installed. If the
 shell is not bash — PowerShell on a Windows machine, say — use that shell's
 equivalent rather than assuming this line works.
 
