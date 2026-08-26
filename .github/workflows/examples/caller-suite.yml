@@ -38,3 +38,19 @@ jobs:
       product_type: theme
       wp_version: latest
       php_version: "8.3"
+    secrets:
+      # Required while themegrill-qa is a PRIVATE repo. The default
+      # GITHUB_TOKEN is scoped to THIS repo and cannot read another private
+      # one — the checkout fails with a 404 that looks like the repo is
+      # missing. Use a PAT or GitHub App token with read access, stored as an
+      # organisation secret so all seven products share one.
+      #
+      # Two prerequisites people miss, both in the themegrill-qa repo:
+      #   Settings > Actions > General > Access
+      #     -> "Accessible from repositories in the <org> organization"
+      #        (without this, the `uses:` above cannot resolve at all)
+      #   the token itself needs only `contents: read` on themegrill-qa
+      #
+      # If you make themegrill-qa public, delete this block — the fallback to
+      # GITHUB_TOKEN then works.
+      QA_REPO_TOKEN: ${{ secrets.QA_REPO_TOKEN }}

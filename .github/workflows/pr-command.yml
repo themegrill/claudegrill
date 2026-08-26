@@ -63,6 +63,11 @@ on:
     secrets:
       ANTHROPIC_API_KEY:
         required: true
+      QA_REPO_TOKEN:
+        description: >
+          Read access to the private themegrill-qa repo. Required while that
+          repo is private; GITHUB_TOKEN cannot reach it.
+        required: false
 
 jobs:
   command:
@@ -174,7 +179,13 @@ jobs:
         with:
           repository: ThemeGrill/themegrill-qa      # <-- change to your org/repo
           ref: ${{ inputs.qa_ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # GITHUB_TOKEN is scoped to the repo running this workflow and CANNOT
+          # read a different private repository — it fails with a 404 that reads
+          # like the repo does not exist. While themegrill-qa is private, the
+          # caller must pass QA_REPO_TOKEN: a PAT or GitHub App token with
+          # read access to it, ideally an organisation secret so all seven
+          # products share one. The fallback only works if themegrill-qa is public.
+          token: ${{ secrets.QA_REPO_TOKEN || secrets.GITHUB_TOKEN }}
           path: themegrill-qa
 
       - uses: actions/setup-node@v4
