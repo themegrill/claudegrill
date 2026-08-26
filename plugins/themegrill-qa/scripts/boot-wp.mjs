@@ -155,13 +155,31 @@ try {
 // ---------------------------------------------------------------- playground
 
 if (opt.engine === "playground") {
-  // --path lets Playground detect that this is a theme or plugin and mount it
-  // itself, which is more robust than building the virtual path by hand.
+  // Mount EXPLICITLY, by slug — do not let Playground auto-mount.
+  //
+  // `--path` auto-detects the project type and mounts it at
+  // `wp-content/themes/<basename of the directory>`. The blueprint then
+  // activates `<slug>`, taken from the Text Domain. Those two agree only when
+  // the checkout directory happens to be named after the slug.
+  //
+  // In CI it is not. `actions/checkout` with `path: product` produces
+  // `/home/runner/work/colormag/colormag/product`, so Playground mounted
+  // `wp-content/themes/product` while the blueprint tried to activate
+  // `colormag`, and the boot died on blueprint step #2 with "Theme not found at
+  // the provided theme path". Confirmed from a real failed run.
+  //
+  // `--no-auto-mount` plus an explicit `--mount` makes the virtual path depend
+  // on the slug alone, so it no longer matters what anyone named the directory.
+  // `--path` stays because it still decides which site directory Playground
+  // reuses, which is what keeps two products from sharing one site locally.
+  const contentDir = info.type === "theme" ? "themes" : "plugins";
   const args = [
     "--yes",
     "@wp-playground/cli@latest",
     "start",
     `--path=${info.root}`,
+    "--no-auto-mount",
+    `--mount=${info.root}:/wordpress/wp-content/${contentDir}/${info.slug}`,
     `--php=${opt.php}`,
     `--wp=${opt.wp}`,
     `--port=${opt.port}`,
