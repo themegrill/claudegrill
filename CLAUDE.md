@@ -197,7 +197,7 @@ that curve.
   test functions with multiline typed signatures and raw docstrings, area
   derivation, tag facet-vs-feature inventory
 - `estimate-cost.mjs` — agrees with the previous implementation to the cent
-- `install.mjs` — links five skills, sets the env var, smoke-tests the scripts
+- `install.mjs` — links the six skills, sets the env var, smoke-tests the scripts
 - `boot-wp.mjs` — Playground auto-mount and blueprint loading confirmed; the
   readiness check correctly *rejects* the 502s Playground emits while failing,
   and prints the blocked-network hint

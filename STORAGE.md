@@ -111,6 +111,19 @@ conflict, which matters when several sweeps run in parallel shards.
 
 ---
 
+## What the suite layer added
+
+Three more files, all in the **product repo**:
+
+| File | Committed? | Why |
+|---|---|---|
+| `.themegrill-qa/suite.json` | yes | The manifest. A product opts in by adding it; absent, everything degrades to the pre-suite behaviour |
+| `.themegrill-qa/spec-queue.jsonl` | **yes** | Source changed with no spec yet. Committed on purpose — the queue being visible in the repo is what makes it get drained |
+| `.themegrill-qa/.env.local` | **never** | Base URL and admin credentials for the developer's own site. Gitignored. Add the ignore rule *before* writing the file |
+
+The specs themselves live where they always did, in `tests/e2e/**`, and are the
+only layer that turns a finding into something that runs for free forever.
+
 ## What is *not* stored, and why
 
 **No vector database.** Retrieval here is not fuzzy. A diff gives file paths; a

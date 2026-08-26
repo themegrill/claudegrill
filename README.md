@@ -1,25 +1,34 @@
 # themegrill-qa
 
 > **Start here:** [SETUP.md](SETUP.md) is the ordered onboarding runbook.
-> [CONVENTIONS.md](CONVENTIONS.md) governs every spec written against this.
 > [SUITE.md](SUITE.md) is the contract between this platform and a product's suite.
+> [CONVENTIONS.md](CONVENTIONS.md) governs every spec written against this.
+> [INSTALL.md](INSTALL.md) is how the plugin reaches the team.
+> [COSTS.md](COSTS.md) — short version: the PR path costs nothing.
+> [SETUP-COLORMAG.md](SETUP-COLORMAG.md) is the pilot product's current state.
 > [STORAGE.md](STORAGE.md) says where every artifact is kept.
-> [SETUP-COLORMAG.md](SETUP-COLORMAG.md) is the concrete first-product walkthrough.
-> [INSTALL.md](INSTALL.md) says who needs a local install (fewer people than you think).
 > [CLAUDE.md](CLAUDE.md) orients Claude Code — invariants, build state, next tasks.
-> [COSTS.md](COSTS.md) is the spend model.
 
 
-The QA loop you already run by hand in Claude Code — diff, boot WordPress,
-validate with Playwright, assess risk, report — packaged into four entry points
-so it runs without you.
+A Claude Code plugin, plus a free CI check.
+
+The loop: a developer fixes a bug, verifies it locally with
+`/themegrill-qa:verify-fix`, and a regression spec lands on their branch with the
+fix. CI then runs that spec on every future PR — deterministically, with **no API
+key and no per-run cost**.
+
+The agent is used once, by the person who already understands the change. After
+that the check is free forever.
 
 | # | Entry point | Trigger | Output |
 |---|---|---|---|
-| 1 | `/verify-fix` | You, locally, in Claude Code | A verdict in your terminal |
-| 2 | PR QA runner | Automatically on every PR | One comment on the PR |
-| 3 | Regression sweep | Weekly cron, or manual after a release | A report artifact, and Jira tickets only when asked |
-| 4 | `/write-spec` | A verified finding, or the spec queue | A committed `@fresh` regression spec on its own branch |
+| 1 | `/themegrill-qa:verify-fix` | You, locally, on a fix | A verdict, and a spec on your branch |
+| 2 | `/themegrill-qa:write-spec` | A verified finding, or the spec queue | A `@fresh` regression spec, proved against broken and fixed code |
+| 3 | **QA suite** (CI) | Every PR, and nightly | A pass/fail check and one PR comment. **No API key** |
+| 4 | `/themegrill-qa:regression-sweep` | Manual, on a release | A report; Jira tickets only when asked |
+
+Skills are namespaced because they ship as a plugin: `/themegrill-qa:verify-fix`,
+not `/verify-fix`.
 
 ---
 
@@ -145,20 +154,32 @@ exists for exactly these cases and the skills are instructed to switch when the
 diff touches them — but if you are relying on this for something in that list,
 check which engine the run actually used.
 
-**No visual baseline yet.** The sweep captures screenshots and stores them for
-90 days, but nothing diffs them against the previous release automatically. For
-ColorMag and Zakra that is the highest-value missing piece — layout regressions
-are the dominant bug class for themes and clicking around will not find them.
-Adding a baseline comparison step is the first extension I would build.
+**No visual baseline yet.** Nothing diffs screenshots against the previous
+release automatically. Layout regressions are the dominant bug class for themes
+and neither clicking around nor a DOM assertion finds them — only comparison
+does. This is the highest-value missing piece for ColorMag and Zakra.
 
 **No pro/licensed testing.** Nothing here activates a licensed pro build. You
 need a mock license server before any pro code path can be covered in CI, and
 that gates a meaningful share of your actual customer-facing surface.
 
-**The agent can be wrong.** It reproduces twice and cites evidence, which
-filters most noise, but it will still occasionally report a non-issue with
-conviction. That is what the "Known non-issues" section of each knowledge file
-is for. Feed it back.
+**A green check covers only the areas that have specs.** This is the biggest one,
+and it is not a bug — it is the trade the design makes. ColorMag has **10 of 16
+areas with no `@fresh` specs at all**. Nothing automated visits them. Read the
+coverage block in the PR comment alongside the tick, and treat
+`suite-index.mjs`'s `areas_uncovered` as the backlog.
+
+**A `@fresh` tag is a promise the spec has to keep.** A spec written against a
+developer's Local site and tagged `@fresh` will fail on a clean CI site for
+reasons that have nothing to do with the change. ColorMag currently passes 19/20
+locally and 11/20 on Playground for exactly this reason. Verify the tag against a
+clean site before trusting the tier.
+
+**The agent can be wrong** — but it is no longer on the PR path, so a wrong
+verdict costs one developer a few minutes rather than blocking a merge. It
+reproduces twice and cites evidence, which filters most noise, but it will still
+occasionally report a non-issue with conviction. That is what the "Known
+non-issues" section of each knowledge file is for. Feed it back.
 
 ---
 

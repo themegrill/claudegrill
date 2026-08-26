@@ -1,113 +1,115 @@
 # What this costs
 
-Run `node scripts/estimate-cost.mjs` to recompute any of this with your own
-assumptions. Every number below is modelled, not measured — see *Measure this
-properly* at the end.
+**The short answer: the pull-request path costs nothing.** No API key, no tokens,
+no per-run charge. The only recurring spend is a developer's existing Claude Code
+seat, which you are already paying for.
 
-Prices used: Sonnet 5 at $2/M input, $10/M output; 1-hour cache write at 2×
-input, cache read at 0.1×; GitHub Actions Linux 2-core at $0.006/min on private
-repos, free on public ones.
+That is a deliberate design change, not an accident of configuration. An earlier
+version of this platform ran an agent on every pull request and modelled out at
+roughly **$1,000/month across seven products**. That model is gone. What replaced
+it is in [SUITE.md](SUITE.md): the developer writes the spec once, CI runs it
+deterministically forever.
 
-## Per run
+Recompute any number here with your own assumptions:
+
+```bash
+node plugins/themegrill-qa/scripts/estimate-cost.mjs
+node plugins/themegrill-qa/scripts/estimate-cost.mjs --projection 24
+```
+
+Every figure below is **modelled, not measured**. See *Measure this properly* at
+the end.
+
+---
+
+## What you actually pay for, today
+
+| Layer | Runs | Cost |
+|---|---|---|
+| **CI suite on every PR** | `suite.yml`, scoped to the diff | **$0** — runner minutes only, free on a public repo |
+| **Nightly full tier** | `suite.yml`, `scope: full` | **$0** — same |
+| **`/themegrill-qa:verify-fix`** | a developer, locally, on a fix | the developer's own Claude Code seat |
+| **`/themegrill-qa:write-spec`** | after a verified finding | same seat, same session |
+| Regression sweeps | manual, on a release | API tokens — see below |
+| Agent PR review | **off by default** | API tokens — see below |
+
+`colormag` is public, so its Actions minutes are free. On a private repo the same
+work is roughly **$0.006/min**; a scoped PR run is about 2 minutes and the
+nightly full run about 5, so a busy product lands near **$1–2/month**.
+
+### The local session, in tokens
+
+The expensive layer is a developer reading output, not the suite running. Two
+things keep that small, both verified against ColorMag's real suite:
+
+- `run-suite.mjs --json` emits **one line, ~300 bytes, zero stderr**. Before that
+  flag worked, ~2.5KB of Playwright progress went into context on every run.
+- `--since` narrows a PR to the areas its diff touches — 4 areas instead of 21
+  tests on a real CMAG-741 diff.
+
+A `/themegrill-qa:verify-fix` run is a normal Claude Code session: reading a
+diff, driving a browser, writing a verdict. It draws on the seat you already pay
+for. Nothing in the local path bills the API.
+
+---
+
+## What it would cost to turn the agent tiers back on
+
+Kept here because the tiers still exist in the repo, unused, and because a
+product whose suite is still thin may want them.
+
+Modelled on Sonnet 5 ($2/M input, $10/M output; 1-hour cache write at 2× input,
+cache read at 0.1×):
 
 | Run | Cost |
 |---|---|
-| One PR review | **~$1.24** |
+| One agent PR review | **~$1.24** |
 | One sweep shard | **~$2.59** |
 | Smoke sweep (6 shards + reconcile) | **~$16** |
 | Full sweep (18 shards + reconcile) | **~$47** |
 
-Both workflows pass `--max-budget-usd`, so these are capped, not open-ended. Note
-the cap **stops the run** when reached rather than failing — a cap set too tight
-silently truncates coverage. That is why the shard default is $3.50 against a
-modelled $2.59, and why the way to spend less is to shorten the area list rather
-than tighten the cap.
+Turning the agent back on for **every** PR across seven products is the
+~$1,000/month shape. Running only release sweeps, at 2.5 releases a month across
+the catalogue, is about **$17/product/month — ~$118/month for all seven**.
 
-## Per month
+Both agent workflows pass `--max-budget-usd`, so these are capped. Note the cap
+**stops the run** rather than failing it: a cap set too tight silently truncates
+coverage. That is why the shard default is $3.50 against a modelled $2.59, and
+why the way to spend less is to shorten the area list rather than tighten the cap.
 
-Assuming 40 PRs per product (60% surviving the triage filter), 4 smoke sweeps,
-1 full sweep:
+---
 
-| | Per product | All 7 |
-|---|---|---|
-| Claude | $141 | **$990** |
-| Actions (~1,363 min) | $8 | $57 |
-| **Total** | **$149** | **~$1,047** |
+## Why the suite is the lever
 
-Annualised at that shape: **~$12.5k**. Public repos remove the Actions line
-entirely; a Team plan includes 3,000 minutes against the ~9,500 this would use.
+An agent finding costs tokens on **every run, forever**. The same finding as a
+committed spec costs tokens **once**, then runs for approximately free for the
+life of the product.
 
-## The thing the model got wrong until it was measured
+```bash
+node plugins/themegrill-qa/scripts/estimate-cost.mjs --projection 24
+```
 
-I assumed PR reviews would dominate. They do not:
+That prints the curve. It is the entire argument for the suite layer, and the
+reason `suite-index.mjs` reports `areas_uncovered` — the list of areas where no
+spec exists and an agent would still be the only option.
 
-| | Share of cost |
-|---|---|
-| Exploratory sweeps | **79%** |
-| PR reviews | 21% |
+**The number that matters is coverage, not spend.** ColorMag currently has
+**10 of 16 areas with no `@fresh` specs at all**. Spend is already near zero; the
+open question is how much the free tier actually covers.
 
-Dropping PR agent runs almost entirely only takes all-seven from $1,047 to $845.
-So the accumulation argument applies to **sweeps**, not PRs — and it applies by
-shrinking the *area list*, because every area genuinely covered by committed
-specs is an area the sweep no longer has to explore.
-
-| Spec coverage | Shards (smoke/full) | All 7 per month |
-|---|---|---|
-| Nothing covered — today | 6 / 18 | $990 |
-| ~⅓ of areas covered | 4 / 12 | $736 |
-| ~½ covered | 3 / 8 | $591 |
-| Most covered, sweeps probe the frontier | 2 / 4 | **$446** |
-
-That is the compounding curve, in currency. It bottoms out at roughly half of
-today's cost while *increasing* coverage, because the specs keep running.
-
-## Model choice is the smaller lever
-
-All seven products per month:
-
-| Model | Cost |
-|---|---|
-| Haiku 4.5 | $552 |
-| **Sonnet 5** | **$1,047** |
-| Sonnet 4.6 | $1,542 |
-| Opus 5 | $2,531 |
-
-Sonnet 5 is the default. Two things worth knowing: Sonnet 5 is *cheaper* than
-Sonnet 4.6, so there is no reason to pin the older one; and Haiku is tempting on
-price but browser-driving with adversarial reasoning is exactly the workload
-where a weaker model produces false findings, which cost more in engineer-hours
-than the difference saves. Consider Haiku for the reconcile step only, where the
-input is already-verified text.
-
-## Keeping the bill down
-
-Already built in:
-
-- **Triage step** — docs, translations and CI-only diffs never reach a browser.
-- **Draft PRs skipped.**
-- **`concurrency: cancel-in-progress`** — three pushes to a PR pay for one review.
-- **`--max-budget-usd` and `--max-turns`** on every agent invocation.
-- **Depth tiering** — patch releases get a smoke sweep, majors get the full one.
-- **Shard cap** (`max_shards`) so a long area list cannot run away.
-- **Chromium only**, not three browser engines.
-
-Worth adding when volume justifies it: batch processing is 50% off, and sweeps
-are asynchronous by nature, so a nightly batched sweep is a genuine halving.
+---
 
 ## Measure this properly
 
-The two assumptions that dominate everything above are how large the
-conversation grows (driven almost entirely by how many page snapshots the agent
-takes) and what share of PRs survive triage. Both are cheap to measure and
-neither should be taken from a model.
+Every figure above is a model. Replace it with observation:
 
-In week one, run one product only and read the actual numbers:
+- **Token costs**: after a dozen real `/themegrill-qa:verify-fix` sessions, check
+  actual usage and replace the per-run token shapes at the top of
+  `estimate-cost.mjs`. They are estimates and are labelled as such in the source.
+- **Runner minutes**: the Actions **Usage** tab on any run gives the real figure
+  per job. Compare against the ~2 min scoped / ~5 min full assumed here.
+- **Suite runtime**: measured on ColorMag — ~47s for 20 `@fresh` specs against a
+  Local site, ~291s against a Playground site, ~35s scoped to two areas.
 
-- `claude -p --output-format json` returns `total_cost_usd`.
-- `claude-code-action` exposes an `execution_file` output; its contents are not
-  documented, so inspect one before relying on parsing it.
-- Org-level spend is visible on the Claude Console usage dashboard.
-
-Then edit the token shapes at the top of `estimate-cost.mjs` and re-run it. If
-real costs come in more than about 2× the model, the cause is almost certainly
-snapshot size — tighten the mission scope per shard before anything else.
+Do not treat the modelled numbers as a budget until at least the first of those
+has been done.
