@@ -5,14 +5,14 @@
     "url": "https://themegrill.com"
   },
   "description": "Internal Claude Code plugins for ThemeGrill's WordPress themes and plugins",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "plugins": [
     {
       "name": "themegrill-qa",
       "source": "./plugins/themegrill-qa",
       "displayName": "ThemeGrill QA",
       "description": "Verify a fix, review a PR, or sweep a whole product against a disposable WordPress site",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": { "name": "ThemeGrill Engineering" },
       "defaultEnabled": true
     }

@@ -234,6 +234,27 @@ that curve.
   source-only
 - `estimate-cost.mjs` still reproduces its three previous baselines byte for
   byte with no new flags passed
+- **`run-suite.mjs` and `suite-index.mjs` against ColorMag's REAL suite**, not the
+  fixture. `suite-index.mjs`: 18 spec files, 23 tests, 19 fresh / 4 demo, the
+  real Jira guards map (CMAG-734, MZB-742, CMAG-733, …), and clean hygiene —
+  zero incomplete docblocks, zero untagged tiers. `run-suite.mjs --tier fresh`:
+  19 passed, 1 skipped, exit 0, ~47s against a Local site. The manifest's own
+  `command` (a pnpm + `--config=tests/e2e/playwright.config.ts` invocation) and
+  the JSON report parse both survived contact, including a config with a setup
+  project and a named `colormag` project
+- **Area filtering against that real suite**: `--area header` 6, `--area
+  header,global` 11 (the OR, not the intersection), full fresh 20
+- **The `.env.local` precedence**: base URL resolved from
+  `.themegrill-qa/.env.local` with no `--base-url` passed, and the file
+  confirmed gitignored in ColorMag
+- **`--json` quiet mode**: one line of stdout, **zero bytes of stderr**, the
+  runner's own output diverted to a log file. Before the fix it was ~2.5KB of
+  Playwright progress going straight into the calling agent's context — `--json`
+  was parsed and then never used
+- **One live CI run**: `wp-core-watch.yml` executed and pushed
+  `f6dea3d chore: WordPress 7.1 swept` as `themegrill-qa-bot`. This is the first
+  workflow in this repo to run at all
+- `claude plugin validate` passes on both the plugin and the marketplace
 - All YAML and JSON parses; every `.mjs` passes `node --check`
 
 **Not verified**
@@ -254,15 +275,23 @@ that curve.
   `@wp-playground/cli` directly (no wrapper) to confirm it's upstream, and
   either file it there or fall back to `--engine wp-env` by default on
   Windows.
-- **Any live CI run. No workflow in this repo has ever executed.** That now
-  includes the two new ones, `suite.yml` and `pr-command.yml`, plus the suite
-  steps folded into `pr-qa.yml`. Their YAML parses and the shell inside them is
-  written carefully; neither is evidence that they run.
-- **`run-suite.mjs` against a real product.** It has been proved against a
-  fixture, never against ColorMag — so the manifest inference, the `--install`
-  path on a pnpm lockfile, and `--boot` handing off from `boot-wp.mjs` are all
-  untested against the real thing. `--boot` in particular is blocked behind
-  task 1 below.
+- **Every CI path except `wp-core-watch.yml`.** That one has now run for real.
+  `suite.yml`, `pr-qa.yml` and `pr-command.yml` have not, and there is a known
+  blocker in front of them: **`themegrill-qa` is a private repo and
+  `secrets.GITHUB_TOKEN` cannot check it out from another repository.** Every
+  reusable workflow's "Check out shared QA tooling" step fails with a 404 that
+  reads as if the repo does not exist. They now take an optional
+  `QA_REPO_TOKEN`; that it works is untested. Two org-level settings also have to
+  be right — the token itself, and themegrill-qa's Settings > Actions > Access
+  allowing organisation repos to call its reusable workflows. Making the repo
+  public removes all of it, and also removes the per-developer git-access
+  requirement for the plugin install.
+- **`run-suite.mjs --boot` and `--install`.** The script is now proved against
+  ColorMag's real suite, but only against an already-running Local site. `--boot`
+  handing off from `boot-wp.mjs` is still untested and blocked behind task 1;
+  `--install` has never run against ColorMag's pnpm lockfile, because
+  `node_modules` was already present. Manifest *inference* also remains
+  untested — ColorMag declares every field, so no branch of it was exercised.
 - **`spec-guard.mjs` wired as an actual plugin hook.** The script is verified by
   invoking it directly with a Stop-shaped payload; that Claude Code loads
   `hooks/hooks.json` and fires it on `Stop` is not. Two things to know when
@@ -280,52 +309,62 @@ that curve.
 
 ## Next tasks, in order
 
-1. **Make `boot-wp.mjs` work end to end** on a machine with network access. Fix
-   whatever the blueprint gets wrong. **Everything else is still blocked behind
-   this** — including `run-suite.mjs --boot`, `suite.yml`, and every CI path,
-   all of which reach the environment only through that one script.
-2. **Point `run-suite.mjs` at ColorMag's real suite.** It is proved against a
-   fixture, never against a product. Write ColorMag's `.themegrill-qa/suite.json`,
-   tier its existing specs, and check that the manifest inference, `--install` on
-   a pnpm lockfile, and the JSON report parse all survive contact. Cheap, and it
-   is what the whole suite layer rests on.
-3. **Run `/verify-fix` on 3+ already-hand-verified ColorMag fixes** and compare
-   verdicts. Still the cheapest test of whether the approach works — and now it
-   also exercises Step 3.5 and the `write-spec` handoff.
-4. **Prove the `write-spec` gate once, by hand.** Take one known ColorMag fix,
-   let the skill write the spec, and confirm it genuinely fails against the
-   stashed code with an assertion failure rather than a timeout. If that gate
-   does not hold, every spec this platform generates is decorative.
-5. **Resolve the knowledge-file TODOs** for ColorMag with a maintainer. These
-   now matter more than they did: `suite-index.mjs` derives `areas_uncovered`
-   from the knowledge file's critical-flows list, so a wrong area list sends the
-   agent's whole budget to the wrong place.
-6. **First live CI run** on ColorMag only — `suite.yml` first, since it needs no
-   API key and can fail for free. Then `pr-qa.yml`, checking that trivial PRs
-   are skipped. Then one `@themegrill-qa help` comment to confirm the gating.
-7. **Port the existing spec harness, do not invent one.**
+1. **Unblock CI: `QA_REPO_TOKEN`, or make this repo public.** Nothing in the CI
+   tier can run until the reusable workflows can check this repo out. The
+   cheapest fix is making `themegrill-qa` public — there is nothing secret in it,
+   ColorMag is already public, and it also removes the per-developer git-access
+   requirement for the plugin install. Otherwise: an org secret plus
+   Settings > Actions > Access on this repo.
+2. **Make `boot-wp.mjs` work end to end** on a machine with network access. Fix
+   whatever the blueprint gets wrong. Everything that needs a *disposable* site
+   is still behind this — `run-suite.mjs --boot`, and `suite.yml` on a runner.
+   Local development no longer is: `.env.local` points the suite at the
+   developer's own site, which is how ColorMag was proved.
+3. **First real `suite.yml` run** on an existing ColorMag PR. It needs no API
+   key and can fail for free, so it is the right first CI target. Push the
+   caller change that adds `QA_REPO_TOKEN` and that push is the trigger.
+4. **Prove the `write-spec` gate once, by hand.** CMAG-741 is the obvious
+   candidate: the fix is on `fix/cmag-741-related-posts-random-offset` and
+   nothing guards it. Confirm the spec fails against the stashed code with an
+   *assertion* failure rather than a timeout. If that gate does not hold, every
+   spec this platform generates is decorative.
+5. **Run `/verify-fix` on 3+ already-hand-verified ColorMag fixes** and compare
+   verdicts. Still the cheapest test of whether the approach works, and it now
+   exercises the diff-scoped Step 3.5 and the `write-spec` handoff.
+6. **Resolve the knowledge-file TODOs** for ColorMag with a maintainer. These
+   matter more than they did: `suite-index.mjs` derives `areas_uncovered` from
+   the knowledge file's critical-flows list, and it currently reports **10 of 16
+   areas with no `@fresh` coverage at all** — customization, demo-import, faq,
+   footer, get-started, how-to, rtl, upgrade, widgets, woocommerce. A wrong area
+   list sends the whole budget to the wrong place.
+7. **Fill those ten uncovered areas.** Under the no-AI-on-PR model the suite is
+   the only automated safety net, so an area with no specs is an area where a
+   regression ships unnoticed. This is now the main body of work, and it is the
+   thing the cost projection assumes is happening.
+8. **Port the existing spec harness, do not invent one.**
    `wpmake22/post-purchase-hub` already has a working Playwright suite with
    settled conventions: wp-env, two projects (desktop 1440×900, mobile 375×812),
    per-theme visual snapshots, owned-selector rule, and a full unit /
    integration / e2e pyramid. Extract `tests/e2e/utils/` into `packages/core`
-   and adopt its conventions rather than designing new ones. This is
-   deterministic, costs no tokens, and is the fastest route to an accumulating
-   suite. Transpose the matrix for themes — one theme × N plugins, not one
-   plugin × N themes.
-8. **Invert the default** once the suite is trusted: suite on every PR, agent on
-   HIGH-risk diffs only. PR reviews are ~64% of spend, so this is where the
-   savings are. The pieces now exist — `suite.yml` is the free tier and
-   `pr-qa.yml` is gated — so this is a change to the callers, not new code.
-9. **Snapshot diff triage** — the agent's best-fitting job in the whole system.
-   Six themes × two viewports × N specs is a large snapshot set, and
-   `--update-snapshots` makes rubber-stamping a real regression as easy as
-   accepting an intended restyle. Classifying those diffs has no good
-   non-AI answer.
+   and adopt its conventions rather than designing new ones. Transpose the
+   matrix for themes — one theme × N plugins, not one plugin × N themes.
+9. **Snapshot diff triage** — the agent's best-fitting job in the whole system,
+   and one of the few left under the no-AI-on-PR model. Six themes × two
+   viewports × N specs is a large snapshot set, and `--update-snapshots` makes
+   rubber-stamping a real regression as easy as accepting an intended restyle.
+   Classifying those diffs has no good non-AI answer.
 
-**Done, previously task 6:** spec generation. `write-spec` writes the spec,
-`suite-index.mjs` says where it is needed, and `spec-guard` notices when one is
-missing. What remains is proving the gate against a real fix — task 4 — because
+**Done:** spec generation (`write-spec`, `suite-index.mjs`, `spec-guard`), and
+pointing `run-suite.mjs` at ColorMag's real suite — previously tasks 6 and 2.
+What remains of the first is proving its gate against a real fix (task 4):
 the mechanism existing and the mechanism working are different claims.
+
+**Deliberately dropped:** inverting the PR default so the agent reviews only
+HIGH-risk diffs. The team decided to remove AI from the PR path entirely — the
+developer runs the scoped suite locally, commits the spec on their own branch,
+and CI runs the full `@fresh` tier with no API key. `pr-qa.yml` and
+`pr-command.yml` stay in the repo, unused, for a product whose suite is still
+too thin to trust.
 
 Deliberately **not** on the list: a dashboard (GitHub and Jira already are one),
 a vector database, a custom agent framework, merge authority, or a healer allowed
