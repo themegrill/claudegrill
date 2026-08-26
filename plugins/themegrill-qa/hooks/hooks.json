@@ -1,5 +1,5 @@
 {
-  "comment": "Schema checked against the Claude Code plugin reference for CLI 2.1.211: a plugin declares hooks either inline in plugin.json or in this file, referenced from plugin.json's `hooks` field. ${CLAUDE_PLUGIN_ROOT} is exported to hook processes and is quoted here because the plugin cache path can contain spaces. The hook never blocks — see spec-guard.mjs.",
+  "comment": "THIS FILE IS AUTO-LOADED. Do NOT add a `hooks` field to plugin.json pointing at it — the standard hooks/hooks.json is discovered automatically, and referencing it as well registers it twice and fails the ENTIRE plugin load with 'Duplicate hooks file detected'. Confirmed against CLI 2.1.246: the plugin installed but reported 'failed to load' and contributed no skills at all. manifest.hooks is only for ADDITIONAL hook files. ${CLAUDE_PLUGIN_ROOT} is exported to hook processes and is quoted because the plugin cache path can contain spaces. The hook never blocks — see spec-guard.mjs.",
   "hooks": {
     "Stop": [
       {

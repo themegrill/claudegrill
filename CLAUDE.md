@@ -118,6 +118,13 @@ over the marketplace entry's**, and setting it pins the plugin so users only get
 updates when that field is bumped. Release control belongs in
 `.claude-plugin/marketplace.json`, where the org's managed settings point.
 
+**And do not add a `hooks` field to `plugin.json`.** The standard
+`hooks/hooks.json` is discovered automatically; referencing it from the manifest
+as well registers it twice and fails the **entire plugin load** — the plugin
+installs, reports `✘ failed to load` with "Duplicate hooks file detected", and
+contributes no skills at all. Confirmed on CLI 2.1.246. `manifest.hooks` is only
+for *additional* hook files. This cost a release: 0.2.0 shipped broken.
+
 So `claude plugin validate ./plugins/themegrill-qa` will **always** print:
 
 ```

@@ -8,6 +8,5 @@
   },
   "repository": "https://github.com/ThemeGrill/themegrill-qa",
   "license": "GPL-2.0-or-later",
-  "keywords": ["wordpress", "qa", "playwright", "testing", "themes", "plugins"],
-  "hooks": "./hooks/hooks.json"
+  "keywords": ["wordpress", "qa", "playwright", "testing", "themes", "plugins"]
 }
