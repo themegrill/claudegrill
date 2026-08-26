@@ -283,6 +283,12 @@ that curve.
     the common path, since Playground keeps the site directory between boots.
     Replaced with a `term_exists` guard; a second boot now runs clean.
 
+- **A green check meant nothing until now.** A live `suite.yml` run on ColorMag
+  PR #297 reported "QA suite — passed, 0 passed · 0 failed · 0s" and a green tick,
+  on a product with 20 `@fresh` specs. `ok` was computed as `failed === 0`, which
+  is trivially true when nothing ran. **Zero tests is now exit 2**, reported as a
+  broken harness. Any required check built on the old behaviour was decorative.
+
 **Not verified**
 
 - **Reliable Playground readiness detection on Windows.** The site above

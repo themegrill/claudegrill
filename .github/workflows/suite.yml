@@ -70,6 +70,7 @@ jobs:
     # the signal, which is what a required check should be.
     permissions:
       contents: read
+      pull-requests: write   # to post the one result comment
 
     concurrency:
       group: qa-suite-${{ github.event.pull_request.number || github.ref }}
@@ -269,6 +270,83 @@ jobs:
           }
           console.log(out.join("\n"));
           JS
+
+      # The check status is the gate; this comment is how a human reads the
+      # result without opening the Actions tab. Deterministic — no agent, no API
+      # key. One comment per PR, edited in place: a PR with nine bot comments
+      # gets muted, and then nobody reads any of them.
+      - name: Post the result on the PR
+        if: always() && steps.manifest.outputs.found == 'true' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          node - <<'JS' > body.md
+          const fs = require("fs");
+          let r = {};
+          try { r = JSON.parse(fs.readFileSync("suite.json", "utf8")); } catch {}
+
+          const out = ["<!-- themegrill-qa-suite -->"];
+
+          if (r.suite === false) {
+            out.push("## QA suite — not configured", "",
+              "This product has no `.themegrill-qa/suite.json`, so nothing ran.");
+          } else if (r.ran_nothing) {
+            // The failure mode that matters most: a green tick over an empty run.
+            out.push("## QA suite — BROKEN, not passed", "",
+              "**The runner executed 0 tests.** That is a broken harness, not a pass —",
+              "do not read this as the change being safe.", "",
+              "Likely causes: the grep matched nothing, `spec_dir` is wrong, or the",
+              "install left no runner. The step log says which.");
+          } else if (r.ok === undefined) {
+            out.push("## QA suite — could not run", "",
+              `\`${r.reason ?? "no parseable result"}\``, "",
+              "A harness failure, not a test failure.");
+          } else {
+            out.push(`## QA suite — ${r.ok ? "passed ✅" : "failed ❌"}`, "",
+              `**${r.passed} passed · ${r.failed} failed · ${r.skipped} skipped · ${r.flaky} flaky**`,
+              `tier \`${r.tier}\` · ${Math.round((r.duration_ms ?? 0) / 1000)}s · ${r.total} tests`, "");
+
+            if (r.ok) {
+              out.push("The `@fresh` tier passes. **This covers only the areas that have specs** —",
+                "see the coverage note below before treating it as full assurance.");
+            }
+            if ((r.failures ?? []).length) {
+              out.push("", "<details open><summary>Failures</summary>", "", "| Spec | Test |", "|---|---|");
+              for (const f of r.failures) out.push(`| \`${f.file}:${f.line}\` | ${f.title} |`);
+              out.push("</details>");
+            }
+            if (r.flaky > 0) {
+              out.push("", `> ⚠️ ${r.flaky} test(s) passed only on retry. A flaky suite erodes trust faster than a failing one.`);
+            }
+          }
+
+          try {
+            const idx = JSON.parse(fs.readFileSync("index.json", "utf8"));
+            if (idx.suite) {
+              out.push("", "---", "",
+                `**Coverage** — ${idx.tests} tests in ${idx.spec_files} files · ${idx.by_tier.fresh} fresh, ${idx.by_tier.demo} demo`);
+              if ((idx.areas_uncovered ?? []).length) {
+                out.push("", `**No \`@fresh\` specs at all:** ${idx.areas_uncovered.join(", ")}`, "",
+                  "Nothing automated covers these areas. A green tick above says nothing about them.");
+              }
+            }
+          } catch {}
+
+          out.push("", "<sub>Deterministic check — no AI, no API cost. The suite runs what developers committed.</sub>");
+          fs.writeFileSync(1, out.join("\n"));
+          JS
+
+          # One comment, edited in place, found by its marker.
+          ID="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                 --jq '[.[] | select(.body | contains("<!-- themegrill-qa-suite -->"))][0].id // empty')"
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@body.md >/dev/null
+            echo "updated comment $ID"
+          else
+            gh pr comment "$PR" --repo "$REPO" --body-file body.md
+          fi
 
       - name: Upload the Playwright report
         if: always() && steps.manifest.outputs.found == 'true'

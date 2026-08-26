@@ -559,6 +559,16 @@ async function main() {
 
   const result = summarise(report, durationMs);
   teardown();
+
+  if (result.ran_nothing) {
+    say(
+      "the runner executed 0 tests — treating this as a broken harness, not a pass.\n" +
+        "  Common causes: the grep matched nothing, the spec_dir is wrong, or the\n" +
+        "  install left no runner. Check the log named in `log`.",
+    );
+    emit({ ...result, reason: "the runner executed 0 tests" }, 2);
+  }
+
   emit(result, result.ok ? 0 : 1);
 }
 
@@ -657,8 +667,18 @@ function summarise(report, durationMs) {
     total = passed + failed + skipped;
   }
 
+  // A run that executed NOTHING is not a pass.
+  //
+  // `failed === 0` is trivially true when `total === 0`, and a required check
+  // that goes green because the suite never ran is worse than no check at all.
+  // Seen for real: a live CI run reported "0 passed · 0 failed · 0s" and a green
+  // tick on a product with 20 @fresh specs. Zero tests is a broken harness —
+  // exit 2 — not a pass.
+  const ranNothing = total === 0;
+
   return {
-    ok: failed === 0,
+    ok: failed === 0 && !ranNothing,
+    ran_nothing: ranNothing,
     suite: true,
     runner: m.runner,
     tier: opt.tier,
