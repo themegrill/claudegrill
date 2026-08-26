@@ -68,6 +68,54 @@ for (let i = 0; i < argv.length; i++) {
 // ------------------------------------------------------------------- helpers
 
 /**
+ * Follow redirects the way a browser does — carrying cookies.
+ *
+ * This is the whole reason readiness detection used to fail. Playground's
+ * `--login` flag makes `/` answer 302 with three `Set-Cookie` headers and
+ * `Location: /` — a redirect to ITSELF, which only terminates once the client
+ * sends the cookies back. A bare `fetch(url, { redirect: "follow" })` keeps no
+ * cookies, so it bounces between `/` and `/` until Node's internal redirect
+ * limit throws, and the caller reads that as "not listening yet".
+ *
+ * Diagnosed against a real running site: `curl` without a cookie jar looped,
+ * `curl -L -c jar -b jar` returned 200 and 71KB of correct ColorMag markup from
+ * the same server at the same moment. The earlier Windows report — polls seeing
+ * 502s for 600s while a manual cookie-aware request got a clean 200 — is this
+ * bug, not a platform issue and not the SQLite `lockWholeFile` warnings it was
+ * provisionally blamed on.
+ */
+async function fetchFollowingCookies(url, maxHops = 8) {
+  const jar = new Map();
+  let current = url;
+
+  for (let hop = 0; hop <= maxHops; hop++) {
+    const cookie = [...jar]
+      .map(([k, v]) => `${k}=${v}`)
+      .join("; ");
+
+    const res = await fetch(current, {
+      redirect: "manual", // we follow by hand so the jar survives each hop
+      headers: cookie ? { cookie } : {},
+    });
+
+    for (const raw of res.headers.getSetCookie?.() ?? []) {
+      const pair = raw.split(";")[0];
+      const eq = pair.indexOf("=");
+      if (eq > 0) jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+    }
+
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) return res;
+      current = new URL(location, current).toString();
+      continue;
+    }
+    return res;
+  }
+  return null; // still redirecting after maxHops — treat as not ready
+}
+
+/**
  * Wait for a site that actually serves WordPress.
  *
  * A mere HTTP response is not enough: while Playground is failing to fetch
@@ -76,17 +124,10 @@ for (let i = 0; i < argv.length; i++) {
  * three steps later, so require a non-error status *and* markup that looks like
  * WordPress before declaring victory.
  *
- * 180s was too tight: a first-time boot for a given site hash (or any
- * `--reset`) downloads WordPress core + PHP.wasm and then runs every
- * blueprint step — term/post/menu creation, widget seeding — through an
- * emulated PHP runtime, which is slower than native PHP. Confirmed against a
- * real machine: 300s still was not enough for `theme-test.json`'s ~15 steps
- * (a 12-post insert loop with full block-markup bodies, among others) to
- * finish inside Playground's WASM PHP — Playground's own "Ready!" printed
- * moments after this function had already given up and killed the child, at
- * *both* the 180s and the 300s mark. A cached, non-reset boot is fast; this
- * budget only matters for the slow first-provision path, so it costs nothing
- * on the common path.
+ * 180s was too tight for a first-time boot, which downloads WordPress core and
+ * PHP.wasm and then runs every blueprint step through an emulated PHP runtime.
+ * A cached, non-reset boot is fast; this budget only matters for the slow first
+ * provision, so it costs nothing on the common path.
  */
 async function waitForServer(url, childAlive, timeoutMs = 600000) {
   const started = Date.now();
@@ -94,13 +135,14 @@ async function waitForServer(url, childAlive, timeoutMs = 600000) {
 
   while (Date.now() - started < timeoutMs) {
     try {
-      const res = await fetch(url, { redirect: "follow" });
-      lastStatus = res.status;
-
-      if (res.status < 400) {
-        const body = await res.text();
-        if (/wp-content|wp-includes|wp-json|<body/i.test(body)) {
-          return { ok: true };
+      const res = await fetchFollowingCookies(url);
+      if (res) {
+        lastStatus = res.status;
+        if (res.status < 400) {
+          const body = await res.text();
+          if (/wp-content|wp-includes|wp-json|<body/i.test(body)) {
+            return { ok: true };
+          }
         }
       }
     } catch {

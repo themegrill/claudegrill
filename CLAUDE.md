@@ -257,6 +257,32 @@ that curve.
 - `claude plugin validate` passes on both the plugin and the marketplace
 - All YAML and JSON parses; every `.mjs` passes `node --check`
 
+- **`boot-wp.mjs` end to end, on macOS, with the JSON handoff.** Three bugs were
+  found and fixed getting here, and the second is the one that had blocked this
+  for the whole project:
+  - **Mount used the directory basename, not the slug.** `--path` auto-mounts at
+    `themes/<basename>`; the blueprint activates `<slug>`. They agree only when
+    the checkout directory is named after the product. CI checks out to
+    `product/`, so a real `suite.yml` run died on blueprint step #2 with "Theme
+    not found". Fixed with `--no-auto-mount` plus an explicit slug-built
+    `--mount`, confirmed by booting the real theme from a directory named
+    `product` and watching it land at `themes/colormag`.
+  - **`waitForServer` could never have succeeded, on any platform.** Playground's
+    `--login` makes `/` answer 302 with cookies and `Location: /` — a redirect to
+    itself that only terminates once the client sends the cookies back. A bare
+    `fetch(url, {redirect:"follow"})` keeps no cookies, so it bounced until
+    Node's redirect limit threw and the `catch` swallowed it as "not listening".
+    Diagnosed against a live site: cookieless `curl` looped, `curl -L -c jar -b
+    jar` returned 200 and 71KB of correct markup from the same server at the same
+    moment. **The earlier Windows report was this bug, not a platform issue and
+    not the SQLite `lockWholeFile` warnings it was provisionally blamed on.**
+    `waitForServer` now carries a cookie jar and follows redirects by hand:
+    ready in 664ms against a site the old code polled for 600s and never saw.
+  - **The blueprint was not idempotent.** `wp term create` errors with "A term
+    with the name provided already exists" on any re-boot of a cached site —
+    the common path, since Playground keeps the site directory between boots.
+    Replaced with a `term_exists` guard; a second boot now runs clean.
+
 **Not verified**
 
 - **Reliable Playground readiness detection on Windows.** The site above
@@ -286,6 +312,26 @@ that curve.
   allowing organisation repos to call its reusable workflows. Making the repo
   public removes all of it, and also removes the per-developer git-access
   requirement for the plugin install.
+- **ColorMag's `@fresh` tier does not actually pass on a clean Playground site.**
+  This is the finding that matters most right now. Against the developer's Local
+  site: 19 passed, 1 skipped. Against a freshly booted Playground site with the
+  same specs: **11 passed, 9 failed**. The failures are not random — they cluster:
+  - seven Customizer specs time out on `page.waitForFunction` after 20s, waiting
+    on `wp.customize.state("saved")`. Playground runs the Customizer's React app
+    under WASM PHP and it is slower than the wait allows
+  - the roles spec fails at `rest_cookie_invalid_nonce` creating its subscriber
+  - the mobile-menu spec cannot find its "Dropdown Parent" link, because the
+    blueprint seeds a different menu than the Local site has
+  - the CMAG-741 spec exceeds its 120s test timeout
+
+  So those specs are tagged `@fresh` but were validated against a Local site with
+  content. Under `SUITE.md` §2 that tag is a promise they do not keep, and CI
+  would be red on all nine. Either the blueprint has to seed what they need, the
+  Customizer waits have to tolerate WASM speeds, or those specs are `@demo` and
+  the fresh tier is much smaller than it looks. **Do not turn on the required
+  check until this is resolved** — a required check that is red on arrival is one
+  nobody ever turns green.
+
 - **`run-suite.mjs --boot` and `--install`.** The script is now proved against
   ColorMag's real suite, but only against an already-running Local site. `--boot`
   handing off from `boot-wp.mjs` is still untested and blocked behind task 1;
