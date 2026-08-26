@@ -111,6 +111,33 @@ These are load-bearing. Changing one is a design decision, not a refactor.
      data attributes for theme-specific chrome: header layouts, footer columns,
      customizer-driven regions.
 
+## Releasing the plugin — and one warning you must not "fix"
+
+`plugin.json` deliberately carries **no `version` field**, and it must stay that
+way. Verified against the plugin reference: **a version in `plugin.json` wins
+over the marketplace entry's**, and setting it pins the plugin so users only get
+updates when that field is bumped. Release control belongs in
+`.claude-plugin/marketplace.json`, where the org's managed settings point.
+
+So `claude plugin validate ./plugins/themegrill-qa` will **always** print:
+
+```
+⚠ version: No version specified. Consider adding a version following semver
+```
+
+**That warning is expected and correct. Do not silence it by adding a version to
+`plugin.json`** — doing so moves release control to a file nobody bumps, and the
+symptom is developers silently running a months-old copy of the skills.
+
+To ship an update: edit, commit, bump `version` in `.claude-plugin/marketplace.json`,
+push. With `autoUpdate: true` in the org's `extraKnownMarketplaces`, developers
+pick it up within the hour or at next launch. Forget the bump and nobody gets it.
+
+Note also that plugin skills are **namespaced**: installed as a plugin the entry
+points are `/themegrill-qa:verify-fix`, not `/verify-fix`. A clone-installed copy
+in `~/.claude/skills` is unnamespaced *and wins over the plugin's copy*, so the
+two must not coexist on one machine.
+
 ## Where work lives — the three-layer memory
 
 This is the shape of the whole platform, and the reason the suite layer exists.
