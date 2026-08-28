@@ -16,6 +16,7 @@
  *   node scripts/run-suite.mjs --tier fresh --base-url http://127.0.0.1:9400
  *   node scripts/run-suite.mjs --tier fresh --boot playground --install
  *   node scripts/run-suite.mjs --tier all --area header
+ *   node scripts/run-suite.mjs --tier fresh --full-results   # CI: report input
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -46,6 +47,11 @@ const opt = {
   json: !process.stdout.isTTY,
   timeoutMs: 0, // 0 = no ceiling
   since: null,  // git ref: narrow to the areas this diff could have broken
+  // Evidence. A failure nobody can reproduce costs more than the run that found
+  // it, so the default captures a trace — but only for the tests that failed.
+  trace: "retain-on-failure", // Playwright --trace mode, or null to leave alone
+  htmlReport: "playwright-report", // relative to the product root, or null
+  fullResults: false, // list the passing tests too — see the flag below
 };
 
 const argv = process.argv.slice(2);
@@ -70,6 +76,14 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--json" || a === "--quiet") opt.json = true;
   else if (a === "--timeout-ms") opt.timeoutMs = Number(argv[++i]);
   else if (a === "--since") opt.since = argv[++i];
+  else if (a === "--trace") opt.trace = argv[++i];
+  else if (a === "--no-trace") opt.trace = null;
+  else if (a === "--html-report") opt.htmlReport = argv[++i];
+  else if (a === "--no-html-report") opt.htmlReport = null;
+  // Every line of stdout is context an agent reads and pays for, which is the
+  // whole reason `--json` exists. The passing tests are only worth their bytes
+  // to a report a human will read, so CI asks for them and an agent does not.
+  else if (a === "--full-results") opt.fullResults = true;
   else {
     console.error(`unknown flag: ${a}`);
     process.exit(2);
@@ -78,6 +92,15 @@ for (let i = 0; i < argv.length; i++) {
 
 if (!["fresh", "demo", "all"].includes(opt.tier)) {
   console.error(`--tier must be fresh, demo or all (got: ${opt.tier})`);
+  process.exit(2);
+}
+
+const TRACE_MODES = [
+  "on", "off", "on-first-retry", "on-all-retries", "retain-on-failure",
+  "retain-on-first-failure", "retain-on-failure-and-retries",
+];
+if (opt.trace !== null && !TRACE_MODES.includes(opt.trace)) {
+  console.error(`--trace must be one of: ${TRACE_MODES.join(", ")} (got: ${opt.trace})`);
   process.exit(2);
 }
 
@@ -553,7 +576,7 @@ async function main() {
       {
         ok: true, suite: true, runner: m.runner, tier: opt.tier, env: envLabel,
         base_url: baseUrl, scope, total: 0, passed: 0, failed: 0, skipped: 0,
-        flaky: 0, failures: [], fixme: [],
+        flaky: 0, failures: [], fixme: [], flaky_tests: [], passed_tests: null,
         reason: "no product source changed — nothing to run",
       },
       0,
@@ -566,12 +589,36 @@ async function main() {
   // worst possible failure mode: a green verdict for tests that never executed.
   fs.rmSync(reportPath, { force: true });
 
+  // Playwright refuses to run when the HTML report folder contains, or is
+  // contained by, the tests' output folder — it would delete the attachments it
+  // is about to link. Detect that here and drop the HTML report rather than
+  // failing the whole run for a reporting nicety.
+  let htmlDir = opt.htmlReport ? path.resolve(root, opt.htmlReport) : null;
+  let htmlSkipped = null;
+  if (htmlDir) {
+    const outputDir = path.dirname(reportPath);
+    if (contains(htmlDir, outputDir) || contains(outputDir, htmlDir)) {
+      htmlSkipped =
+        `${opt.htmlReport} overlaps the runner's output folder ` +
+        `(${path.relative(root, outputDir).split(path.sep).join("/")}) — Playwright ` +
+        `would clash, so no HTML report was written`;
+      say(htmlSkipped);
+      htmlDir = null;
+    }
+  }
+
   const args = [
     ...buildFilters(),
-    // `--reporter=json` on the command line rather than in the config, because
-    // the platform must never mutate a product's playwright.config.*.
-    "--reporter=json",
+    // `--reporter` on the command line rather than in the config, because the
+    // platform must never mutate a product's playwright.config.*. It takes a
+    // comma list, so the machine-readable and human-readable reports coexist —
+    // verified against Playwright 1.62.1.
+    `--reporter=${htmlDir ? "json,html" : "json"}`,
   ];
+  // Forced from the CLI for the same reason. There is no --video or --screenshot
+  // flag; those are config-only, which is why the trace IS the recording here —
+  // it carries a frame-by-frame filmstrip, the DOM, network and console.
+  if (opt.trace) args.push(`--trace=${opt.trace}`);
 
   say(`running: ${m.command} ${args.join(" ")}`);
   say(`  base URL  ${baseUrl}`);
@@ -581,9 +628,20 @@ async function main() {
   const r = await runInProduct(
     m.command,
     args,
-    // PLAYWRIGHT_JSON_OUTPUT_NAME is how the json reporter is pointed at a file
-    // without touching the product's config.
-    { ...runEnv, PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath },
+    {
+      ...runEnv,
+      // PLAYWRIGHT_JSON_OUTPUT_NAME is how the json reporter is pointed at a
+      // file without touching the product's config; the HTML pair does the same.
+      PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath,
+      ...(htmlDir
+        ? {
+            PLAYWRIGHT_HTML_OUTPUT_DIR: htmlDir,
+            // Without this the reporter opens a browser on failure, which is
+            // merely noisy in CI but hangs a developer's local run.
+            PLAYWRIGHT_HTML_OPEN: "never",
+          }
+        : {}),
+    },
     opt.timeoutMs,
   );
   const durationMs = Date.now() - started;
@@ -616,7 +674,13 @@ async function main() {
     cannotRun(`could not parse ${m.json_report}: ${err.message}`);
   }
 
-  const result = summarise(report, durationMs);
+  const result = summarise(report, durationMs, {
+    html_report: htmlDir
+      ? path.relative(root, htmlDir).split(path.sep).join("/")
+      : null,
+    html_report_skipped: htmlSkipped,
+    trace_mode: opt.trace,
+  });
   if (scope) result.scope = scope;
   teardown();
 
@@ -641,9 +705,11 @@ function* eachSpec(node, file) {
   for (const child of node.suites ?? []) yield* eachSpec(child, f);
 }
 
-function summarise(report, durationMs) {
+function summarise(report, durationMs, evidence = {}) {
   const failures = [];
   const fixme = [];
+  const flakyTests = [];
+  const passedTests = [];
   let total = 0;
   let passed = 0;
   let failed = 0;
@@ -675,13 +741,42 @@ function summarise(report, durationMs) {
           });
         }
 
+        const rel = normaliseFile(file, report);
+        const results = t.results ?? [];
+
         switch (t.status) {
           case "expected":
             passed++;
+            // Only under --full-results: see the flag. "What went right" is
+            // worth its bytes to a human reading a report, not to an agent.
+            if (opt.fullResults) {
+              passedTests.push({
+                title: spec.title,
+                file: rel,
+                line: spec.line ?? null,
+                area: meta?.area ? meta.area.replace(/^@/, "") : null,
+                guards: meta?.guards ?? [],
+                duration_ms: results[results.length - 1]?.duration ?? null,
+              });
+            }
             break;
           case "flaky":
             flaky++;
             passed++; // it did pass, on retry — counted, and surfaced separately
+            // Naming them is the point. "4 flaky" tells nobody which four, so
+            // nobody ever fixes them and the number only grows.
+            flakyTests.push({
+              title: spec.title,
+              file: rel,
+              line: spec.line ?? null,
+              area: meta?.area ? meta.area.replace(/^@/, "") : null,
+              retries: Math.max(0, results.length - 1),
+              // The error from the attempt that failed, not the retry that
+              // passed — that is the one that says why it is flaky.
+              error: stripAnsi(
+                String(firstErrorOf(results.find((x) => x.status !== "passed") ?? {})),
+              ).slice(0, 400),
+            });
             break;
           case "skipped":
             skipped++;
@@ -689,25 +784,58 @@ function summarise(report, durationMs) {
           case "unexpected":
           default: {
             failed++;
-            const last = (t.results ?? [])[(t.results ?? []).length - 1] ?? {};
-            const err =
-              last.error?.message ??
-              (last.errors ?? [])[0]?.message ??
-              "no error message in the report";
+            const last = results[results.length - 1] ?? {};
+            const err = firstErrorOf(last);
+            const loc = last.error?.location ?? (last.errors ?? [])[0]?.location;
             failures.push({
               title: spec.title,
-              file: normaliseFile(file, report),
+              file: rel,
               line: spec.line ?? null,
               area: meta?.area ? meta.area.replace(/^@/, "") : null,
               guards: meta?.guards ?? [],
+              // Why this spec exists. Already parsed from the docblock and, until
+              // now, kept only for `fixme` — yet on a failure it is the single
+              // most useful line: it says what behaviour just stopped working.
+              why: meta?.why ?? null,
+              source: meta?.source ?? null,
               error: stripAnsi(String(err)).slice(0, 400),
+              // The 400-char cut above keeps the GitHub annotation short. A
+              // report a human opens deserves the whole message.
+              error_full: stripAnsi(String(err)).slice(0, 4000),
+              // Playwright's code frame — the failing line with its neighbours,
+              // which is what makes a failure readable without opening the repo.
+              error_snippet: last.error?.snippet
+                ? stripAnsi(String(last.error.snippet)).slice(0, 4000)
+                : null,
+              // Where it actually broke. `line` above is where the test STARTS;
+              // reporting that as the failure has sent people to the wrong line.
+              location: loc
+                ? {
+                    file: normaliseFile(loc.file, report),
+                    line: loc.line ?? null,
+                    column: loc.column ?? null,
+                  }
+                : null,
+              // A test can fail more than one way at once; only the first was
+              // ever reported, which hides the cause when the first is a
+              // teardown error and the second is the real one.
+              errors: (last.errors ?? [])
+                .map((e) => stripAnsi(String(e?.message ?? "")).slice(0, 2000))
+                .filter(Boolean)
+                .slice(0, 5),
               // Repo-relative: an absolute path from the runner's machine is
               // meaningless in a PR comment read on someone else's.
-              attachments: (last.attachments ?? [])
-                .map((a) => a.path)
-                .filter(Boolean)
-                .map((p) => normaliseFile(p, report)),
-              retries: Math.max(0, (t.results ?? []).length - 1),
+              attachments: attachmentsOf(last, report),
+              retries: Math.max(0, results.length - 1),
+              // "Failed three times identically" and "failed only after passing
+              // once" are different bugs, and only the timeline distinguishes them.
+              attempts: results.map((res, i) => ({
+                retry: i,
+                status: res.status ?? null,
+                duration_ms: res.duration ?? null,
+                error: stripAnsi(String(firstErrorOf(res))).slice(0, 400),
+                attachments: attachmentsOf(res, report),
+              })),
             });
             break;
           }
@@ -752,9 +880,49 @@ function summarise(report, durationMs) {
     flaky,
     failures,
     fixme,
+    flaky_tests: flakyTests,
+    // Absent rather than empty when not asked for, so a consumer can tell "no
+    // tests passed" from "nobody asked which ones did".
+    passed_tests: opt.fullResults ? passedTests : null,
+    // Where the evidence is, and why there is or is not any.
+    html_report: evidence.html_report ?? null,
+    html_report_skipped: evidence.html_report_skipped ?? null,
+    trace_mode: evidence.trace_mode ?? null,
     // Where the runner's own output went, when it was not printed here.
     log: opt.json ? logFile : null,
   };
+}
+
+/** The first usable error message on a result, whichever shape carries it. */
+function firstErrorOf(result) {
+  return (
+    result?.error?.message ??
+    (result?.errors ?? [])[0]?.message ??
+    "no error message in the report"
+  );
+}
+
+/**
+ * Attachments, repo-relative and keeping their name and type.
+ *
+ * The name is what makes them usable: `screenshot`, `trace` and `video` are
+ * three very different things to offer a reader, and telling them apart by
+ * file extension is guesswork the report should not have to do.
+ */
+function attachmentsOf(result, report) {
+  return (result?.attachments ?? [])
+    .filter((a) => a?.path)
+    .map((a) => ({
+      name: a.name ?? null,
+      content_type: a.contentType ?? null,
+      path: normaliseFile(a.path, report),
+    }));
+}
+
+/** Is `child` the same directory as `parent`, or inside it? */
+function contains(parent, child) {
+  const rel = path.relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
 /** Report paths are relative to the config's rootDir; we want repo-relative. */

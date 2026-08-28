@@ -31,10 +31,12 @@ plugins/themegrill-qa/   the installable plugin — everything the skills need
     boot-wp.mjs          disposable WordPress, product mounted live
     run-suite.mjs        run the product's own Playwright suite -> JSON
     suite-index.mjs      what the suite covers, and what it does NOT
+    report-suite.mjs     a run -> PR comment, step summary, self-contained HTML
     ingest-docs.mjs      docs site -> intent layer + area list (REST or sitemap)
     ingest-testsuite.mjs an existing Selenium/Robot suite -> specification
     estimate-cost.mjs    spend model, incl. the coverage projection
-    lib/                 shared: qa-home, platform, spec-parse, suite-manifest
+    lib/                 shared: qa-home, platform, spec-parse, suite-manifest,
+                         affected, diagnose (the failure triage table)
   hooks/
     hooks.json           Stop hook registration
     spec-guard.mjs       notices source changed with no spec; queues it
@@ -301,6 +303,43 @@ that curve.
   source file forces the full tier. The safety rule is that silence costs runner
   time, never coverage.
 
+- **The failure report — `report-suite.mjs`, `lib/diagnose.mjs`, and the evidence
+  `run-suite.mjs` used to throw away.** Before this, the PR comment printed a
+  path and a title while the JSON it read already carried the error, the
+  attachments and the retry count; and `--reporter=json` on the CLI silently
+  replaced the product's reporters, so `product/playwright-report/**` — a path
+  `suite.yml` had been uploading since it was written — never existed.
+
+  Verified against **ColorMag's real suite on a Local site**, not a fixture:
+  - `--reporter=json,html` and `--trace=retain-on-failure` are accepted by
+    ColorMag's real config (a pnpm invocation with a setup project and a named
+    project). `--tier fresh --area header`: 6 passed, exit 0, and an HTML report
+    written where none was written before. **stderr stayed at exactly 0 bytes**,
+    so the `--json` cost contract survives.
+  - A **real failure with real evidence**, forced by pointing ColorMag's header
+    specs at a different local site — no product source touched. Two screenshots
+    and a 1.1 MB trace captured, both screenshots inlined into the report, and the
+    rendered page shows WordPress rejecting the login, which is the actual cause.
+  - All six verdict branches × three formats — pass, fail, `ran_nothing`, no
+    manifest, `scope.mode: "none"`, harness-broken — 18 combinations, no throw. A
+    *missing* `suite.json` still reports "could not run" rather than crashing.
+  - The comment byte budget: a synthetic 40-failure run renders at 58 543 bytes,
+    under GitHub's 65 536 ceiling, truncating the failure list while keeping the
+    coverage note and the footer.
+  - The HTML in **both themes, with zero console errors and zero external
+    requests** — checked by intercepting every request, not by reading the source.
+
+  Two things were checked rather than assumed, and one of them corrected the
+  design:
+  - Playwright supplies `error.location` and `error.snippet` for **assertion**
+    failures and **omits both for a bare test timeout**, which has no assertion
+    site. Confirmed on 1.62.1 against both shapes. The report falls back to the
+    spec's opening line, which is all the old comment ever had.
+  - The Expected/Received wording **varies by matcher** — `Expected:` for
+    `toBeVisible`, `Expected length:` for `toHaveLength`. The first
+    implementation pinned to `Expected:` and silently dropped the diff for every
+    other matcher; it now matches a run of consecutive Expected/Received lines.
+
 **Not verified**
 
 - **Reliable Playground readiness detection on Windows.** The site above
@@ -319,6 +358,15 @@ that curve.
   `@wp-playground/cli` directly (no wrapper) to confirm it's upstream, and
   either file it there or fall back to `--engine wp-env` by default on
   Windows.
+- **The report's CI wiring.** `suite.yml` now generates `qa-report.html`, uploads
+  it, and passes `steps.upload.outputs.artifact-url` into the comment — which is
+  why the upload step moved *above* the comment step. Every command in those
+  steps has been run by hand against a mocked-up CI workspace, and the workflow
+  parses; but the artifact URL is a value only a real run produces, so **the
+  link in the comment is unproven** until the checkout blocker below is lifted.
+  If `artifact-url` ever arrives empty the comment degrades to naming the run
+  instead, which is handled but also untested.
+
 - **Every CI path except `wp-core-watch.yml`.** That one has now run for real.
   `suite.yml`, `pr-qa.yml` and `pr-command.yml` have not, and there is a known
   blocker in front of them: **`themegrill-qa` is a private repo and

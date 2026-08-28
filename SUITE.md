@@ -258,6 +258,8 @@ All human-readable progress goes to stderr.
   "base_url": "http://127.0.0.1:9400",
   "duration_ms": 91234,
   "total": 61, "passed": 57, "failed": 2, "skipped": 1, "flaky": 1,
+  "html_report": "playwright-report",
+  "trace_mode": "retain-on-failure",
   "failures": [
     {
       "title": "centered header keeps the tagline @fresh @header",
@@ -265,14 +267,55 @@ All human-readable progress goes to stderr.
       "line": 31,
       "area": "header",
       "guards": ["CMAG-1234"],
+      "why": "the tagline vanished at the centered layout in 3.1.4",
       "error": "first 400 chars of the failure message",
-      "attachments": ["test-results/.../screenshot.png"],
-      "retries": 1
+      "error_full": "the same message, to 4000 chars",
+      "error_snippet": "  30 | ...\n> 31 | await expect(...)\n     |       ^",
+      "location": { "file": "tests/e2e/specs/header-layout.spec.ts", "line": 44, "column": 9 },
+      "errors": ["every error on the last attempt, not just the first"],
+      "attachments": [
+        { "name": "screenshot", "content_type": "image/png", "path": "test-results/.../test-failed-1.png" },
+        { "name": "trace", "content_type": "application/zip", "path": "test-results/.../trace.zip" }
+      ],
+      "retries": 1,
+      "attempts": [
+        { "retry": 0, "status": "failed", "duration_ms": 14200, "error": "...", "attachments": [] }
+      ]
     }
   ],
-  "fixme": [{ "title": "...", "guards": ["CMAG-733"] }]
+  "fixme": [{ "title": "...", "guards": ["CMAG-733"] }],
+  "flaky_tests": [{ "title": "...", "file": "...", "line": 12, "area": "header", "retries": 1, "error": "..." }],
+  "passed_tests": null
 }
 ```
+
+### Evidence, and the fields that carry it
+
+Every field above is **additive** — consumers that read the older, smaller shape
+keep working. Three of them repay explanation:
+
+- **`location` is where the failure actually happened; `line` is only where the
+  test opens.** Report `location` when it is present and fall back to `line`.
+  Playwright supplies `location` and `error_snippet` for assertion failures and
+  omits both for a bare test timeout, which has no assertion site — verified
+  against 1.62.1, so a consumer must handle their absence.
+- **`attachments` are objects**, not the bare strings this contract once
+  specified, because `screenshot`, `trace` and `video` are three different
+  offers to a reader and telling them apart by file extension is guesswork.
+- **`passed_tests` is `null` unless `--full-results` was passed**, which
+  distinguishes "nothing passed" from "nobody asked". It is opt-in because every
+  line of stdout is context an agent pays for on every run.
+
+The platform forces `--reporter=json,html` and `--trace=retain-on-failure` on the
+command line, never in the product's config, the same way it already forced
+`--reporter=json`. So a run leaves a Playwright HTML report at `html_report`
+alongside the JSON, and a trace for the tests that failed — at no cost to the
+tests that passed. `--no-trace` and `--no-html-report` opt out.
+
+There is deliberately **no video**. Playwright exposes `--trace` on the CLI but
+not `--video` or `--screenshot`; those are config-only, so capturing video would
+mean editing every product's `playwright.config.ts`. The trace already carries a
+frame-by-frame filmstrip, the DOM at each step, the network log and the console.
 
 When there is no manifest:
 
@@ -293,6 +336,57 @@ contract nothing did.
 | `0` | Suite passed, or there is no suite |
 | `1` | The suite ran and tests failed |
 | `2` | Could not run — no base URL, install failed, runner missing, bad manifest, timeout |
+
+---
+
+## 5b. The report
+
+`report-suite.mjs` turns a run into something a person can act on. It reads
+`suite.json` and `index.json`, re-runs nothing, costs nothing, and is the single
+composer for all three surfaces — the PR comment, the step summary and the HTML
+report. Two of those used to be written inline in `suite.yml` and had already
+drifted apart from each other.
+
+```
+node scripts/report-suite.mjs --suite suite.json --index index.json \
+  --format md|summary|html [--out FILE] [--product-dir DIR] \
+  [--repo owner/name --sha SHA] [--artifact-url URL] [--run-url URL]
+```
+
+| Flag | Why it matters |
+|---|---|
+| `--format md` | The PR comment. Marker-tagged so the workflow edits one comment in place. |
+| `--format summary` | The same, plus suite-hygiene lines, for `$GITHUB_STEP_SUMMARY`. |
+| `--format html` | The self-contained page. |
+| `--product-dir` | Where the repo-relative attachment paths resolve. CI passes `product`. |
+| `--repo` / `--sha` | Turns the failing location into a clickable blob permalink. |
+| `--artifact-url` | Links the evidence. Uploaded-and-never-linked is how the artifact spent its whole life invisible. |
+
+Three properties are load-bearing:
+
+1. **It always produces a verdict.** It runs under `if: always()`, which is
+   precisely when things have gone wrong, so a missing or unparseable
+   `suite.json` reports "could not run" rather than throwing and leaving a red
+   check with no explanation.
+2. **The HTML is genuinely self-contained** — screenshots inlined as data URIs,
+   CSS inline, no script, no network request of any kind. It has to survive
+   being downloaded, unzipped and opened from disk with no server.
+3. **The comment respects a byte budget.** GitHub rejects a comment over 65536
+   characters, so a broadly red run drops the tail of the failure list and says
+   so, rather than posting nothing at all.
+
+### The diagnosis is a guess, and says so
+
+`lib/diagnose.mjs` maps a failure's error text to a plain-English cause and a
+first thing to check — "the element never appeared", "the site was not serving",
+"a behavioural change". It is a lookup table: deterministic, free, and no agent
+runs on the PR path.
+
+Every diagnosis is worded as *usually means* and carries a visible hedge in the
+report. A deterministic guess labelled a guess helps a reviewer start in the
+right place. The same guess presented as a finding would undercut invariant 5 —
+a finding needs reproduction twice plus cited evidence, and a regex over an error
+string has neither.
 
 ---
 
