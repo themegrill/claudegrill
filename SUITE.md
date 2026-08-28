@@ -105,6 +105,42 @@ Rules, enforced in code and not merely documented:
   finding can only be reproduced on a demo-imported site, the spec's blueprint
   requirement *is itself the finding* — report that and write no spec.
 
+### 2b. The licence axis — `@pro` and `@unlicensed`
+
+**Orthogonal to the tier, not a third value of it.** `@fresh`/`@demo` say which
+*site* a spec needs; these say which *licence state* it needs. A spec is
+`@fresh @pro`, or `@fresh @unlicensed`, or `@fresh` alone — never one instead of
+the other, which is why `suite-index.mjs` reports `by_pro` separately and why the
+tier counts still sum to the test count.
+
+| Tag | Needs | Runs where |
+|---|---|---|
+| `@pro` | pro code mounted **and** a licence that resolved to VALID | the `pro` CI job |
+| `@unlicensed` | pro code mounted **and deliberately no licence** | the `unlicensed` CI job |
+| *(neither)* | nothing | everywhere, **including with pro installed** |
+
+Four rules, and the third is the one people miss:
+
+- **A `@pro` run either has a valid licence or it fails.** It does not skip
+  quietly and it does not pass. `run-suite.mjs --pro` verifies the licence
+  through the booted site's own probe before a single spec runs, and refuses with
+  `licence not active — pro features not under test` (exit 2 — a broken harness,
+  not a failing product). A pro suite that silently exercised the free code path
+  is worse than no pro suite, because it reports coverage that does not exist.
+- **`@pro` is EXCLUDED from every non-pro run.** Those specs need code that is
+  not mounted; running them would fail for the wrong reason, and skipping them
+  silently would hide that pro is untested.
+- **Untagged specs must pass with pro installed as well as without it.**
+  "Installing pro breaks a free feature" is a real and expensive bug class and
+  the only thing that catches it is running the free suite in the pro
+  environment — the `free-with-pro` job, which is a distinct CI job and not an
+  afterthought. This is not hypothetical: it found ColorMag Pro shipping the
+  pre-CMAG-650 version of the lone-logo header rule on its first run.
+- **`@unlicensed` needs a DIFFERENT SITE**, one booted `--with-pro` and without
+  `--license`, which is why it is a separate job rather than a filter. It covers
+  the state every customer passes through between installing a pro product and
+  entering their key — and the one nobody develops in.
+
 ### `area_paths` — which specs a diff could have broken
 
 Optional, and only needed if you want CI to narrow a PR to the areas it touches.

@@ -181,3 +181,40 @@ npm run suite:index      # what the suite covers
 npm run cost:projection  # the declining-spend curve
 npm run check            # every .mjs parses
 ```
+
+## Pro products — four extra setup steps
+
+Only needed for the **pro** repos (ColorMag Pro, Zakra Pro, User Registration
+Pro, Everest Forms Pro). The free repos need none of this. Full detail and the
+reasoning is in [PRO.md](PRO.md) §4; these are the steps themselves, numbered
+because every one of them has cost someone an afternoon.
+
+1. **A dedicated QA licence key per product** — not the company key. Revocable
+   without disturbing a customer or a colleague.
+
+2. **An org-owned GitHub App, Contents: read-only**, installed on the pro repos
+   only. `secrets.GITHUB_TOKEN` is scoped to the repository running the workflow
+   and **cannot** check out another private repo — it fails with a 404 that reads
+   exactly like "no such repository".
+
+3. **Set every secret per repository.** Organisation secrets are not accessible
+   to private repositories on GitHub Free, so `TGQA_APP_ID`,
+   `TGQA_APP_PRIVATE_KEY` and the product's `TGQA_LICENSE_*` must exist in each
+   repo separately:
+
+   ```sh
+   node plugins/themegrill-qa/scripts/sync-secrets.mjs --audit
+   node plugins/themegrill-qa/scripts/sync-secrets.mjs --confirm
+   ```
+
+4. **themegrill-qa → Settings → Actions → General → Access →
+   "Accessible from repositories in the ThemeGrill organization".**
+   Without this every caller workflow fails with **"workflow was not found"**,
+   which reads like a typo in the `uses:` path and is not. This is a setting, not
+   a plan restriction — reusable workflows in a private repo do work on Free.
+
+Then install the pre-commit licence-key guard in every repo that holds a key:
+
+```sh
+node plugins/themegrill-qa/scripts/install-git-hook.mjs
+```

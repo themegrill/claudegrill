@@ -28,6 +28,10 @@ plugins/themegrill-qa/   the installable plugin — everything the skills need
     write-spec/          verified finding -> committed regression spec
   scripts/               the deterministic layer — Node, zero dependencies
     detect-product.mjs   identify the product from source -> JSON
+    license.mjs          pro licences: status/activate/seed/check-all
+    sync-secrets.mjs     per-repo secrets, because org secrets fail on Free
+    scan-secrets.mjs     refuse to let a licence key become tracked content
+    install-git-hook.mjs install the pre-commit half of that guard
     boot-wp.mjs          disposable WordPress, product mounted live
     run-suite.mjs        run the product's own Playwright suite -> JSON
     suite-index.mjs      what the suite covers, and what it does NOT
@@ -37,6 +41,11 @@ plugins/themegrill-qa/   the installable plugin — everything the skills need
     estimate-cost.mjs    spend model, incl. the coverage projection
     lib/                 shared: qa-home, platform, spec-parse, suite-manifest,
                          affected, diagnose (the failure triage table)
+      license/           registry (+ redaction), edd, freemius adapters
+  licenses.json          the pro registry. Structure tracked, KEYS NEVER.
+  mu-plugins/            QA-only, mounted into the disposable site, never shipped
+    tgqa-license.php     puts a licence where WordPress can see it
+    tgqa-probe.php       reports what the booted site ACTUALLY believes
   hooks/
     hooks.json           Stop hook registration
     spec-guard.mjs       notices source changed with no spec; queues it
@@ -54,6 +63,11 @@ absent that file, everything degrades gracefully to the pre-suite behaviour.
 Scripts and blueprints live **inside** the plugin because Claude Code copies a
 plugin into its own cache, and a copied plugin cannot reach files outside its
 directory. Anything a skill needs must travel with it.
+
+**[PRO.md](PRO.md) covers the pro tier** — the four-product licensing inventory
+(two Freemius, two EDD), the GitHub App, per-repo secrets, and the safety rules
+around unlimited lifetime keys. Read it before touching anything under
+`scripts/lib/license/`.
 
 **[CONVENTIONS.md](CONVENTIONS.md) governs every spec.** Read it before writing
 one. Nine rules, drawn from a WordPress plugin suite that had already settled
@@ -93,6 +107,14 @@ These are load-bearing. Changing one is a design decision, not a refactor.
 7. **Never edit product source to make a check pass.** These skills verify; they
    do not fix. `write-spec` is bound by this too — if a product needs an owned
    selector to be testable, that is a reviewed PR by a human, not a side effect.
+
+8b. **`@pro` never passes without a verified licence.** A `@pro` run either has a
+   licence that resolved to VALID — checked through the booted site's own probe,
+   not assumed — or it fails with `licence not active`, exit 2. It does not skip
+   quietly and it does not pass. A pro suite that silently exercised the free
+   code path reports coverage that does not exist, which is the same lie as the
+   green check that meant nothing. `@unlicensed` is the other end of that axis
+   and needs its own site, booted without `--license`. See PRO.md and SUITE.md §2b.
 
 8. **Every test carries a tier tag, and CI runs only `@fresh`.** A `@demo` spec
    needs the product's demo content imported and cannot run on a runner, so it
@@ -340,8 +362,80 @@ that curve.
     implementation pinned to `Expected:` and silently dropped the diff for every
     other matcher; it now matches a run of consecutive Expected/Received lines.
 
+- **The whole pro licence path, end to end on macOS against real Playground
+  boots.** Four things were checked rather than assumed and three of them
+  corrected the design:
+  - **`WP_ENVIRONMENT_TYPE = "local"` verified from inside the booted site**, not
+    inferred from the blueprint step having been written. `tgqa-probe.php`
+    reports `wp_get_environment_type()` back over HTTP and `boot-wp.mjs` warns if
+    it is anything else.
+  - **Playground answers requests while later blueprint steps are still
+    applying.** The first probe of a `--with-pro colormag-pro` boot returned
+    `active_theme: "colormag"` — the FREE theme — and a probe seconds later,
+    against the same running site, correctly said `colormag-pro`. Reporting the
+    first answer would have been a value that looks like an observation and is
+    actually a race. The blueprint's last step now writes a per-boot token to
+    `tgqa_boot_complete` and the probe waits for it; `settled: false` is reported
+    explicitly rather than hidden.
+  - **`plugins_loaded` is too early for a theme-delivered pro product.** ColorMag
+    Pro is a standalone THEME, and a theme's `functions.php` runs on
+    `setup_theme`, after `plugins_loaded`. The seeder hooked only there produced
+    `pro gate unavailable: FS_ThemeGrill not loaded` with the pro theme correctly
+    active. It now tries `plugins_loaded`, `after_setup_theme` and `init` in turn,
+    and only the last is allowed to conclude "not attempted".
+  - **EDD's `check_license` omits `error` entirely** — confirmed against the real
+    wpeverest.com store. The adapter keyed its verdict off `error`, so a `check`
+    of a bad key came back "unknown", routing a genuinely invalid licence to the
+    harness owner as a suspected store outage. `license` is authoritative now.
+
+  Confirmed working with a deliberately invalid key: seeder staged, mu-plugins
+  copied, Freemius reached through `FS_ThemeGrill::freemius()`, `opt_in` attempted
+  and correctly rejected, state `invalid`, `pro gate: FALSE`, and
+  `run-suite.mjs --pro` refusing with `licence not active — pro features not
+  under test (state: invalid; pro gate: FALSE)`, exit 2. Every branch of that
+  chain except the `valid` outcome itself.
+
+- **`scan-secrets.mjs` across all three of its checks**, in a throwaway repo: a
+  literal key from the environment found in a tracked file and reported REDACTED,
+  a structural `sk_…` match, a licence-shaped assignment, and a placeholder
+  (`your-key-here`) correctly ignored. `sync-secrets.mjs` fails clearly on an
+  unauthenticated `gh`.
+
+- **A real cross-product defect, found by the mechanism this tier exists for.**
+  ColorMag free's `header-logo-sizing-regression` spec (the CMAG-650 guard)
+  **passes with free ColorMag alone and fails with ColorMag Pro active** —
+  reproduced on two independent boots with a passing free-only control.
+  Mechanism, cited: `colormag/assets/sass/base/elements/_header_builder.scss:138`
+  applies `flex-basis: 30%` only under `&.cm-header-col--has-multiple`, with a
+  comment naming the CMAG-650 regression;
+  `colormag-pro/assets/sass/base/elements/_header_builder.scss:115` applies it
+  **unconditionally**. ColorMag Pro carries the pre-fix version of the rule, so
+  the lone-logo squeeze is still live there. This is exactly the "installing pro
+  breaks a free feature" class, and nothing but the `free-with-pro` job could
+  have found it.
+
 **Not verified**
 
+- **The `valid` branch of the licence path.** Every other branch is proved, but
+  no real key was available on this machine, so "the licence resolves to valid
+  and the product's own gate returns TRUE" has never actually happened. This is
+  `license.mjs check-all` against real keys — the single most important thing
+  left to run, because everything else assumes it.
+- **Anything about Everest Forms Pro.** Its repo is not on any machine used here;
+  the registry row is deliberately incomplete and `license.mjs` refuses to act on
+  it. See PRO.md §1.
+- **Zakra Pro and User Registration Pro mounted and booted.** Only ColorMag Pro
+  was exercised end to end. Zakra Pro is the interesting one: a companion PLUGIN
+  to a free THEME, so the free theme must stay active alongside it — a mounting
+  shape nothing has tested.
+- **Every pro CI path.** `pro-suite.yml` parses and every command in it has been
+  run by hand, but it inherits the same blocker as the rest of the CI tier: the
+  cross-repo checkout of this private repo. It additionally needs a GitHub App
+  that does not exist yet.
+- **`sync-secrets.mjs --confirm` against real repos**, and `--audit` against
+  them. Only the unauthenticated-`gh` failure path has been exercised.
+- **The `@unlicensed` job.** The spec is written and the workflow mode exists;
+  no run has booted pro without `--license` and executed it.
 - **Reliable Playground readiness detection on Windows.** The site above
   genuinely works, but `waitForServer()`'s own polling never once got a
   qualifying response across 600 one-second attempts (600s budget), seeing

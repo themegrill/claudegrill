@@ -16,6 +16,9 @@
  *   node scripts/run-suite.mjs --tier fresh --base-url http://127.0.0.1:9400
  *   node scripts/run-suite.mjs --tier fresh --boot playground --install
  *   node scripts/run-suite.mjs --tier all --area header
+ *   node scripts/run-suite.mjs --tier fresh --pro --boot   # @pro + free, licensed
+ *   node scripts/run-suite.mjs --tier fresh --pro --pro-specs none --boot
+ *                                            # free specs, in the pro environment
  *   node scripts/run-suite.mjs --tier fresh --full-results   # CI: report input
  */
 
@@ -28,7 +31,7 @@ import { fileURLToPath } from "node:url";
 
 import { resolveQaHome } from "./lib/qa-home.mjs";
 import { isWindows, killTree, shellQuote } from "./lib/platform.mjs";
-import { parseSpecFile } from "./lib/spec-parse.mjs";
+import { PRO_TAG, UNLICENSED_TAG, parseSpecFile } from "./lib/spec-parse.mjs";
 import { detectProduct, loadManifest } from "./lib/suite-manifest.mjs";
 import { affectedAreas, areasGuarding, changedFiles } from "./lib/affected.mjs";
 
@@ -42,6 +45,10 @@ const opt = {
   area: null, // null | string[]
   baseUrl: null,
   boot: null, // null | "playground" | "wp-env"
+  pro: false,       // mount pro, licence it, and include @pro specs
+  proSlug: null,    // which pro product; defaults to "<product>-pro"
+  proSpecs: "both", // both | only | none — which specs run IN the pro environment
+  probeUrl: null,   // how a licence is VERIFIED on a site we did not boot
   install: false,
   grep: null,
   json: !process.stdout.isTTY,
@@ -71,7 +78,14 @@ for (let i = 0; i < argv.length; i++) {
     // Optional value: `--boot` alone means playground.
     const next = argv[i + 1];
     opt.boot = next && !next.startsWith("--") ? argv[++i] : "playground";
-  } else if (a === "--install") opt.install = true;
+  } else if (a === "--pro") {
+    // Optional value: `--pro` alone means "<detected slug>-pro".
+    opt.pro = true;
+    const next = argv[i + 1];
+    if (next && !next.startsWith("--")) opt.proSlug = argv[++i];
+  } else if (a === "--pro-specs") opt.proSpecs = argv[++i];
+  else if (a === "--probe-url") opt.probeUrl = argv[++i];
+  else if (a === "--install") opt.install = true;
   else if (a === "--grep") opt.grep = argv[++i];
   else if (a === "--json" || a === "--quiet") opt.json = true;
   else if (a === "--timeout-ms") opt.timeoutMs = Number(argv[++i]);
@@ -88,6 +102,11 @@ for (let i = 0; i < argv.length; i++) {
     console.error(`unknown flag: ${a}`);
     process.exit(2);
   }
+}
+
+if (!["both", "only", "none"].includes(opt.proSpecs)) {
+  console.error(`--pro-specs must be both, only or none (got: ${opt.proSpecs})`);
+  process.exit(2);
 }
 
 if (!["fresh", "demo", "all"].includes(opt.tier)) {
@@ -176,12 +195,20 @@ if (m.runner !== "playwright") {
 let booted = null; // truthy once we own a site we must tear down
 let envLabel = "local";
 let baseUrl = null;
+let bootHandoff = null;
+
+// Which pro product `--pro` means. The convention across all four is
+// "<free slug>-pro", and `--pro <slug>` overrides it for anything that stops
+// following the convention.
+const proSlug = opt.proSlug ?? `${info.slug}-pro`;
 
 function bootSite(engine) {
   say(`booting a disposable site (${engine}) …`);
+  const bootArgs = [path.join(qaHome, "scripts", "boot-wp.mjs"), "--engine", engine];
+  if (opt.pro) bootArgs.push("--with-pro", proSlug, "--license");
   const res = spawnSync(
     process.execPath,
-    [path.join(qaHome, "scripts", "boot-wp.mjs"), "--engine", engine],
+    bootArgs,
     { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
   );
 
@@ -275,6 +302,7 @@ if (opt.baseUrl) {
   if (!b.ok) cannotRun(b.reason);
   baseUrl = b.handoff.url;
   envLabel = b.handoff.engine ?? opt.boot;
+  bootHandoff = b.handoff;
   booted = true;
 } else {
   cannotRun(
@@ -286,6 +314,90 @@ if (opt.baseUrl) {
 if (opt.baseUrl || process.env.TGQA_BASE_URL || envLocalUrl) {
   envLabel = process.env.TGQA_ENV ?? envLocal.TGQA_ENV ?? "local";
 }
+
+/**
+ * The pro gate. A `@pro` run either has a licence that resolved to VALID, or it
+ * does not run.
+ *
+ * It does not skip quietly and it does not pass. A pro suite that silently
+ * exercised the free code path is worse than no pro suite, because it reports
+ * coverage that does not exist — and a green check that means nothing is the
+ * exact failure this repo has already shipped once.
+ *
+ * Verification, in order, and never inferred:
+ *   1. the probe on a site this run booted — the licence state the mu-plugin
+ *      actually resolved inside WordPress;
+ *   2. `--probe-url` / `TGQA_PROBE_URL` for a site somebody else booted.
+ * With neither, the run stops. "I assume the site you pointed me at is
+ * licensed" is not verification.
+ *
+ * Exit code 2, not 1: an unlicensed environment is a broken harness, not a
+ * failing product. Sending a store outage to the product team wastes the wrong
+ * people's day, which is why part 7 asks for `licence not active` as a distinct
+ * non-retryable failure.
+ */
+async function verifyLicence() {
+  if (!opt.pro) return null;
+
+  const probeUrl = opt.probeUrl ?? process.env.TGQA_PROBE_URL ?? bootHandoff?.probe_url ?? null;
+
+  if (!probeUrl) {
+    cannotRun(
+      "licence not active — pro features not under test. This run cannot verify a " +
+        "licence on a site it did not boot. Either add --boot, or pass --probe-url " +
+        "(boot-wp.mjs prints it as `probe_url`).",
+      { pro: true, licence: "unverifiable" },
+    );
+  }
+
+  let probe = null;
+  try {
+    const res = await fetch(probeUrl, { redirect: "follow" });
+    if (res.ok) probe = await res.json();
+  } catch (err) {
+    say(`probe request failed: ${err.message}`);
+  }
+
+  if (!probe) {
+    cannotRun("licence not active — pro features not under test (the probe did not answer)", {
+      pro: true,
+      licence: "unverifiable",
+    });
+  }
+
+  const state = probe.license?.state ?? "not attempted";
+  const gate = probe.pro ?? {};
+
+  if (state !== "valid") {
+    cannotRun(
+      `licence not active — pro features not under test (state: ${state}` +
+        `${probe.license?.detail ? `; ${probe.license.detail}` : ""})`,
+      { pro: true, licence: state },
+    );
+  }
+
+  // Belt and braces: the licence resolved, but ask the PRODUCT whether it agrees
+  // it is premium. These disagree when the pro code is not mounted at all, which
+  // is precisely the "silently tested the free version" case.
+  if (gate.checked && gate.active === false) {
+    cannotRun(
+      `licence not active — pro features not under test: the licence resolved valid but ` +
+        `the product's own gate (${gate.expression}) returned false. Is the pro code mounted?`,
+      { pro: true, licence: "valid", pro_gate: false },
+    );
+  }
+
+  if (!gate.checked) {
+    // Not fatal — the registry may not carry a pro_check for this product yet —
+    // but it must be visible in the report rather than absent from it.
+    say(`note: could not evaluate the product's pro gate (${gate.reason ?? "no reason given"})`);
+  }
+
+  say(`licence verified: ${probe.license?.product} ${state}, pro gate ${gate.active === true ? "TRUE" : "unevaluated"}`);
+  return { state, gate, environment_type: probe.environment_type };
+}
+
+const licence = await verifyLicence();
 
 // Tear the site down however we leave, including on Ctrl-C.
 process.on("exit", teardown);
@@ -455,21 +567,61 @@ function buildFilters() {
     // Escape hatch: the caller's pattern replaces ours entirely rather than
     // fighting it, since two --grep flags would silently drop one of them.
     args.push(`--grep=${opt.grep}`);
-    say(`--grep given: tier/area filtering is bypassed for this run`);
+    say(`--grep given: tier/area/pro filtering is bypassed for this run`);
     return args;
   }
 
-  if (opt.tier === "fresh") {
+  // Requirements are lookaheads in ONE pattern; exclusions are alternatives in
+  // ONE inverted pattern. Both are single flags because a second `--grep` (and,
+  // by the same rule, a second `--grep-invert`) silently replaces the first
+  // rather than combining with it — verified against Playwright 1.62.1.
+  const require = [];
+  const exclude = [];
+
+  if (opt.tier === "fresh") require.push(escapeRe(fresh));
+  else if (opt.tier === "demo") exclude.push(escapeRe(fresh));
+
+  if (areaAlt) require.push(areaAlt);
+
+  // The pro dimension, orthogonal to the tier.
+  //
+  //   --pro   run @pro specs AND untagged (free-behaviour) specs, in an
+  //           environment where pro is installed and licensed. Running the free
+  //           specs here is the point, not an accident: "installing pro breaks a
+  //           free feature" is a real and expensive bug class, and the only way
+  //           to catch it is to run the free suite in the pro environment.
+  //   no flag exclude @pro entirely. Those specs need code that is not mounted;
+  //           running them would fail for the wrong reason, and skipping them
+  //           silently would hide that pro is untested.
+  //
+  // Inside a pro environment, `--pro-specs` picks which half of the matrix runs:
+  //   both  @pro specs and free specs together — the local default
+  //   only  @pro specs alone
+  //   none  free specs alone, with pro installed and licensed. This is the
+  //         "installing pro breaks a free feature" job, and it is a distinct CI
+  //         job rather than a tier because its failure means something entirely
+  //         different from a @pro failure.
+  if (!opt.pro || opt.proSpecs === "none") exclude.push(escapeRe(PRO_TAG));
+  else if (opt.proSpecs === "only") require.push(escapeRe(PRO_TAG));
+
+  // `@unlicensed` is excluded from EVERY ordinary run, licensed or not, because
+  // it needs a site this run does not have: pro code mounted with no licence.
+  // On a licensed site those specs would skip; on a free site they would fail
+  // for the wrong reason. Reaching them is deliberate, via `--grep @unlicensed`
+  // against a site booted `--with-pro` and without `--license`.
+  exclude.push(escapeRe(UNLICENSED_TAG));
+
+  if (require.length) {
     args.push(
-      areaAlt
-        ? `--grep=(?=.*${escapeRe(fresh)})(?=.*${areaAlt})`
-        : `--grep=${escapeRe(fresh)}`,
+      require.length === 1 && !areaAlt && opt.tier === "fresh"
+        ? `--grep=${require[0]}`
+        : `--grep=${require.map((r) => `(?=.*${r})`).join("")}`,
     );
-  } else if (opt.tier === "demo") {
-    args.push(`--grep-invert=${escapeRe(fresh)}`);
-    if (areaAlt) args.push(`--grep=${areaAlt}`);
-  } else if (areaAlt) {
-    args.push(`--grep=${areaAlt}`);
+  }
+  if (exclude.length) {
+    args.push(
+      `--grep-invert=${exclude.length === 1 ? exclude[0] : `(?:${exclude.join("|")})`}`,
+    );
   }
 
   return args;
@@ -575,6 +727,7 @@ async function main() {
     emit(
       {
         ok: true, suite: true, runner: m.runner, tier: opt.tier, env: envLabel,
+        pro: opt.pro, pro_product: opt.pro ? proSlug : null,
         base_url: baseUrl, scope, total: 0, passed: 0, failed: 0, skipped: 0,
         flaky: 0, failures: [], fixme: [], flaky_tests: [], passed_tests: null,
         reason: "no product source changed — nothing to run",
@@ -622,7 +775,11 @@ async function main() {
 
   say(`running: ${m.command} ${args.join(" ")}`);
   say(`  base URL  ${baseUrl}`);
-  say(`  tier      ${opt.tier}${opt.area?.length ? ` · areas ${opt.area.join(", ")}` : ""}`);
+  say(
+    `  tier      ${opt.tier}` +
+      `${opt.area?.length ? ` · areas ${opt.area.join(", ")}` : ""}` +
+      `${opt.pro ? ` · pro ${proSlug} (licensed, specs: ${opt.proSpecs})` : " · @pro excluded"}`,
+  );
 
   const started = Date.now();
   const r = await runInProduct(
@@ -870,6 +1027,15 @@ function summarise(report, durationMs, evidence = {}) {
     suite: true,
     runner: m.runner,
     tier: opt.tier,
+    // The pro axis, reported explicitly so a reader of the JSON never has to
+    // infer whether pro was under test. `pro: false` means @pro specs were
+    // EXCLUDED, not that they passed.
+    pro: opt.pro,
+    pro_product: opt.pro ? proSlug : null,
+    pro_specs: opt.pro ? opt.proSpecs : null,
+    licence: licence
+      ? { state: licence.state, pro_gate: licence.gate?.active ?? null, environment_type: licence.environment_type }
+      : null,
     env: envLabel,
     base_url: baseUrl,
     duration_ms: typeof stats.duration === "number" ? Math.round(stats.duration) : durationMs,

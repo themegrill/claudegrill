@@ -17,10 +17,12 @@
  * Usage
  *   node scripts/boot-wp.mjs [--engine playground|wp-env] [--wp 6.9] [--php 8.3]
  *                           [--port 9400] [--with slug=path ...] [--reset]
+ *   node scripts/boot-wp.mjs --with-pro colormag-pro --license
  *   node scripts/boot-wp.mjs --stop
  */
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,6 +31,7 @@ import { fileURLToPath } from "node:url";
 
 import { resolveQaHome } from "./lib/qa-home.mjs";
 import { isWindows, killTree, npxCommand, shellQuote } from "./lib/platform.mjs";
+import { loadRegistry } from "./lib/license/registry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -48,6 +51,8 @@ const opt = {
   reset: false,
   stop: false,
   with: [],
+  withPro: [], // slug or slug=path, resolved against licenses.json
+  license: false,
 };
 
 for (let i = 0; i < argv.length; i++) {
@@ -57,6 +62,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--php") opt.php = argv[++i];
   else if (a === "--port") opt.port = Number(argv[++i]);
   else if (a === "--with") opt.with.push(argv[++i]);
+  else if (a === "--with-pro") opt.withPro.push(argv[++i]);
+  else if (a === "--license") opt.license = true;
   else if (a === "--reset") opt.reset = true;
   else if (a === "--stop") opt.stop = true;
   else {
@@ -154,6 +161,51 @@ async function waitForServer(url, childAlive, timeoutMs = 600000) {
   return { ok: false, lastStatus, reason: "timeout" };
 }
 
+/**
+ * Ask the booted site what it believes.
+ *
+ * Cookie-aware, like `waitForServer` and for the same reason: `--login` makes
+ * Playground answer `/` with a 302 to itself that only terminates once the
+ * client sends its cookies back, so a bare `fetch` bounces until Node's redirect
+ * limit throws. That bug cost this project weeks and was misdiagnosed as a
+ * Windows problem; every request from here carries the jar.
+ *
+ * A probe that does not answer is reported as such and never guessed at — the
+ * caller prints "probe did not answer", which is a legible failure, rather than
+ * an invented "environment_type: local".
+ */
+async function probeSite(url, token, timeoutMs = 120000) {
+  const started = Date.now();
+  let last = null;
+
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const res = await fetchFollowingCookies(`${url}/?tgqa_probe=${token}`);
+      if (res && res.status === 200) {
+        const body = await res.text();
+        try {
+          const parsed = JSON.parse(body);
+          last = parsed;
+          // The marker is the whole point. Playground answers requests while
+          // later blueprint steps are still applying, so an answer alone proves
+          // nothing about the state it describes.
+          if (parsed.boot_complete === token) return parsed;
+        } catch {
+          /* not our JSON yet — mu-plugins may not have been copied */
+        }
+      }
+    } catch {
+      /* retry */
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  // Return what we last saw, MARKED as unsettled, rather than nothing. Losing
+  // the observation entirely helps nobody debug; presenting it as settled would
+  // be the exact lie the marker exists to prevent.
+  return last ? { ...last, settled: false } : null;
+}
+
 function readLog() {
   try {
     return fs.readFileSync(logFile, "utf8");
@@ -192,6 +244,261 @@ try {
   );
   if (err.stdout) console.error(String(err.stdout).trim());
   process.exit(1);
+}
+
+// ------------------------------------------------------------------ pro code
+
+/**
+ * Resolve `--with-pro <slug>[=<path>]` against the registry.
+ *
+ * The registry, not a guess, decides where a pro product mounts. That matters
+ * because the four pro products are delivered three different ways and no rule
+ * covers them all:
+ *
+ *   colormag-pro          a STANDALONE THEME that replaces the free theme — not
+ *                         a child theme, and not a companion plugin. The free
+ *                         and pro themes must never be active together.
+ *   zakra-pro             a companion PLUGIN extending the free Zakra THEME, so
+ *                         the free theme stays active and the plugin is added.
+ *   user-registration-pro a plugin that replaces the free plugin.
+ *   everest-forms-pro     a companion plugin alongside the free one.
+ *
+ * Assuming any one of those shapes for the others produces a site that boots and
+ * tests nothing.
+ */
+function resolveProMounts() {
+  if (opt.withPro.length === 0) return [];
+
+  let registry;
+  try {
+    registry = loadRegistry(qaHome);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+
+  return opt.withPro.map((spec) => {
+    const idx = spec.indexOf("=");
+    const slug = idx === -1 ? spec : spec.slice(0, idx);
+    const entry = registry[slug];
+
+    if (!entry) {
+      console.error(
+        `--with-pro: unknown product "${slug}". Known: ${Object.keys(registry).join(", ")}`,
+      );
+      process.exit(2);
+    }
+
+    // An explicit path wins. Otherwise look beside the product under test, then
+    // beside its wp-content directory — the two layouts a developer actually
+    // has: sibling git clones, or a Local site's wp-content.
+    let dir = idx === -1 ? null : path.resolve(spec.slice(idx + 1));
+    if (!dir) {
+      const contentDir = entry.type === "theme" ? "themes" : "plugins";
+      for (const candidate of [
+        path.resolve(info.root, "..", slug),
+        path.resolve(info.root, "..", "..", contentDir, slug),
+      ]) {
+        if (fs.existsSync(candidate)) {
+          dir = candidate;
+          break;
+        }
+      }
+    }
+
+    if (!dir || !fs.existsSync(dir)) {
+      console.error(
+        `--with-pro ${slug}: no checkout found. Pass an explicit path as ` +
+          `--with-pro ${slug}=/path/to/${slug}, or clone ${entry.repo} beside the product.`,
+      );
+      process.exit(1);
+    }
+
+    return { slug, entry, dir, contentDir: entry.type === "theme" ? "themes" : "plugins" };
+  });
+}
+
+const proMounts = resolveProMounts();
+
+if (opt.license && proMounts.length === 0) {
+  console.error("--license needs at least one --with-pro; there is nothing to license");
+  process.exit(2);
+}
+
+/**
+ * Stage the QA-only mu-plugins, and the licence config if one was asked for.
+ *
+ * Staged into a neutral directory and copied into `mu-plugins/` by a blueprint
+ * step, rather than mounted over `wp-content/mu-plugins` directly. Playground
+ * puts its own must-use plugins there, and mounting a host directory onto that
+ * path replaces them — which breaks the site in a way that looks like a
+ * Playground bug rather than our mount.
+ *
+ * The probe is staged on every boot: it is how the caller OBSERVES the resulting
+ * site instead of assuming the blueprint did what it was told. The licence
+ * config is staged only with `--license`.
+ *
+ * Returns the directory, the probe token, and the per-product seed verdicts. A
+ * product whose seed failed still gets a config written — with
+ * `attempted: false` — because a MISSING config would let the mu-plugin no-op
+ * silently, and silence is the one outcome forbidden here.
+ */
+function stageMuPlugins(siteUrl) {
+  const dir = path.join(os.tmpdir(), `themegrill-qa-mu-${process.pid}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+
+  for (const f of ["tgqa-probe.php", ...(opt.license ? ["tgqa-license.php"] : [])]) {
+    fs.copyFileSync(path.join(qaHome, "mu-plugins", f), path.join(dir, f));
+  }
+
+  const token = crypto.randomBytes(16).toString("hex");
+  fs.writeFileSync(path.join(dir, "tgqa-probe.token"), token, { mode: 0o600 });
+
+  const verdicts = [];
+  if (opt.license) {
+    // One config file per boot. Two pro products in one site would collide on
+    // `tgqa-license.json`; saying so beats silently licensing whichever wrote
+    // last.
+    if (proMounts.length > 1) {
+      console.error(
+        "note: --license with more than one --with-pro is not supported — " +
+          "only the last product's config survives. Boot one pro product at a time.",
+      );
+    }
+
+    for (const m of proMounts) {
+      const res = spawnSync(
+        process.execPath,
+        [
+          path.join(qaHome, "scripts", "license.mjs"),
+          "seed",
+          "--product",
+          m.slug,
+          "--site-url",
+          siteUrl,
+          "--out",
+          dir,
+        ],
+        { encoding: "utf8" },
+      );
+      // stderr is the human line, already redacted by license.mjs. Pass it
+      // through so a failed activation is visible at boot rather than only in
+      // the suite's report an hour later.
+      if (res.stderr) process.stderr.write(res.stderr);
+      let parsed;
+      try {
+        parsed = JSON.parse(String(res.stdout).trim().split("\n").pop());
+      } catch {
+        parsed = {
+          ok: false,
+          product: m.slug,
+          state: "unknown",
+          reason: "license.mjs produced no JSON",
+        };
+      }
+      verdicts.push(parsed);
+    }
+  }
+
+  return { dir, token, verdicts };
+}
+
+/**
+ * Add the pro activation steps to a blueprint's step list.
+ *
+ * Order is the whole content of this function, and it is not interchangeable:
+ *
+ *   1. the free product is activated by the blueprint's own step;
+ *   2. the pro THEME, if any, is activated next — which DEACTIVATES the free
+ *      theme, because WordPress has exactly one active theme. ColorMag Pro is a
+ *      standalone theme, so "install pro" genuinely means "switch theme", and a
+ *      run that left the free theme active would have tested the free theme;
+ *   3. pro PLUGINS are activated after, so Zakra Pro finds its free theme in
+ *      place — it is a companion to the theme, and activating it against a
+ *      different theme exercises nothing;
+ *   4. the licence resolves last, on `plugins_loaded`, once everything is there.
+ *
+ * `WP_ENVIRONMENT_TYPE` goes in FIRST, ahead of every other step, because a
+ * const defined after the code that reads it is a const that did nothing.
+ */
+function withProSteps(steps, token) {
+  // The blueprints carry it too, so a blueprint handed to Playground directly
+  // still gets it. Prepend only when it is genuinely absent — two
+  // defineWpConfigConsts steps for the same const is harmless but confusing to
+  // read in a failed boot log.
+  const hasEnvConst = steps.some(
+    (st) => st?.step === "defineWpConfigConsts" && st?.consts?.WP_ENVIRONMENT_TYPE,
+  );
+
+  const out = [
+    ...(hasEnvConst ? [] : [{
+      // Not required for activation — the keys are uncapped, and Freemius
+      // exempts 127.0.0.1 anyway (FS_Site::is_localhost_by_address, SDK
+      // 2.13.1). It is here because it keeps EDD's `site_count` from filling
+      // with thousands of throwaway CI sites, and because it is simply true
+      // about what this environment is.
+      step: "defineWpConfigConsts",
+      consts: { WP_ENVIRONMENT_TYPE: "local" },
+    }]),
+    {
+      // Copy, do not mount. `wp-content/mu-plugins` already holds Playground's
+      // own must-use plugins, and mounting a host directory onto that path
+      // replaces them — a failure that presents as a broken Playground rather
+      // than as our mount.
+      step: "runPHP",
+      code:
+        "<?php $src = '/wordpress/wp-content/tgqa'; $dst = '/wordpress/wp-content/mu-plugins'; " +
+        "if ( ! is_dir( $dst ) ) { mkdir( $dst, 0755, true ); } " +
+        "foreach ( (array) glob( $src . '/*' ) as $f ) { copy( $f, $dst . '/' . basename( $f ) ); }",
+    },
+    ...steps,
+  ];
+
+  for (const m of proMounts.filter((x) => x.entry.type === "theme")) {
+    out.push({ step: "activateTheme", themeFolderName: m.slug });
+  }
+
+  for (const m of proMounts.filter((x) => x.entry.type === "plugin")) {
+    // `activatePlugin` wants the plugin's entry file, and the pro products do
+    // not agree on it: user-registration-pro's entry is `user-registration.php`,
+    // not `user-registration-pro.php`. Discover it rather than deriving it from
+    // the slug, which is the assumption that would silently fail to activate.
+    out.push({
+      step: "runPHP",
+      code:
+        "<?php require '/wordpress/wp-load.php'; " +
+        "require_once ABSPATH . 'wp-admin/includes/plugin.php'; " +
+        `$dir = WP_PLUGIN_DIR . '/${m.slug}'; ` +
+        "$entry = null; " +
+        "foreach ( (array) glob( $dir . '/*.php' ) as $f ) { " +
+        "  $head = get_plugin_data( $f, false, false ); " +
+        "  if ( ! empty( $head['Name'] ) ) { $entry = basename( $dir ) . '/' . basename( $f ); break; } " +
+        "} " +
+        "if ( $entry ) { activate_plugin( $entry ); } " +
+        `else { error_log( 'TGQA: no plugin header found in ${m.slug}' ); }`,
+    });
+  }
+
+  // LAST, always. This is the deterministic "the blueprint finished" signal, and
+  // it exists because of a real misreport: Playground prints "Ready!" and starts
+  // answering requests while later blueprint steps are still applying. The first
+  // probe of a boot with `--with-pro colormag-pro` came back
+  // `active_theme: "colormag"` — the free theme — and a second probe seconds
+  // later, against the same running site, correctly said `colormag-pro`.
+  //
+  // Reporting the first answer would have been a lie of exactly the kind this
+  // repo has shipped before: a value that looks like an observation and is
+  // actually a race. `probeSite` now waits for this marker to carry the token,
+  // so "the pro theme is not active" can only mean it genuinely is not.
+  out.push({
+    step: "runPHP",
+    code:
+      "<?php require '/wordpress/wp-load.php'; " +
+      `update_option( 'tgqa_boot_complete', '${token}', false );`,
+  });
+
+  return out;
 }
 
 // ---------------------------------------------------------------- playground
@@ -254,6 +561,18 @@ if (opt.engine === "playground") {
     args.push(`--mount=${dir}:/wordpress/wp-content/plugins/${slug}`);
   }
 
+  // Pro code, mounted where the registry says it belongs.
+  for (const m of proMounts) {
+    args.push(`--mount=${m.dir}:/wordpress/wp-content/${m.contentDir}/${m.slug}`);
+  }
+
+  // The QA-only mu-plugins: the probe always, the licence seeder with --license.
+  // Staged at a neutral path; a blueprint step copies them into mu-plugins/ so
+  // Playground's own must-use plugins survive. See stageMuPlugins().
+  const siteUrl = `http://127.0.0.1:${opt.port}`;
+  const staged = stageMuPlugins(siteUrl);
+  args.push(`--mount=${staged.dir}:/wordpress/wp-content/tgqa`);
+
   // A blueprint activates the product and seeds content, so the agent lands on a
   // site that exercises it rather than a bare install.
   const blueprint = path.join(
@@ -270,7 +589,14 @@ if (opt.engine === "playground") {
       .readFileSync(blueprint, "utf8")
       .replaceAll("__SLUG__", info.slug)
       .replaceAll("__ENTRY__", info.entry);
-    fs.writeFileSync(rendered, filled);
+
+    // Splice the pro activation steps in as data rather than as text.
+    // String-substituting JSON fragments into a template is how a blueprint ends
+    // up unparseable on the one path nobody exercised; parsing and re-emitting
+    // cannot produce invalid JSON at all.
+    const doc = JSON.parse(filled);
+    doc.steps = withProSteps(doc.steps ?? [], staged.token);
+    fs.writeFileSync(rendered, JSON.stringify(doc, null, 2));
     args.push(`--blueprint=${rendered}`);
   }
 
@@ -324,6 +650,39 @@ if (opt.engine === "playground") {
     JSON.stringify({ pid: child.pid, port: opt.port, url }, null, 2),
   );
 
+  // Observe the site rather than assuming the blueprint worked. This is where
+  // `WP_ENVIRONMENT_TYPE` and the pro gate stop being things we asked for and
+  // become things we saw.
+  const probe = await probeSite(url, staged.token);
+
+  if (opt.license) {
+    const state = probe?.license?.state ?? null;
+    if (state !== "valid") {
+      // Loud, and on stderr so it survives --json. NOT fatal: the caller may be
+      // booting deliberately unlicensed to test that state. The suite's own
+      // gate is what refuses to run @pro specs; see run-suite.mjs.
+      console.error(
+        `WARNING: licence did not resolve to valid (state=${state ?? "unknown"}). ` +
+          `Pro features are NOT under test. ` +
+          `Detail: ${probe?.license?.detail ?? "no mu-plugin log — did the copy step run?"}`,
+      );
+    }
+  }
+
+  if (probe && probe.settled === false) {
+    console.error(
+      "WARNING: the blueprint's completion marker never arrived — the state below " +
+        "was read while the site was still being built and may be stale.",
+    );
+  }
+
+  if (probe && probe.environment_type !== "local") {
+    console.error(
+      `WARNING: WP_ENVIRONMENT_TYPE is "${probe.environment_type}", expected "local" — ` +
+        `the defineWpConfigConsts step did not land.`,
+    );
+  }
+
   console.log(
     JSON.stringify({
       engine: "playground",
@@ -340,6 +699,21 @@ if (opt.engine === "playground") {
       slug: info.slug,
       type: info.type,
       platform: process.platform,
+      pro: proMounts.map((m) => ({ slug: m.slug, type: m.entry.type, path: m.dir })),
+      licensed: opt.license ? (probe?.license?.state ?? "unknown") : false,
+      license_seed: staged.verdicts,
+      probe: probe
+        ? {
+            settled: probe.settled !== false,
+            environment_type: probe.environment_type,
+            active_theme: probe.active_theme,
+            active_plugins: probe.active_plugins,
+            pro_active: probe.pro?.checked ? probe.pro.active : null,
+            pro_check: probe.pro?.expression ?? null,
+            license: probe.license ?? null,
+          }
+        : { error: "probe did not answer" },
+      probe_url: `${url}/?tgqa_probe=${staged.token}`,
       caveats: ["SQLite not MySQL", "no real cron", "no outbound mail"],
     }),
   );

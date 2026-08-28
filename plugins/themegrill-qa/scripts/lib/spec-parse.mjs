@@ -36,14 +36,25 @@ export function tierOf(tags, tiers = { fresh: "@fresh", demo: "@demo" }) {
   return "demo";
 }
 
-/** Tags that are not the tier — `@header`, `@customizer`, and so on. */
+/**
+ * Tags that are not the tier — `@header`, `@customizer`, and so on.
+ *
+ * `@pro` and `@unlicensed` are excluded alongside the tier tags. They are a
+ * second, orthogonal axis — *what licence state does this need?* — not a part of
+ * the product under test. Counting either as an area invents a "pro" or
+ * "unlicensed" area that no knowledge file lists, makes `--area pro` look like a
+ * real filter, and (worse) steals the area slot from the spec's REAL area:
+ * `@unlicensed @fresh @licensing` was being filed under "unlicensed" rather than
+ * under "licensing", so the licensing area read as uncovered while a spec
+ * covered it.
+ */
 export function areaTagsOf(tags, tiers = { fresh: "@fresh", demo: "@demo" }) {
-  const tierTags = new Set(
-    [tiers.fresh ?? "@fresh", tiers.demo ?? "@demo"].map((t) =>
+  const notAreas = new Set(
+    [tiers.fresh ?? "@fresh", tiers.demo ?? "@demo", PRO_TAG, UNLICENSED_TAG].map((t) =>
       String(t).toLowerCase(),
     ),
   );
-  return tags.filter((t) => !tierTags.has(t));
+  return tags.filter((t) => !notAreas.has(t));
 }
 
 /**
@@ -180,4 +191,37 @@ export function parseSpecFile(text, relPath, tiers) {
   }
 
   return out;
+}
+
+/**
+ * The pro tag, orthogonal to the tier.
+ *
+ * A spec carrying it needs pro code mounted AND a valid licence. A spec without
+ * it describes free-version behaviour and must pass BOTH with pro absent and
+ * with pro present — which is why the pro run includes untagged specs rather
+ * than only `@pro` ones. See SUITE.md §2.
+ */
+export const PRO_TAG = "@pro";
+
+/**
+ * The other end of the licence axis: pro code mounted, deliberately NOT
+ * licensed.
+ *
+ * A distinct tag rather than the absence of `@pro`, because it needs a
+ * different SITE — one booted without `--license` — and no filter over the
+ * existing tags could express "run these, and only on an unlicensed site".
+ *
+ * It is the state every customer passes through between installing a pro
+ * product and entering their key, and the one nobody develops in.
+ */
+export const UNLICENSED_TAG = "@unlicensed";
+
+/** Does this test need pro code and a licence? */
+export function isProTest(tags) {
+  return tags.includes(PRO_TAG);
+}
+
+/** Does this test need pro code and the ABSENCE of a licence? */
+export function isUnlicensedTest(tags) {
+  return tags.includes(UNLICENSED_TAG);
 }

@@ -27,7 +27,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { resolveQaHome } from "./lib/qa-home.mjs";
-import { parseSpecFile } from "./lib/spec-parse.mjs";
+import { parseSpecFile, isProTest, isUnlicensedTest } from "./lib/spec-parse.mjs";
 import {
   declaredAreas,
   detectProduct,
@@ -115,6 +115,11 @@ for (const abs of files) {
 // ------------------------------------------------------------------- rollups
 
 const byTier = { fresh: 0, demo: 0 };
+// The pro axis, counted separately because it is orthogonal to the tier: a spec
+// is `@fresh @pro` or `@demo @pro`, never one instead of the other. Reporting it
+// as a tier would make the tier counts stop summing to the test count.
+const byPro = { pro: 0, free: 0, unlicensed: 0 };
+const proByArea = {};
 const byArea = {};
 const freshByArea = {};
 const guards = {};
@@ -129,9 +134,14 @@ let noArea = 0;
 for (const t of tests) {
   byTier[t.tier] = (byTier[t.tier] ?? 0) + 1;
 
+  const pro = isProTest(t.tags ?? []);
+  const unlicensed = isUnlicensedTest(t.tags ?? []);
+  byPro[pro ? "pro" : unlicensed ? "unlicensed" : "free"] += 1;
+
   const area = t.area ? slugifyArea(t.area) : null;
   if (area) {
     byArea[area] = (byArea[area] ?? 0) + 1;
+    if (pro) proByArea[area] = (proByArea[area] ?? 0) + 1;
     // Only a `@fresh`, non-fixme test counts toward coverage that can displace
     // agent work — see the note on `areas_covered` below.
     if (t.tier === "fresh" && !t.fixme && !t.skip) {
@@ -196,6 +206,8 @@ emit({
   spec_files: files.length,
   tests: tests.length,
   by_tier: byTier,
+  by_pro: byPro,
+  pro_by_area: proByArea,
   by_area: byArea,
   fresh_by_area: freshByArea,
   guards,

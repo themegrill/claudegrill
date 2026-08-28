@@ -1,0 +1,472 @@
+name: QA suite — pro (reusable)
+
+# The pro tier. Everything suite.yml does, plus private pro code and a real
+# licence — which changes three things and every one of them is load-bearing.
+#
+# 1. THE PRO REPO IS PRIVATE, and `secrets.GITHUB_TOKEN` is scoped to the repo
+#    running the workflow. It cannot check out a different private repository
+#    and fails with a 404 that reads as if the repo does not exist. A GitHub App
+#    installation token does the checkout instead — Contents: read-only,
+#    installed only on the pro repos.
+#
+# 2. ORGANISATION SECRETS DO NOT REACH PRIVATE REPOS ON GITHUB FREE. The docs
+#    are explicit about it. So every secret this workflow needs must exist in
+#    EVERY calling repository, which is why `sync-secrets.mjs` exists — doing it
+#    by hand across four products guarantees drift, and the drift presents as a
+#    workflow that suddenly cannot licence anything.
+#
+# 3. `pull_request_target` IS FORBIDDEN HERE, and nothing in this file may be
+#    changed to use it. It runs with secrets available against fork-supplied
+#    code, which is the textbook secret-exfiltration hole. Plain `pull_request`
+#    is correct: forks get no secrets, and the licensed jobs below skip cleanly
+#    when the secrets are absent rather than failing or — far worse — falling
+#    through to silently testing the free version.
+#
+# Minutes: private repos are metered at 2,000/month on Free. Every job prints
+# its elapsed minutes to the run summary so consumption is visible without
+# opening the billing page. If the allowance starts to bind, move `pro` to
+# merge-to-main only; `free-with-pro` is the one to keep on every PR, because
+# "installing pro breaks a free feature" is the bug class nothing else catches.
+
+on:
+  workflow_call:
+    inputs:
+      product_slug:
+        description: "Free product slug, e.g. colormag"
+        required: true
+        type: string
+      product_type:
+        description: "theme or plugin — the FREE product's type"
+        required: true
+        type: string
+      pro_slug:
+        description: "Pro product slug as it appears in licenses.json, e.g. colormag-pro"
+        required: true
+        type: string
+      pro_repo:
+        description: "owner/name of the private pro repo, e.g. ThemeGrill/colormag-pro"
+        required: true
+        type: string
+      pro_ref:
+        description: "Ref of the pro repo to test against"
+        required: false
+        type: string
+        default: ""
+      run_pro_specs:
+        description: "Run the @pro tier"
+        required: false
+        type: boolean
+        default: true
+      run_free_with_pro:
+        description: >
+          Run the FREE specs in the pro environment. Keep this on: a free
+          feature broken by installing pro is invisible to every other job.
+        required: false
+        type: boolean
+        default: true
+      run_unlicensed:
+        description: >
+          Run the @unlicensed specs — pro code mounted, deliberately NO licence.
+          This is the state every customer passes through between installing and
+          activating, and no other job can observe it.
+        required: false
+        type: boolean
+        default: true
+      qa_ref:
+        required: false
+        type: string
+        default: "main"
+      node_version:
+        required: false
+        type: string
+        default: "20"
+      wp_version:
+        required: false
+        type: string
+        default: "latest"
+      php_version:
+        required: false
+        type: string
+        default: "8.3"
+      engine:
+        required: false
+        type: string
+        default: "playground"
+      timeout_ms:
+        required: false
+        type: number
+        default: 900000
+
+    secrets:
+      QA_REPO_TOKEN:
+        description: "Read access to the private themegrill-qa repo."
+        required: false
+      TGQA_APP_ID:
+        description: "GitHub App id. Contents: read-only, installed on the pro repos only."
+        required: false
+      TGQA_APP_PRIVATE_KEY:
+        description: "GitHub App private key."
+        required: false
+      TGQA_LICENSE_KEY:
+        description: >
+          The licence key for THIS product, from the repo's own secrets
+          (org secrets do not reach private repos on Free). A dedicated QA key,
+          never the company key: it must be revocable without disturbing anyone.
+        required: false
+
+jobs:
+  # A separate, cheap job so the expensive one can depend on a single boolean
+  # instead of repeating the same secret test — and so the skip REASON is
+  # visible in the run summary rather than inferred from a greyed-out job.
+  #
+  # It also builds the matrix, because the two halves of the pro matrix are
+  # independently switchable and GitHub has no way to drop a matrix entry with
+  # an `if:`. A JSON output consumed by `fromJSON` is the one mechanism that
+  # does.
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      modes: ${{ steps.check.outputs.modes }}
+    steps:
+      # Two secrets, two DIFFERENT capabilities, and collapsing them costs the
+      # most valuable job in the matrix:
+      #
+      #   TGQA_APP_ID       can we check the private pro repo out at all?
+      #   TGQA_LICENSE_KEY  can we licence what we checked out?
+      #
+      # The `unlicensed` mode needs the first and deliberately not the second.
+      # Gating it on the licence key would mean the one job that observes the
+      # state every customer passes through only runs where it is least needed.
+      - name: Which pro jobs can this run actually do?
+        id: check
+        env:
+          KEY: ${{ secrets.TGQA_LICENSE_KEY }}
+          APP_ID: ${{ secrets.TGQA_APP_ID }}
+        run: |
+          # A JSON array, because GitHub has no way to drop a matrix entry with
+          # an `if:`; `fromJSON` on a job output is the one mechanism that does.
+          MODES=""
+          add() { MODES="${MODES:+$MODES,}\"$1\""; }
+
+          if [ -z "$APP_ID" ]; then
+            echo "modes=[]" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Pro suite skipped"
+              echo ""
+              echo "No GitHub App credentials, so the private pro repository cannot be"
+              echo "checked out and **no pro job can run**."
+              echo ""
+              echo "On a **fork pull request** this is expected and correct — forks get no"
+              echo "secrets, by design. The jobs skip rather than failing, and nothing falls"
+              echo "through to testing the free version, which would report pro coverage"
+              echo "that does not exist."
+              echo ""
+              echo "On a branch of this repository a secret is missing. Run"
+              echo '`node plugins/themegrill-qa/scripts/sync-secrets.mjs --audit`'
+              echo "against this repo to see which."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::pro suite skipped: no licence available on fork PRs"
+            exit 0
+          fi
+
+          if [ -n "$KEY" ]; then
+            [ "${{ inputs.run_pro_specs }}" = "true" ] && add pro
+            [ "${{ inputs.run_free_with_pro }}" = "true" ] && add free-with-pro
+          else
+            {
+              echo "### Licensed pro jobs skipped"
+              echo ""
+              echo "The pro repo is reachable but \`TGQA_LICENSE_KEY\` is not set, so the"
+              echo "\`pro\` and \`free-with-pro\` jobs cannot run. The \`unlicensed\` job"
+              echo "still can, and does."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::licensed pro jobs skipped: TGQA_LICENSE_KEY is not set"
+          fi
+
+          [ "${{ inputs.run_unlicensed }}" = "true" ] && add unlicensed
+
+          echo "modes=[$MODES]" >> "$GITHUB_OUTPUT"
+
+  # ONE job, two modes, rather than two reusable workflows.
+  #
+  #   pro            @pro specs — premium features, licensed
+  #   free-with-pro  the FREE specs, run in an environment where pro IS
+  #                  installed. Not an afterthought: "installing pro breaks a
+  #                  free feature" is a real and expensive bug class, and this is
+  #                  the only job that can catch it.
+  #   unlicensed     @unlicensed specs — pro mounted, deliberately NOT licensed.
+  #                  The state every customer is in between installing the theme
+  #                  and entering their key, and the one nobody develops in.
+  #                  It is a separate mode rather than a tier because it needs a
+  #                  DIFFERENT SITE: one booted without --license.
+  #
+  # These were briefly two files, with this one called as a nested reusable
+  # workflow via `uses: ./.github/workflows/...`. That was reverted unverified:
+  # a `./` reference inside a workflow that is ITSELF called from another
+  # repository does not reliably resolve to this repository, and the failure
+  # mode is "workflow was not found" — the same confusing error this repo has
+  # already lost time to once.
+  run:
+    needs: gate
+    if: needs.gate.outputs.modes != '[]'
+    name: ${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false      # a @pro failure must not hide a free-with-pro one
+      matrix:
+        mode: ${{ fromJSON(needs.gate.outputs.modes) }}
+
+    permissions:
+      contents: read
+
+    concurrency:
+      group: qa-pro-${{ matrix.mode }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      # FIRST, before anything can echo it. `add-mask` makes the runner scrub the
+      # value out of every subsequent log line, so an accidental `set -x` or a
+      # tool that prints its environment is caught by the runner rather than by
+      # anyone's discipline. Discipline is not a control.
+      - name: Mask the licence key
+        env:
+          KEY: ${{ secrets.TGQA_LICENSE_KEY }}
+        run: |
+          echo "::add-mask::$KEY"
+          echo "started=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Check out the product
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: product
+
+      - name: Check out shared QA tooling
+        uses: actions/checkout@v4
+        with:
+          repository: ThemeGrill/themegrill-qa
+          ref: ${{ inputs.qa_ref }}
+          token: ${{ secrets.QA_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          path: themegrill-qa
+
+      # A GitHub App installation token, scoped to this one repository for this
+      # one run. `secrets.GITHUB_TOKEN` cannot do this: it is scoped to the repo
+      # running the workflow, and against another private repo it returns a 404
+      # that reads exactly like "no such repository", which is the single most
+      # time-wasting error message in this whole setup.
+      - name: Mint a token for the private pro repo
+        id: pro-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.TGQA_APP_ID }}
+          private-key: ${{ secrets.TGQA_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ inputs.pro_slug }}
+
+      - name: Check out the pro product
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pro_repo }}
+          ref: ${{ inputs.pro_ref || '' }}
+          token: ${{ steps.pro-token.outputs.token }}
+          path: pro
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Look for a suite manifest
+        id: manifest
+        working-directory: product
+        run: |
+          if [ -f .themegrill-qa/suite.json ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No .themegrill-qa/suite.json — this product has no suite yet." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Install the product's dependencies and its Chromium
+        if: steps.manifest.outputs.found == 'true'
+        working-directory: product
+        run: |
+          set -euo pipefail
+          pm=$(node -p 'require("./.themegrill-qa/suite.json").package_manager || "npm"')
+          install=$(node -p 'require("./.themegrill-qa/suite.json").install || ""')
+          if [ -n "$install" ]; then sh -c "$install"; fi
+          "$pm" exec -- playwright install --with-deps chromium
+
+      # `--with-pro <slug>=<path>` because the pro checkout is at `pro/`, not at
+      # a sibling named after the slug. The same class of bug as the mount fix in
+      # boot-wp.mjs: CI never names a directory what a developer names it.
+      - name: Boot a licensed WordPress with pro mounted
+        if: steps.manifest.outputs.found == 'true'
+        working-directory: product
+        env:
+          WP_VERSION: ${{ inputs.wp_version }}
+          PHP_VERSION: ${{ inputs.php_version }}
+          # The key reaches license.mjs through the environment and nowhere else.
+          # Not argv — arguments are visible in the process list.
+          TGQA_LICENSE_COLORMAG_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
+          TGQA_LICENSE_ZAKRA_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
+          TGQA_LICENSE_USER_REGISTRATION_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
+          TGQA_LICENSE_EVEREST_FORMS_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
+        run: |
+          set -o pipefail
+          # The `unlicensed` mode boots the SAME pro code with no licence. That
+          # is the whole point of it, so --license is omitted rather than passed
+          # and ignored.
+          LICENSE_FLAG=--license
+          if [ "${{ matrix.mode }}" = "unlicensed" ]; then LICENSE_FLAG=""; fi
+
+          node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs \
+            --engine "${{ inputs.engine }}" \
+            --with-pro "${{ inputs.pro_slug }}=$GITHUB_WORKSPACE/pro" \
+            $LICENSE_FLAG | tee ../boot.json
+
+          node -e '
+            const b = JSON.parse(require("fs").readFileSync("../boot.json","utf8"));
+            const fs = require("fs");
+            fs.appendFileSync(process.env.GITHUB_ENV, `TGQA_BASE_URL=${b.url}\n`);
+            fs.appendFileSync(process.env.GITHUB_ENV, `TGQA_ENV=${b.engine}\n`);
+            fs.appendFileSync(process.env.GITHUB_ENV, `TGQA_PROBE_URL=${b.probe_url}\n`);
+          '
+
+      # `licence not active` is its own failure, distinct and non-retryable, so a
+      # store outage is instantly distinguishable from a product bug. Retrying a
+      # licence failure just spends more metered minutes reaching the same store.
+      - name: Verify the licence resolved
+        if: steps.manifest.outputs.found == 'true' && matrix.mode != 'unlicensed'
+        run: |
+          STATE=$(node -e '
+            const b = JSON.parse(require("fs").readFileSync("boot.json","utf8"));
+            process.stdout.write(String(b.licensed ?? "unknown"));
+          ')
+          PRO=$(node -e '
+            const b = JSON.parse(require("fs").readFileSync("boot.json","utf8"));
+            process.stdout.write(String(b.probe?.pro_active ?? "unknown"));
+          ')
+          echo "licence state: $STATE · product pro gate: $PRO"
+          if [ "$STATE" != "valid" ]; then
+            {
+              echo "### licence not active"
+              echo ""
+              echo "The licence resolved to \`$STATE\`, so **pro features are not under test**."
+              echo "This is a harness failure, not a product failure, and retrying will not"
+              echo "change it. Check the store and the repo's \`TGQA_LICENSE_KEY\` secret."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::licence not active — pro features not under test (state: $STATE)"
+            exit 1
+          fi
+
+      - name: Run the suite
+        id: suite
+        if: steps.manifest.outputs.found == 'true'
+        working-directory: product
+        run: |
+          set +e
+          # --pro in BOTH modes: it is what mounts pro into scope and what makes
+          # the licence gate refuse to run unlicensed. The modes differ only in
+          # which specs they select.
+          #
+          #   pro            @pro specs only, at the fresh tier
+          #   free-with-pro  untagged specs only — free-version behaviour,
+          #                  verified in an environment where pro IS installed
+          #   unlicensed     @unlicensed specs only, on an unlicensed site
+          #
+          # The unlicensed mode uses --grep rather than --pro. --pro asserts a
+          # VALID licence and would refuse to run here, correctly — this site has
+          # none by design. --grep is the documented escape hatch that replaces
+          # the tier/area/pro filter entirely.
+          if [ "${{ matrix.mode }}" = "unlicensed" ]; then
+            MODE_ARGS='--grep @unlicensed'
+          elif [ "${{ matrix.mode }}" = "free-with-pro" ]; then
+            MODE_ARGS="--pro ${{ inputs.pro_slug }} --pro-specs none"
+          else
+            MODE_ARGS="--pro ${{ inputs.pro_slug }} --pro-specs only"
+          fi
+
+          node ../themegrill-qa/plugins/themegrill-qa/scripts/run-suite.mjs \
+            --tier fresh $MODE_ARGS \
+            --install --json --full-results \
+            --timeout-ms ${{ inputs.timeout_ms }} \
+            --base-url "$TGQA_BASE_URL" > ../suite.json
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          cat ../suite.json
+
+      - name: Annotate failures onto the PR
+        if: always() && steps.manifest.outputs.found == 'true'
+        run: |
+          node - <<'JS'
+          const fs = require("fs");
+          let r;
+          try { r = JSON.parse(fs.readFileSync("suite.json", "utf8")); }
+          catch { console.log("::warning::run-suite.mjs produced no parseable JSON"); process.exit(0); }
+
+          if (r.suite === false) { console.log("::notice::no suite manifest"); process.exit(0); }
+
+          if (r.ok === false && !r.failures) {
+            console.log(`::error::suite could not run — ${r.reason ?? "unknown"}`);
+            process.exit(0);
+          }
+          for (const f of r.failures ?? []) {
+            const msg = String(f.error ?? "").replace(/\r?\n/g, "%0A");
+            const at = f.location?.file ? f.location : { file: f.file, line: f.line };
+            console.log(`::error file=${at.file},line=${at.line ?? 1}::${f.title} — ${msg}`);
+          }
+          JS
+
+      - name: Index the suite's coverage
+        if: always() && steps.manifest.outputs.found == 'true'
+        working-directory: product
+        run: |
+          node ../themegrill-qa/plugins/themegrill-qa/scripts/suite-index.mjs \
+            > ../index.json 2>/dev/null || echo '{"suite":false}' > ../index.json
+
+      - name: Build the HTML report
+        if: always() && steps.manifest.outputs.found == 'true'
+        run: |
+          node themegrill-qa/plugins/themegrill-qa/scripts/report-suite.mjs \
+            --suite suite.json --index index.json \
+            --format html --out qa-report.html \
+            --product-dir product \
+            --repo "${{ github.repository }}" \
+            --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Upload the report and the evidence
+        if: always() && steps.manifest.outputs.found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-pro-${{ matrix.mode }}-${{ inputs.pro_slug }}-${{ github.event.pull_request.number || github.run_id }}
+          path: |
+            qa-report.html
+            product/playwright-report/**
+            product/**/test-results/**
+            suite.json
+          if-no-files-found: ignore
+
+      # Private repos are metered at 2,000 minutes/month on Free. Printing the
+      # cost of every run is how that stays visible without anyone remembering
+      # to open the billing page — and it is the number to check after two weeks
+      # before deciding whether pro CI belongs on every PR.
+      - name: Report elapsed minutes
+        if: always()
+        run: |
+          ELAPSED=$(( ( $(date +%s) - started ) ))
+          printf '\n**Runner minutes (this job):** %s min %s s — `%s`, metered against the 2,000/month Free allowance.\n' \
+            "$(( ELAPSED / 60 ))" "$(( ELAPSED % 60 ))" "${{ matrix.mode }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if the suite failed
+        if: always() && steps.manifest.outputs.found == 'true' && steps.suite.outputs.exit != '0'
+        run: |
+          echo "run-suite.mjs exited ${{ steps.suite.outputs.exit }}"
+          exit 1

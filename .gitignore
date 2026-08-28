@@ -7,3 +7,24 @@ sweep-report.md
 *.bundle
 *.zip
 *.tar.gz
+
+# Licence keys. Never tracked, in any form.
+#
+# These are UNLIMITED LIFETIME keys: no activation cap throttles anyone who
+# takes one, and revoking one means reissuing across every repo and every
+# developer machine at the same time. scripts/scan-secrets.mjs refuses a commit
+# that carries one, and sync-secrets.mjs refuses to read a .env.ci that is not
+# matched by these lines.
+.env.ci
+.env.local
+**/.themegrill-qa/.env.local
+
+# The licence seeder's config, written by license.mjs at mode 0600 into a temp
+# directory. It holds a plaintext key.
+tgqa-license.json
+
+# Freemius install state — contains install ids tied to the account.
+.freemius/
+
+# macOS finder noise
+.DS_Store

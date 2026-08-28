@@ -1,0 +1,60 @@
+# Copy this into a PRO product repo as .github/workflows/qa-pro.yml.
+#
+# It goes in the PRO repo (private), not the free one. The free repo keeps
+# caller-suite.yml and needs none of these secrets.
+#
+# Before this can work, four things must be true. All four have bitten someone:
+#
+#   1. A GitHub App exists, org-owned, **Contents: read-only**, installed on the
+#      pro repos ONLY. Its id and private key are secrets in THIS repo.
+#   2. `TGQA_LICENSE_KEY` is a secret in THIS repo. Organisation secrets are not
+#      accessible to private repositories on GitHub Free, so it must be set per
+#      repository — use `sync-secrets.mjs`, not the web UI, or it will drift.
+#   3. themegrill-qa's Settings → Actions → General → Access is set to
+#      "Accessible from repositories in the ThemeGrill organization". Without it
+#      every caller fails with "workflow was not found", which reads like a typo
+#      in the path below and is not.
+#   4. `QA_REPO_TOKEN` is a secret here while themegrill-qa is private.
+#
+# `pull_request`, never `pull_request_target`. The latter runs with secrets
+# available against fork-supplied code. Forks get no secrets here and the pro
+# jobs skip cleanly, which is the correct trade.
+
+name: QA — pro
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      # Same path filter discipline as the free suite: private-repo minutes are
+      # metered at 2,000/month, so a README change must not spend any.
+      - "**/*.php"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.scss"
+      - "**/*.css"
+      - ".themegrill-qa/**"
+      - ".github/workflows/qa-pro.yml"
+  workflow_dispatch:
+
+jobs:
+  pro:
+    # Draft PRs do not spend metered minutes. The author reopens it as ready
+    # when they want the answer.
+    if: github.event.pull_request.draft == false
+    uses: ThemeGrill/themegrill-qa/.github/workflows/pro-suite.yml@main
+    with:
+      product_slug: colormag
+      product_type: theme
+      pro_slug: colormag-pro
+      pro_repo: ThemeGrill/colormag-pro
+      # Keep this on. It is the only job that catches "installing pro broke a
+      # free feature", which is invisible to the free repo's own CI.
+      run_free_with_pro: true
+    secrets:
+      QA_REPO_TOKEN: ${{ secrets.QA_REPO_TOKEN }}
+      TGQA_APP_ID: ${{ secrets.TGQA_APP_ID }}
+      TGQA_APP_PRIVATE_KEY: ${{ secrets.TGQA_APP_PRIVATE_KEY }}
+      TGQA_LICENSE_KEY: ${{ secrets.TGQA_LICENSE_COLORMAG_PRO }}
