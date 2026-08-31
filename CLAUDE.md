@@ -21,6 +21,8 @@ plugins/claudegrill/   the installable plugin — everything the skills need
   .claude-plugin/plugin.json
   skills/                the judgement layer — one skill per entry point
     setup/               one-command onboarding for a product; resumable
+    wp-coding-standards/ the house PHP standard; reference, invoked by write-fix
+    write-fix/           the only skill that writes product source
     verify-fix/          local: verify the change in the working tree
     pr-qa-review/        CI: review a PR, post one comment
     full-test/           manual: whole-product sweep, fans out to CI
@@ -107,9 +109,13 @@ These are load-bearing. Changing one is a design decision, not a refactor.
    so the PR that renames an option updates its description in the same commit.
    `detect-product.mjs` checks that path first.
 
-7. **Never edit product source to make a check pass.** These skills verify; they
-   do not fix. `write-spec` is bound by this too — if a product needs an owned
-   selector to be testable, that is a reviewed PR by a human, not a side effect.
+7. **Never edit product source to make a check pass.** `write-fix` is the one
+   skill that writes product source, and it writes the *fix* — it is forbidden
+   from touching code again in response to a failing check, because a fix
+   adjusted until the check goes green is the check testing itself. Every other
+   skill verifies and does not fix. `write-spec` is bound by this too — if a
+   product needs an owned selector to be testable, that is a reviewed PR by a
+   human, not a side effect.
 
 8b. **`@pro` never passes without a verified licence.** A `@pro` run either has a
    licence that resolved to VALID — checked through the booted site's own probe,

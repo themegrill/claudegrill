@@ -20,11 +20,16 @@ alongside the fix. CI then runs that spec on every future PR, deterministically.
 | # | Entry point | Trigger | Output |
 |---|---|---|---|
 | 0 | `/claudegrill:setup` | Once per product | Everything below, configured and proved |
-| 1 | `/claudegrill:verify-fix` | You, locally, on a fix | A verdict, and a spec on your branch |
-| 2 | `/claudegrill:write-spec` | A verified finding, or the spec queue | A `@fresh` spec, proved against broken and fixed code |
-| 3 | **QA suite** (CI) | Every PR, and nightly | A pass/fail check and one PR comment |
-| 4 | **QA suite — pro** (CI) | Every PR on a pro repo | The same, plus `@pro` and `@unlicensed` |
-| 5 | `/claudegrill:regression-sweep` | Manual, on a release | A report; Jira tickets only when asked |
+| 1 | `/claudegrill:write-fix` | You, on a bug or a feature | The change, to house standards, PHPCS-clean, verified |
+| 2 | `/claudegrill:verify-fix` | You, locally, on a fix | A verdict, and a spec on your branch |
+| 3 | `/claudegrill:write-spec` | A verified finding, or the spec queue | A `@fresh` spec, proved against broken and fixed code |
+| 4 | **QA suite** (CI) | Every PR, and nightly | A pass/fail check and one PR comment |
+| 5 | **QA suite — pro** (CI) | Every PR on a pro repo | The same, plus `@pro` and `@unlicensed` |
+| 6 | `/claudegrill:regression-sweep` | Manual, on a release | A report; Jira tickets only when asked |
+
+`wp-coding-standards` is the odd one out: a reference, not an entry point.
+`write-fix` loads it before writing a line, and it governs every PHP change in
+every ThemeGrill product.
 
 Skills are namespaced because they ship as a plugin: `/claudegrill:verify-fix`,
 not `/verify-fix`.
@@ -67,7 +72,7 @@ The pro workflow runs three modes, and the third is the one nothing else can do:
 claudegrill/                     ← this repo is also the plugin marketplace
 ├── .claude-plugin/marketplace.json
 ├── plugins/claudegrill/         ← the installable plugin
-│   ├── skills/                    the seven commands
+│   ├── skills/                    the entry points, plus the house PHP standard
 │   ├── scripts/                   Node helpers, zero dependencies
 │   ├── templates/                 CI workflows `setup` writes into a product
 │   ├── mu-plugins/                QA-only, mounted into the test site, never shipped

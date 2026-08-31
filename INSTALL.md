@@ -174,7 +174,7 @@ node plugins/claudegrill/scripts/install-git-hook.mjs
 ```
 plugins/claudegrill/
 ├── .claude-plugin/plugin.json
-├── skills/          the seven commands
+├── skills/          the entry points, plus the house PHP standard
 ├── scripts/         the Node helpers the skills invoke
 ├── templates/       the CI workflows `setup` writes into a product repo
 ├── mu-plugins/      QA-only, mounted into the test site, never shipped
