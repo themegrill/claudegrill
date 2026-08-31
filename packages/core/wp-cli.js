@@ -19,7 +19,7 @@
  * this REST route is for state changes needed mid-spec.
  */
 
-const CLI_ROUTE = "/themegrill-qa/v1/cli";
+const CLI_ROUTE = "/claudegrill/v1/cli";
 
 /**
  * Runs a WP-CLI command. `command` excludes the leading `wp`.

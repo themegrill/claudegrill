@@ -26,7 +26,7 @@ lifecycles.
 | 5 | Findings ledger | `.themegrill-qa/findings/` | yes | agent, via PR |
 
 All five live in the **product** repository — ColorMag's handbook is in the
-ColorMag repo. The shared `themegrill-qa` repo holds only the machinery: the
+ColorMag repo. The shared `claudegrill` repo holds only the machinery: the
 skills, the scripts, the workflows, the shared helpers. It holds no product
 knowledge at all once a product is onboarded.
 

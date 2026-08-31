@@ -40,7 +40,7 @@ Re-derive any of this at any time:
 
 ```bash
 cd <colormag checkout>
-node <themegrill-qa>/plugins/themegrill-qa/scripts/suite-index.mjs --pretty
+node <claudegrill>/plugins/claudegrill/scripts/suite-index.mjs --pretty
 ```
 
 ## Two open problems
@@ -54,7 +54,7 @@ how-to, rtl, upgrade, widgets, woocommerce
 
 Nothing automated covers them. A green CI tick says nothing about any of them.
 Under the no-AI-on-PR model the suite is the only safety net, so this list is the
-real backlog — every `/themegrill-qa:verify-fix` that ends VERIFIED should
+real backlog — every `/claudegrill:verify-fix` that ends VERIFIED should
 shorten it.
 
 **2. The `@fresh` tier does not honour its own tag**
@@ -98,7 +98,7 @@ CM_ADMIN_PASS=password
 ```
 
 ```bash
-node <themegrill-qa>/plugins/themegrill-qa/scripts/run-suite.mjs --tier fresh --json
+node <claudegrill>/plugins/claudegrill/scripts/run-suite.mjs --tier fresh --json
 ```
 
 For ColorMag Pro, add the key to the same file and pass `--pro`:
@@ -108,7 +108,7 @@ TGQA_LICENSE_COLORMAG_PRO=...
 ```
 
 ```bash
-node <themegrill-qa>/plugins/themegrill-qa/scripts/run-suite.mjs --tier fresh --pro colormag-pro --json
+node <claudegrill>/plugins/claudegrill/scripts/run-suite.mjs --tier fresh --pro colormag-pro --json
 ```
 
 ColorMag Pro must be the **active theme** on the site — nothing checks that for

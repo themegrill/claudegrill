@@ -1,4 +1,4 @@
-# themegrill-qa
+# claudegrill
 
 > **Start here:** [SETUP.md](SETUP.md) is the ordered onboarding runbook.
 > [INSTALL.md](INSTALL.md) is how the plugin reaches the team.
@@ -11,22 +11,22 @@
 
 A Claude Code plugin, plus a CI check that needs no API key.
 
-Getting a product onto it is one command: **`/themegrill-qa:setup`**.
+Getting a product onto it is one command: **`/claudegrill:setup`**.
 
 The loop: a developer fixes a bug, verifies it locally with
-`/themegrill-qa:verify-fix`, and a regression spec lands on their branch
+`/claudegrill:verify-fix`, and a regression spec lands on their branch
 alongside the fix. CI then runs that spec on every future PR, deterministically.
 
 | # | Entry point | Trigger | Output |
 |---|---|---|---|
-| 0 | `/themegrill-qa:setup` | Once per product | Everything below, configured and proved |
-| 1 | `/themegrill-qa:verify-fix` | You, locally, on a fix | A verdict, and a spec on your branch |
-| 2 | `/themegrill-qa:write-spec` | A verified finding, or the spec queue | A `@fresh` spec, proved against broken and fixed code |
+| 0 | `/claudegrill:setup` | Once per product | Everything below, configured and proved |
+| 1 | `/claudegrill:verify-fix` | You, locally, on a fix | A verdict, and a spec on your branch |
+| 2 | `/claudegrill:write-spec` | A verified finding, or the spec queue | A `@fresh` spec, proved against broken and fixed code |
 | 3 | **QA suite** (CI) | Every PR, and nightly | A pass/fail check and one PR comment |
 | 4 | **QA suite — pro** (CI) | Every PR on a pro repo | The same, plus `@pro` and `@unlicensed` |
-| 5 | `/themegrill-qa:regression-sweep` | Manual, on a release | A report; Jira tickets only when asked |
+| 5 | `/claudegrill:regression-sweep` | Manual, on a release | A report; Jira tickets only when asked |
 
-Skills are namespaced because they ship as a plugin: `/themegrill-qa:verify-fix`,
+Skills are namespaced because they ship as a plugin: `/claudegrill:verify-fix`,
 not `/verify-fix`.
 
 One shared repo, seven products. Each product repo gets a ~15-line caller
@@ -44,7 +44,7 @@ A free product repo gets one workflow; a pro repo gets one more.
 | **QA suite** (`suite.yml`) | every PR, drafts included | no | **yes** — make this the required check |
 | **QA suite — pro** (`pro-suite.yml`) | every PR on a pro repo | no | once green twice |
 | **QA review** (`pr-qa.yml`) | unused by default | yes | no, advisory |
-| **QA command** (`pr-command.yml`) | a `@themegrill-qa` comment | yes | no |
+| **QA command** (`pr-command.yml`) | a `@claudegrill` comment | yes | no |
 
 The agent tiers are off. The team removed AI from the PR path deliberately: the
 developer runs the scoped suite locally, commits the spec on their own branch,
@@ -64,9 +64,9 @@ The pro workflow runs three modes, and the third is the one nothing else can do:
 ## Layout
 
 ```
-themegrill-qa/                     ← this repo is also the plugin marketplace
+claudegrill/                     ← this repo is also the plugin marketplace
 ├── .claude-plugin/marketplace.json
-├── plugins/themegrill-qa/         ← the installable plugin
+├── plugins/claudegrill/         ← the installable plugin
 │   ├── skills/                    the seven commands
 │   ├── scripts/                   Node helpers, zero dependencies
 │   ├── templates/                 CI workflows `setup` writes into a product

@@ -1,8 +1,8 @@
 {
-  "name": "themegrill-qa",
+  "name": "claudegrill",
   "version": "0.1.0",
   "private": true,
-  "description": "AI-assisted QA platform for ThemeGrill's WordPress themes and plugins",
+  "description": "ThemeGrill's shared Claude Code toolkit for WordPress themes and plugins",
   "license": "GPL-2.0-or-later",
   "type": "module",
   "engines": {
@@ -10,17 +10,17 @@
   },
   "comment": "No dependencies, by design. ThemeGrill develops on Windows and macOS, so everything here runs on plain Node with nothing to install.",
   "scripts": {
-    "detect": "node plugins/themegrill-qa/scripts/detect-product.mjs",
-    "boot": "node plugins/themegrill-qa/scripts/boot-wp.mjs",
-    "boot:wp-env": "node plugins/themegrill-qa/scripts/boot-wp.mjs --engine wp-env",
-    "stop": "node plugins/themegrill-qa/scripts/boot-wp.mjs --stop",
-    "ingest:docs": "node plugins/themegrill-qa/scripts/ingest-docs.mjs",
-    "ingest:suite": "node plugins/themegrill-qa/scripts/ingest-testsuite.mjs",
-    "cost": "node plugins/themegrill-qa/scripts/estimate-cost.mjs",
-    "check": "node --check plugins/themegrill-qa/scripts/detect-product.mjs && node --check plugins/themegrill-qa/scripts/boot-wp.mjs && node --check plugins/themegrill-qa/scripts/run-suite.mjs && node --check plugins/themegrill-qa/scripts/suite-index.mjs && node --check plugins/themegrill-qa/scripts/ingest-docs.mjs && node --check plugins/themegrill-qa/scripts/ingest-testsuite.mjs && node --check plugins/themegrill-qa/scripts/estimate-cost.mjs && node --check plugins/themegrill-qa/scripts/lib/qa-home.mjs && node --check plugins/themegrill-qa/scripts/lib/platform.mjs && node --check plugins/themegrill-qa/scripts/lib/spec-parse.mjs && node --check plugins/themegrill-qa/scripts/lib/suite-manifest.mjs && node --check plugins/themegrill-qa/hooks/spec-guard.mjs",
-    "suite": "node plugins/themegrill-qa/scripts/run-suite.mjs",
-    "suite:index": "node plugins/themegrill-qa/scripts/suite-index.mjs",
-    "cost:projection": "node plugins/themegrill-qa/scripts/estimate-cost.mjs --projection 24",
-    "dev": "claude --plugin-dir ./plugins/themegrill-qa"
+    "detect": "node plugins/claudegrill/scripts/detect-product.mjs",
+    "boot": "node plugins/claudegrill/scripts/boot-wp.mjs",
+    "boot:wp-env": "node plugins/claudegrill/scripts/boot-wp.mjs --engine wp-env",
+    "stop": "node plugins/claudegrill/scripts/boot-wp.mjs --stop",
+    "ingest:docs": "node plugins/claudegrill/scripts/ingest-docs.mjs",
+    "ingest:suite": "node plugins/claudegrill/scripts/ingest-testsuite.mjs",
+    "cost": "node plugins/claudegrill/scripts/estimate-cost.mjs",
+    "check": "node --check plugins/claudegrill/scripts/detect-product.mjs && node --check plugins/claudegrill/scripts/boot-wp.mjs && node --check plugins/claudegrill/scripts/run-suite.mjs && node --check plugins/claudegrill/scripts/suite-index.mjs && node --check plugins/claudegrill/scripts/ingest-docs.mjs && node --check plugins/claudegrill/scripts/ingest-testsuite.mjs && node --check plugins/claudegrill/scripts/estimate-cost.mjs && node --check plugins/claudegrill/scripts/lib/qa-home.mjs && node --check plugins/claudegrill/scripts/lib/platform.mjs && node --check plugins/claudegrill/scripts/lib/spec-parse.mjs && node --check plugins/claudegrill/scripts/lib/suite-manifest.mjs && node --check plugins/claudegrill/hooks/spec-guard.mjs",
+    "suite": "node plugins/claudegrill/scripts/run-suite.mjs",
+    "suite:index": "node plugins/claudegrill/scripts/suite-index.mjs",
+    "cost:projection": "node plugins/claudegrill/scripts/estimate-cost.mjs --projection 24",
+    "dev": "claude --plugin-dir ./plugins/claudegrill"
   }
 }

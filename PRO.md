@@ -7,7 +7,7 @@ the inventory those tags are built on, plus the setup nobody can guess.
 Scope: **ColorMag Pro, Zakra Pro, User Registration Pro, Everest Forms Pro.**
 Masteriyo is deliberately out of scope. No Lemon Squeezy product was found in the
 catalogue during the inventory, so there is no Lemon Squeezy adapter — adding one
-would be one file under `plugins/themegrill-qa/scripts/lib/license/`.
+would be one file under `plugins/claudegrill/scripts/lib/license/`.
 
 ---
 
@@ -174,8 +174,8 @@ repos wide before anyone makes a mistake.
 ### 4.2 Locally
 
 ```sh
-# In themegrill-qa, gitignored (verified: see .gitignore)
-cat > plugins/themegrill-qa/.env.ci <<'EOF'
+# In claudegrill, gitignored (verified: see .gitignore)
+cat > plugins/claudegrill/.env.ci <<'EOF'
 TGQA_LICENSE_COLORMAG_PRO=...
 TGQA_LICENSE_ZAKRA_PRO=...
 TGQA_LICENSE_USER_REGISTRATION_PRO=...
@@ -183,10 +183,10 @@ TGQA_LICENSE_EVEREST_FORMS_PRO=...
 EOF
 
 # Install the pre-commit guard in every repo that holds a key
-node plugins/themegrill-qa/scripts/install-git-hook.mjs
+node plugins/claudegrill/scripts/install-git-hook.mjs
 
 # Confirm what we hold
-node plugins/themegrill-qa/scripts/license.mjs check-all
+node plugins/claudegrill/scripts/license.mjs check-all
 ```
 
 Then, from inside a product checkout:
@@ -234,9 +234,9 @@ wrote a real credential into a *public* repository's secrets for a job that
 never read it.
 
 ```sh
-node plugins/themegrill-qa/scripts/sync-secrets.mjs --audit    # what is missing where
-node plugins/themegrill-qa/scripts/sync-secrets.mjs --dry-run  # default; names only
-node plugins/themegrill-qa/scripts/sync-secrets.mjs --confirm  # actually set them
+node plugins/claudegrill/scripts/sync-secrets.mjs --audit    # what is missing where
+node plugins/claudegrill/scripts/sync-secrets.mjs --dry-run  # default; names only
+node plugins/claudegrill/scripts/sync-secrets.mjs --confirm  # actually set them
 ```
 
 Values go in over **stdin**, never argv — arguments appear in the process list.
@@ -244,7 +244,7 @@ Values go in over **stdin**, never argv — arguments appear in the process list
 
 ### 4.5 Reusable-workflow access
 
-**themegrill-qa → Settings → Actions → General → Access →
+**claudegrill → Settings → Actions → General → Access →
 "Accessible from repositories in the ThemeGrill organization".**
 
 Without it every caller fails with "workflow was not found", which reads like a

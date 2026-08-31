@@ -4,15 +4,15 @@
     "name": "ThemeGrill Engineering",
     "url": "https://themegrill.com"
   },
-  "description": "Internal Claude Code plugins for ThemeGrill's WordPress themes and plugins",
-  "version": "0.5.0",
+  "description": "Internal Claude Code plugins for ThemeGrill engineering",
+  "version": "1.0.0",
   "plugins": [
     {
-      "name": "themegrill-qa",
-      "source": "./plugins/themegrill-qa",
-      "displayName": "ThemeGrill QA",
-      "description": "Verify a fix, review a PR, or sweep a whole product against a disposable WordPress site",
-      "version": "0.5.0",
+      "name": "claudegrill",
+      "source": "./plugins/claudegrill",
+      "displayName": "Claudegrill",
+      "description": "Set a product up, write a fix to house standards, verify it, review a PR, or sweep a whole product before release.",
+      "version": "1.0.0",
       "author": {
         "name": "ThemeGrill Engineering"
       },

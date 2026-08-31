@@ -11,14 +11,14 @@ doing the deploy, and for whoever works on the tooling itself.
 ## The developer's experience
 
 1. Restart Claude Code.
-2. Run `/themegrill-qa:setup` once per product.
-3. Run `/themegrill-qa:verify-fix` whenever they fix something.
+2. Run `/claudegrill:setup` once per product.
+3. Run `/claudegrill:verify-fix` whenever they fix something.
 
 **The commands are namespaced.** Plugin skills always are, so it is
-`/themegrill-qa:setup`, not `/setup`. This is the most likely day-one support
+`/claudegrill:setup`, not `/setup`. This is the most likely day-one support
 question — say it in the announcement.
 
-`/themegrill-qa:setup` finds the themes and plugins in the WordPress install the
+`/claudegrill:setup` finds the themes and plugins in the WordPress install the
 developer is standing in, asks which one, and does the rest: the
 `.themegrill-qa/` directory, the suite manifest, the docs ingest, the knowledge
 file, `pnpm install` and Chromium, the CI workflow, and a real suite run to prove
@@ -83,7 +83,7 @@ silencing it moves release control to a file nobody bumps.
 
 ```bash
 claude plugin validate .
-claude plugin validate ./plugins/themegrill-qa
+claude plugin validate ./plugins/claudegrill
 ```
 
 One warning about the missing version is expected. Do not run `--strict` here —
@@ -99,11 +99,11 @@ startup and polled hourly, so it reaches everyone without touching a machine.
 {
   "extraKnownMarketplaces": {
     "themegrill": {
-      "source": { "source": "github", "repo": "ThemeGrill/themegrill-qa" },
+      "source": { "source": "github", "repo": "ThemeGrill/claudegrill" },
       "autoUpdate": true
     }
   },
-  "enabledPlugins": { "themegrill-qa@themegrill": true }
+  "enabledPlugins": { "claudegrill@themegrill": true }
 }
 ```
 
@@ -128,8 +128,8 @@ that line is missing, no managed source was found and nothing else is true.
 /plugin
 ```
 
-`themegrill-qa` should appear under **managed** scope. Then confirm
-`/themegrill-qa:verify-fix` resolves.
+`claudegrill` should appear under **managed** scope. Then confirm
+`/claudegrill:verify-fix` resolves.
 
 ### 6. Shipping updates
 
@@ -152,8 +152,8 @@ Everest Forms Pro). Free repos need none of it. The reasoning is in
    Free, so it has to be per-repo:
 
    ```sh
-   node plugins/themegrill-qa/scripts/sync-secrets.mjs --audit    # what is missing where
-   node plugins/themegrill-qa/scripts/sync-secrets.mjs --confirm  # set them
+   node plugins/claudegrill/scripts/sync-secrets.mjs --audit    # what is missing where
+   node plugins/claudegrill/scripts/sync-secrets.mjs --confirm  # set them
    ```
 
 That is the whole list — four secrets across four repos, and nothing in the free
@@ -164,7 +164,7 @@ public.
 Then install the pre-commit licence-key guard in every repo that holds a key:
 
 ```sh
-node plugins/themegrill-qa/scripts/install-git-hook.mjs
+node plugins/claudegrill/scripts/install-git-hook.mjs
 ```
 
 ---
@@ -172,7 +172,7 @@ node plugins/themegrill-qa/scripts/install-git-hook.mjs
 ## What the plugin contains
 
 ```
-plugins/themegrill-qa/
+plugins/claudegrill/
 ├── .claude-plugin/plugin.json
 ├── skills/          the seven commands
 ├── scripts/         the Node helpers the skills invoke
@@ -214,9 +214,9 @@ no dependency and commit nothing beyond their own caller workflow and their
 Not for the team — for whoever changes the skills or scripts.
 
 ```bash
-git clone git@github.com:ThemeGrill/themegrill-qa.git
-cd themegrill-qa
-npm run dev          # claude --plugin-dir ./plugins/themegrill-qa
+git clone git@github.com:ThemeGrill/claudegrill.git
+cd claudegrill
+npm run dev          # claude --plugin-dir ./plugins/claudegrill
 ```
 
 `--plugin-dir` loads your working copy directly, and **takes precedence over the
@@ -225,7 +225,7 @@ uninstalling anything. `/reload-plugins` picks up edits without a restart.
 
 > **Never symlink skills into `~/.claude/skills`.** A skill there is
 > *unnamespaced* and **wins over the plugin's copy**, so you end up with both
-> `/verify-fix` (your stale local copy) and `/themegrill-qa:verify-fix` (the real
+> `/verify-fix` (your stale local copy) and `/claudegrill:verify-fix` (the real
 > one) and no indication which just ran. That is how someone runs a months-old
 > skill for weeks without noticing.
 

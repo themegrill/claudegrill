@@ -40,7 +40,7 @@ on:
   # schedule:
   #   - cron: '0 2 * * 1'
   #
-  # Fired by themegrill-qa's wp-core-watch.yml when WordPress core ships a new version.
+  # Fired by claudegrill's wp-core-watch.yml when WordPress core ships a new version.
   # Cheapest early warning for the "core update broke our theme" bug class —
   # consider enabling on the two flagship themes only, at smoke depth.
   #
@@ -49,7 +49,7 @@ on:
 
 jobs:
   sweep:
-    uses: ThemeGrill/themegrill-qa/.github/workflows/regression-sweep.yml@main
+    uses: ThemeGrill/claudegrill/.github/workflows/regression-sweep.yml@main
     with:
       product_slug: colormag
       product_type: theme

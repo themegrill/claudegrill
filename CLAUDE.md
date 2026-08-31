@@ -1,4 +1,4 @@
-# themegrill-qa — orientation
+# claudegrill — orientation
 
 Read this before changing anything in this repo.
 
@@ -17,7 +17,7 @@ knowledge file. Nothing is installed into them.
 ```
 .claude-plugin/
   marketplace.json       this repo IS the private plugin marketplace
-plugins/themegrill-qa/   the installable plugin — everything the skills need
+plugins/claudegrill/   the installable plugin — everything the skills need
   .claude-plugin/plugin.json
   skills/                the judgement layer — one skill per entry point
     setup/               one-command onboarding for a product; resumable
@@ -152,7 +152,7 @@ installs, reports `✘ failed to load` with "Duplicate hooks file detected", and
 contributes no skills at all. Confirmed on CLI 2.1.246. `manifest.hooks` is only
 for *additional* hook files. This cost a release: 0.2.0 shipped broken.
 
-So `claude plugin validate ./plugins/themegrill-qa` will **always** print:
+So `claude plugin validate ./plugins/claudegrill` will **always** print:
 
 ```
 ⚠ version: No version specified. Consider adding a version following semver
@@ -167,7 +167,7 @@ push. With `autoUpdate: true` in the org's `extraKnownMarketplaces`, developers
 pick it up within the hour or at next launch. Forget the bump and nobody gets it.
 
 Note also that plugin skills are **namespaced**: installed as a plugin the entry
-points are `/themegrill-qa:verify-fix`, not `/verify-fix`. A clone-installed copy
+points are `/claudegrill:verify-fix`, not `/verify-fix`. A clone-installed copy
 in `~/.claude/skills` is unnamespaced *and wins over the plugin's copy*, so the
 two must not coexist on one machine.
 
@@ -448,7 +448,7 @@ decision in the suite layer.
   shape nothing has tested.
 - **Every pro CI path.** `pro-suite.yml` parses and every command in it has been
   run by hand, but no run has happened. It no longer needs a GitHub App (see
-  PRO.md §4.3), and with themegrill-qa public the cross-repo checkout blocker is
+  PRO.md §4.3), and with claudegrill public the cross-repo checkout blocker is
   gone too, so the only thing left is to let it run.
 - **`sync-secrets.mjs --confirm` against real repos**, and `--audit` against
   them. Only the unauthenticated-`gh` failure path has been exercised.
@@ -481,12 +481,12 @@ decision in the suite layer.
 
 - **Every CI path except `wp-core-watch.yml`.** That one has now run for real.
   `suite.yml`, `pr-qa.yml` and `pr-command.yml` have not, and there is a known
-  blocker in front of them: **`themegrill-qa` is a private repo and
+  blocker in front of them: **`claudegrill` is a private repo and
   `secrets.GITHUB_TOKEN` cannot check it out from another repository.** Every
   reusable workflow's "Check out shared QA tooling" step fails with a 404 that
   reads as if the repo does not exist. They now take an optional
   `QA_REPO_TOKEN`; that it works is untested. Two org-level settings also have to
-  be right — the token itself, and themegrill-qa's Settings > Actions > Access
+  be right — the token itself, and claudegrill's Settings > Actions > Access
   allowing organisation repos to call its reusable workflows. Making the repo
   public removes all of it, and also removes the per-developer git-access
   requirement for the plugin install.
@@ -535,7 +535,7 @@ decision in the suite layer.
 
 1. **Unblock CI: `QA_REPO_TOKEN`, or make this repo public.** Nothing in the CI
    tier can run until the reusable workflows can check this repo out. The
-   cheapest fix is making `themegrill-qa` public — there is nothing secret in it,
+   cheapest fix is making `claudegrill` public — there is nothing secret in it,
    ColorMag is already public, and it also removes the per-developer git-access
    requirement for the plugin install. Otherwise: an org secret plus
    Settings > Actions > Access on this repo.

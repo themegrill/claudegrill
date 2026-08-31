@@ -23,7 +23,7 @@ on:
         type: string
         default: "8.3"
       qa_ref:
-        description: "Ref of the shared themegrill-qa repo to use"
+        description: "Ref of the shared claudegrill repo to use"
         required: false
         type: string
         default: "main"
@@ -54,7 +54,7 @@ on:
         required: true
       QA_REPO_TOKEN:
         description: >
-          Read access to the private themegrill-qa repo. Required while that
+          Read access to the private claudegrill repo. Required while that
           repo is private; GITHUB_TOKEN cannot reach it.
         required: false
 
@@ -87,16 +87,16 @@ jobs:
       - name: Check out shared QA tooling
         uses: actions/checkout@v4
         with:
-          repository: ThemeGrill/themegrill-qa      # <-- change to your org/repo
+          repository: ThemeGrill/claudegrill      # <-- change to your org/repo
           ref: ${{ inputs.qa_ref }}
           # GITHUB_TOKEN is scoped to the repo running this workflow and CANNOT
           # read a different private repository — it fails with a 404 that reads
-          # like the repo does not exist. While themegrill-qa is private, the
+          # like the repo does not exist. While claudegrill is private, the
           # caller must pass QA_REPO_TOKEN: a PAT or GitHub App token with
           # read access to it, ideally an organisation secret so all seven
-          # products share one. The fallback only works if themegrill-qa is public.
+          # products share one. The fallback only works if claudegrill is public.
           token: ${{ secrets.QA_REPO_TOKEN || secrets.GITHUB_TOKEN }}
-          path: themegrill-qa
+          path: claudegrill
 
       - uses: actions/setup-node@v4
         with:
@@ -142,9 +142,9 @@ jobs:
             }
           }
           JSON
-          cp -r themegrill-qa/plugins/themegrill-qa/scripts themegrill-qa/plugins/themegrill-qa/blueprints product/ 2>/dev/null || true
-          cp -r themegrill-qa/knowledge product/ 2>/dev/null || true
-          mkdir -p product/.claude && cp -r themegrill-qa/plugins/themegrill-qa/skills product/.claude/skills
+          cp -r claudegrill/plugins/claudegrill/scripts claudegrill/plugins/claudegrill/blueprints product/ 2>/dev/null || true
+          cp -r claudegrill/knowledge product/ 2>/dev/null || true
+          mkdir -p product/.claude && cp -r claudegrill/plugins/claudegrill/skills product/.claude/skills
           # nothing to chmod: the scripts are Node
 
       # The cheap layer runs first, and its result is handed to the agent rather
@@ -159,7 +159,7 @@ jobs:
           PHP_VERSION: ${{ inputs.php_version }}
         run: |
           set -o pipefail
-          node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs \
+          node ../claudegrill/plugins/claudegrill/scripts/boot-wp.mjs \
             --engine playground | tee ../boot.json
           URL="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("../boot.json","utf8")).url)')"
           echo "TGQA_BASE_URL=$URL" >> "$GITHUB_ENV"
@@ -171,7 +171,7 @@ jobs:
         working-directory: product
         run: |
           set +e
-          node ../themegrill-qa/plugins/themegrill-qa/scripts/run-suite.mjs \
+          node ../claudegrill/plugins/claudegrill/scripts/run-suite.mjs \
             --tier fresh --install --json --base-url "$TGQA_BASE_URL" > ../suite.json
           CODE=$?
           echo "exit=$CODE" >> "$GITHUB_OUTPUT"
@@ -190,7 +190,7 @@ jobs:
         if: steps.triage.outputs.run == 'true'
         working-directory: product
         run: |
-          node ../themegrill-qa/plugins/themegrill-qa/scripts/suite-index.mjs --pretty \
+          node ../claudegrill/plugins/claudegrill/scripts/suite-index.mjs --pretty \
             > ./suite-index.json 2>/dev/null || echo '{"suite":false}' > ./suite-index.json
           cat ./suite-index.json
 
@@ -273,7 +273,7 @@ jobs:
       - name: Stop the site
         if: always() && steps.triage.outputs.run == 'true'
         working-directory: product
-        run: node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs --stop || true
+        run: node ../claudegrill/plugins/claudegrill/scripts/boot-wp.mjs --stop || true
 
       # Mirror the verdict onto the Actions run page, so the run itself is
       # readable without going back to the PR conversation.

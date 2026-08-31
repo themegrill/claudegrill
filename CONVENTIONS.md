@@ -88,7 +88,7 @@ route that can set up any state the product can reach.
 Every row a spec creates carries a meta key identifying it:
 
 ```js
-const { createPost, cleanupFixtures } = require('@themegrill-qa/core');
+const { createPost, cleanupFixtures } = require('@claudegrill/core');
 
 test.afterAll(async ({ requestUtils }) => {
   await cleanupFixtures(requestUtils);

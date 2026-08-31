@@ -1,13 +1,13 @@
 # Drop this into each product repo as .github/workflows/qa-command.yml
 #
-# Re-run QA on an existing PR by commenting `@themegrill-qa`.
+# Re-run QA on an existing PR by commenting `@claudegrill`.
 #
-#   @themegrill-qa               full re-review — suite plus agent
-#   @themegrill-qa suite         suite only, no API key used, free
-#   @themegrill-qa verify <text> focused agent run, small budget
-#   @themegrill-qa specs         write regression specs and open a spec PR
-#   @themegrill-qa areas <a,b>   agent run restricted to those areas
-#   @themegrill-qa help          post the table above
+#   @claudegrill               full re-review — suite plus agent
+#   @claudegrill suite         suite only, no API key used, free
+#   @claudegrill verify <text> focused agent run, small budget
+#   @claudegrill specs         write regression specs and open a spec PR
+#   @claudegrill areas <a,b>   agent run restricted to those areas
+#   @claudegrill help          post the table above
 #
 # The reusable workflow gates on author_association, so only owners, members and
 # collaborators can trigger a run. That check is not optional: without it anyone
@@ -25,7 +25,7 @@ on:
 
 jobs:
   command:
-    uses: ThemeGrill/themegrill-qa/.github/workflows/pr-command.yml@main
+    uses: ThemeGrill/claudegrill/.github/workflows/pr-command.yml@main
     with:
       product_slug: colormag
       product_type: theme

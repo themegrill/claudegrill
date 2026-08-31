@@ -33,7 +33,7 @@ on:
         type: string
         default: "8.3"
       qa_ref:
-        description: "Ref of the shared themegrill-qa repo to use"
+        description: "Ref of the shared claudegrill repo to use"
         required: false
         type: string
         default: "main"
@@ -64,7 +64,7 @@ on:
     secrets:
       QA_REPO_TOKEN:
         description: >
-          Read access to the private themegrill-qa repo. Required while that
+          Read access to the private claudegrill repo. Required while that
           repo is private: GITHUB_TOKEN is scoped to the calling repo and
           cannot read another private one.
         required: false
@@ -95,16 +95,16 @@ jobs:
       - name: Check out shared QA tooling
         uses: actions/checkout@v4
         with:
-          repository: ThemeGrill/themegrill-qa      # <-- change to your org/repo
+          repository: ThemeGrill/claudegrill      # <-- change to your org/repo
           ref: ${{ inputs.qa_ref }}
           # GITHUB_TOKEN is scoped to the repo running this workflow and CANNOT
           # read a different private repository — it fails with a 404 that reads
-          # like the repo does not exist. While themegrill-qa is private, the
+          # like the repo does not exist. While claudegrill is private, the
           # caller must pass QA_REPO_TOKEN: a PAT or GitHub App token with
           # read access to it, ideally an organisation secret so all seven
-          # products share one. The fallback only works if themegrill-qa is public.
+          # products share one. The fallback only works if claudegrill is public.
           token: ${{ secrets.QA_REPO_TOKEN || secrets.GITHUB_TOKEN }}
-          path: themegrill-qa
+          path: claudegrill
 
       # Products declare their own install/run commands in
       # .themegrill-qa/suite.json, and every one of them so far is a pnpm
@@ -136,7 +136,7 @@ jobs:
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
             echo "No .themegrill-qa/suite.json — this product has no suite yet." >> "$GITHUB_STEP_SUMMARY"
-            echo "See SUITE.md in ThemeGrill/themegrill-qa for what to add." >> "$GITHUB_STEP_SUMMARY"
+            echo "See SUITE.md in ThemeGrill/claudegrill for what to add." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       # The browser build is pinned to the Playwright VERSION, so it has to be
@@ -176,7 +176,7 @@ jobs:
           PHP_VERSION: ${{ inputs.php_version }}
         run: |
           set -o pipefail
-          node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs \
+          node ../claudegrill/plugins/claudegrill/scripts/boot-wp.mjs \
             --engine "${{ inputs.engine }}" | tee ../boot.json
           echo "TGQA_BASE_URL=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("../boot.json","utf8")).url)')" >> "$GITHUB_ENV"
           # TGQA_ENV travels with the URL or the site gets misidentified.
@@ -206,7 +206,7 @@ jobs:
             SCOPE_ARGS="--since origin/${{ github.event.pull_request.base.ref }}"
           fi
 
-          node ../themegrill-qa/plugins/themegrill-qa/scripts/run-suite.mjs \
+          node ../claudegrill/plugins/claudegrill/scripts/run-suite.mjs \
             --tier fresh --install --json --full-results $SCOPE_ARGS \
             --timeout-ms ${{ inputs.timeout_ms }} \
             --base-url "$TGQA_BASE_URL" > ../suite.json
@@ -269,7 +269,7 @@ jobs:
               echo "### No regression spec in this PR"
               echo ""
               echo "This PR changes product source but adds no spec. If the change fixes a"
-              echo "bug, run \`/themegrill-qa:verify-fix\` locally and let \`write-spec\` add one"
+              echo "bug, run \`/claudegrill:verify-fix\` locally and let \`write-spec\` add one"
               echo "to this branch — a finding without a spec is one you pay to rediscover."
               echo ""
               echo "<details><summary>Source files changed</summary>"
@@ -290,7 +290,7 @@ jobs:
         if: always() && steps.manifest.outputs.found == 'true'
         working-directory: product
         run: |
-          node ../themegrill-qa/plugins/themegrill-qa/scripts/suite-index.mjs \
+          node ../claudegrill/plugins/claudegrill/scripts/suite-index.mjs \
             > ../index.json 2>/dev/null || echo '{"suite":false}' > ../index.json
 
       # The page a human actually reads. Self-contained: screenshots are inlined
@@ -300,7 +300,7 @@ jobs:
       - name: Build the HTML report
         if: always() && steps.manifest.outputs.found == 'true'
         run: |
-          node themegrill-qa/plugins/themegrill-qa/scripts/report-suite.mjs \
+          node claudegrill/plugins/claudegrill/scripts/report-suite.mjs \
             --suite suite.json --index index.json \
             --format html --out qa-report.html \
             --product-dir product \
@@ -341,7 +341,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          node themegrill-qa/plugins/themegrill-qa/scripts/report-suite.mjs \
+          node claudegrill/plugins/claudegrill/scripts/report-suite.mjs \
             --suite suite.json --index index.json --format md --out body.md \
             --repo "$REPO" \
             --sha "${{ github.event.pull_request.head.sha }}" \
@@ -351,7 +351,7 @@ jobs:
 
           # One comment, edited in place, found by its marker.
           ID="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-                 --jq '[.[] | select(.body | contains("<!-- themegrill-qa-suite -->"))][0].id // empty')"
+                 --jq '[.[] | select(.body | contains("<!-- claudegrill-suite -->"))][0].id // empty')"
           if [ -n "$ID" ]; then
             gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@body.md >/dev/null
             echo "updated comment $ID"
@@ -364,7 +364,7 @@ jobs:
       - name: Write the run summary
         if: always() && steps.manifest.outputs.found == 'true'
         run: |
-          node themegrill-qa/plugins/themegrill-qa/scripts/report-suite.mjs \
+          node claudegrill/plugins/claudegrill/scripts/report-suite.mjs \
             --suite suite.json --index index.json --format summary \
             --repo "${{ github.repository }}" \
             --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
@@ -374,7 +374,7 @@ jobs:
       - name: Stop the site
         if: always() && steps.manifest.outputs.found == 'true'
         working-directory: product
-        run: node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs --stop || true
+        run: node ../claudegrill/plugins/claudegrill/scripts/boot-wp.mjs --stop || true
 
       # Exit non-zero so this can be a required check. The distinction matters:
       # exit 1 is "your tests failed", exit 2 is "the harness broke" — and the

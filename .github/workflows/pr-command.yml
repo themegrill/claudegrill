@@ -1,6 +1,6 @@
 name: QA command (reusable)
 
-# Re-trigger QA on an existing PR by commenting `@themegrill-qa`.
+# Re-trigger QA on an existing PR by commenting `@claudegrill`.
 #
 # `issue_comment` is an awkward event and most of the care in this file is about
 # its three sharp edges:
@@ -47,12 +47,12 @@ on:
           Spend cap for a comment-triggered run. Deliberately lower than the
           automatic PR review's default: a comment is usually "just check this
           one thing", and the full-review budget is the wrong shape for that.
-          The `@themegrill-qa` full re-review raises it to the PR default itself.
+          The `@claudegrill` full re-review raises it to the PR default itself.
         required: false
         type: string
         default: "0.75"
       full_budget_usd:
-        description: "Cap for a full re-review requested by a bare @themegrill-qa."
+        description: "Cap for a full re-review requested by a bare @claudegrill."
         required: false
         type: string
         default: "1.50"
@@ -65,7 +65,7 @@ on:
         required: true
       QA_REPO_TOKEN:
         description: >
-          Read access to the private themegrill-qa repo. Required while that
+          Read access to the private claudegrill repo. Required while that
           repo is private; GITHUB_TOKEN cannot reach it.
         required: false
 
@@ -74,7 +74,7 @@ jobs:
     # Gate hard, and in this order, before doing ANY work.
     if: |
       github.event.issue.pull_request != null &&
-      contains(github.event.comment.body, '@themegrill-qa') &&
+      contains(github.event.comment.body, '@claudegrill') &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
 
     runs-on: ubuntu-latest
@@ -119,12 +119,12 @@ jobs:
       - name: Parse the command
         id: cmd
         run: |
-          # The first @themegrill-qa occurrence and the rest of THAT line.
+          # The first @claudegrill occurrence and the rest of THAT line.
           # Anything after a newline belongs to the human's prose, not the command.
           LINE="$(printf '%s' "${{ toJSON(github.event.comment.body) }}" \
             | jq -r . \
-            | grep -m1 -o '@themegrill-qa.*' || true)"
-          REST="$(printf '%s' "$LINE" | sed -e 's/^@themegrill-qa[[:space:]]*//')"
+            | grep -m1 -o '@claudegrill.*' || true)"
+          REST="$(printf '%s' "$LINE" | sed -e 's/^@claudegrill[[:space:]]*//')"
           SUB="$(printf '%s' "$REST" | awk '{print tolower($1)}')"
           ARGS="$(printf '%s' "$REST" | sed -e 's/^[^[:space:]]*[[:space:]]*//')"
 
@@ -148,16 +148,16 @@ jobs:
         run: |
           cat > help.md <<'MD'
           <!-- themegrill-qa-bot-help -->
-          ### `@themegrill-qa` commands
+          ### `@claudegrill` commands
 
           | Comment | Effect |
           |---|---|
-          | `@themegrill-qa` | Full re-review — suite plus agent |
-          | `@themegrill-qa suite` | Suite only. **No API key used, no agent, free.** |
-          | `@themegrill-qa verify <text>` | Focused agent run on `<text>` only, small budget |
-          | `@themegrill-qa specs` | Write regression specs for this PR's verified findings, and open a spec PR |
-          | `@themegrill-qa areas <a,b>` | Agent run restricted to those areas |
-          | `@themegrill-qa help` | This table |
+          | `@claudegrill` | Full re-review — suite plus agent |
+          | `@claudegrill suite` | Suite only. **No API key used, no agent, free.** |
+          | `@claudegrill verify <text>` | Focused agent run on `<text>` only, small budget |
+          | `@claudegrill specs` | Write regression specs for this PR's verified findings, and open a spec PR |
+          | `@claudegrill areas <a,b>` | Agent run restricted to those areas |
+          | `@claudegrill help` | This table |
 
           Only repository owners, members and collaborators can trigger a run.
           MD
@@ -177,16 +177,16 @@ jobs:
         if: steps.cmd.outputs.mode != 'help'
         uses: actions/checkout@v4
         with:
-          repository: ThemeGrill/themegrill-qa      # <-- change to your org/repo
+          repository: ThemeGrill/claudegrill      # <-- change to your org/repo
           ref: ${{ inputs.qa_ref }}
           # GITHUB_TOKEN is scoped to the repo running this workflow and CANNOT
           # read a different private repository — it fails with a 404 that reads
-          # like the repo does not exist. While themegrill-qa is private, the
+          # like the repo does not exist. While claudegrill is private, the
           # caller must pass QA_REPO_TOKEN: a PAT or GitHub App token with
           # read access to it, ideally an organisation secret so all seven
-          # products share one. The fallback only works if themegrill-qa is public.
+          # products share one. The fallback only works if claudegrill is public.
           token: ${{ secrets.QA_REPO_TOKEN || secrets.GITHUB_TOKEN }}
-          path: themegrill-qa
+          path: claudegrill
 
       - uses: actions/setup-node@v4
         if: steps.cmd.outputs.mode != 'help'
@@ -205,7 +205,7 @@ jobs:
           PHP_VERSION: ${{ inputs.php_version }}
         run: |
           set -o pipefail
-          node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs \
+          node ../claudegrill/plugins/claudegrill/scripts/boot-wp.mjs \
             --engine playground | tee ../boot.json
           echo "TGQA_BASE_URL=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("../boot.json","utf8")).url)')" >> "$GITHUB_ENV"
 
@@ -214,7 +214,7 @@ jobs:
         working-directory: product
         run: |
           set +e
-          node ../themegrill-qa/plugins/themegrill-qa/scripts/run-suite.mjs \
+          node ../claudegrill/plugins/claudegrill/scripts/run-suite.mjs \
             --tier fresh --install --json --base-url "$TGQA_BASE_URL" > ../suite.json
           echo "run-suite exit $?"
           cat ../suite.json
@@ -264,9 +264,9 @@ jobs:
             }
           }
           JSON
-          cp -r themegrill-qa/plugins/themegrill-qa/scripts themegrill-qa/plugins/themegrill-qa/blueprints product/ 2>/dev/null || true
-          cp -r themegrill-qa/knowledge product/ 2>/dev/null || true
-          mkdir -p product/.claude && cp -r themegrill-qa/plugins/themegrill-qa/skills product/.claude/skills
+          cp -r claudegrill/plugins/claudegrill/scripts claudegrill/plugins/claudegrill/blueprints product/ 2>/dev/null || true
+          cp -r claudegrill/knowledge product/ 2>/dev/null || true
+          mkdir -p product/.claude && cp -r claudegrill/plugins/claudegrill/skills product/.claude/skills
           cp suite.json product/suite-result.json 2>/dev/null || true
 
       - name: Agent run
@@ -336,7 +336,7 @@ jobs:
             --base "${{ steps.pr.outputs.head_ref }}" \
             --head "$BRANCH" \
             --title "Add regression spec(s) for #$PR" \
-            --body "Generated by \`@themegrill-qa specs\` on #$PR. Each spec was proved against both the fixed and the broken code — see the commit messages.
+            --body "Generated by \`@claudegrill specs\` on #$PR. Each spec was proved against both the fixed and the broken code — see the commit messages.
 
           🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 
@@ -356,7 +356,7 @@ jobs:
       - name: Stop the site
         if: always() && steps.cmd.outputs.mode != 'help'
         working-directory: product
-        run: node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs --stop || true
+        run: node ../claudegrill/plugins/claudegrill/scripts/boot-wp.mjs --stop || true
 
       # Close the loop the 👀 opened. A commenter should never have to open the
       # Actions tab to find out whether their command worked.

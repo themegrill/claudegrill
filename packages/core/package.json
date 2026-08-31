@@ -1,5 +1,5 @@
 {
-  "name": "@themegrill-qa/core",
+  "name": "@claudegrill/core",
   "version": "0.1.0",
   "description": "Shared Playwright spec helpers for ThemeGrill WordPress products",
   "main": "index.js",

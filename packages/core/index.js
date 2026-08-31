@@ -1,5 +1,5 @@
 /**
- * @themegrill-qa/core — shared spec helpers for every ThemeGrill product.
+ * @claudegrill/core — shared spec helpers for every ThemeGrill product.
  *
  * Read CONVENTIONS.md before writing a spec against this. In particular:
  * select on markup we own, seed state rather than clicking through it, tag every

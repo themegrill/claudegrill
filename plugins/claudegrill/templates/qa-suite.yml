@@ -1,32 +1,27 @@
-# Drop this into each product repo as .github/workflows/qa-suite.yml,
-# or let `/claudegrill:setup` write it for you.
+# Written by `/claudegrill:setup`. Safe to edit — it is a plain caller.
 #
-# THIS IS THE ONLY PR CHECK MOST PRODUCTS NEED.
-#
-# No ANTHROPIC_API_KEY. No agent. No API cost of any kind — runner minutes only,
-# and those are free on a public repository.
+# THIS IS THE ONLY PR CHECK MOST PRODUCTS NEED. No ANTHROPIC_API_KEY, no agent,
+# runner minutes only.
 #
 # It works without AI because the developer already wrote the spec: they ran
 # /claudegrill:verify-fix locally, write-spec added a @fresh spec to their
 # branch, and they committed it with the fix. By the time CI sees the PR the
-# regression is already a deterministic assertion. Nothing here needs judgement.
+# regression is already a deterministic assertion.
 #
 # TWO JOBS, and the split is the point:
 #
-#   pr        on every PR, scoped to the areas the diff maps to. Fast feedback.
+#   pr        every PR, scoped to the areas the diff maps to. Fast feedback.
 #   nightly   the WHOLE @fresh tier, on a schedule.
 #
 # The nightly job is not optional garnish. Once PR runs are scoped, NOTHING else
 # runs the full suite — a spec whose area is never touched would stop executing
 # entirely, and you would not find out until the regression it guards shipped.
-# Scoping trades total coverage per PR for speed; the schedule buys it back.
 #
-# Scoping is safe by construction: a changed source file matching no
-# `area_paths` pattern in .themegrill-qa/suite.json falls back to the full tier.
-# An unmapped change costs runner time, never coverage. If you have not written
-# area_paths yet, every run is a full run and this file still behaves correctly.
+# Scoping is safe by construction: a changed file matching no `area_paths`
+# pattern in .themegrill-qa/suite.json falls back to the full tier. An unmapped
+# change costs runner time, never coverage.
 
-name: QA suite (required)
+name: QA suite
 
 on:
   pull_request:
@@ -42,8 +37,8 @@ jobs:
     if: github.event_name == 'pull_request'
     uses: ThemeGrill/claudegrill/.github/workflows/suite.yml@main
     with:
-      product_slug: colormag
-      product_type: theme
+      product_slug: __PRODUCT_SLUG__
+      product_type: __PRODUCT_TYPE__
       scope: changed
 
   # The safety net. Everything, every night. Advisory — do not make it required,
@@ -52,6 +47,6 @@ jobs:
     if: github.event_name != 'pull_request'
     uses: ThemeGrill/claudegrill/.github/workflows/suite.yml@main
     with:
-      product_slug: colormag
-      product_type: theme
+      product_slug: __PRODUCT_SLUG__
+      product_type: __PRODUCT_TYPE__
       scope: full

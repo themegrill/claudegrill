@@ -107,7 +107,7 @@ on:
 
     secrets:
       QA_REPO_TOKEN:
-        description: "Read access to the private themegrill-qa repo."
+        description: "Read access to the private claudegrill repo."
         required: false
       TGQA_LICENSE_KEY:
         description: >
@@ -247,10 +247,10 @@ jobs:
       - name: Check out shared QA tooling
         uses: actions/checkout@v4
         with:
-          repository: ThemeGrill/themegrill-qa
+          repository: ThemeGrill/claudegrill
           ref: ${{ inputs.qa_ref }}
           token: ${{ secrets.QA_REPO_TOKEN || secrets.GITHUB_TOKEN }}
-          path: themegrill-qa
+          path: claudegrill
 
 
       - name: Install pnpm
@@ -306,7 +306,7 @@ jobs:
           LICENSE_FLAG=--license
           if [ "${{ matrix.mode }}" = "unlicensed" ]; then LICENSE_FLAG=""; fi
 
-          node ../themegrill-qa/plugins/themegrill-qa/scripts/boot-wp.mjs \
+          node ../claudegrill/plugins/claudegrill/scripts/boot-wp.mjs \
             --engine "${{ inputs.engine }}" \
             --with-pro "${{ inputs.pro_slug }}=$GITHUB_WORKSPACE/pro" \
             $LICENSE_FLAG | tee ../boot.json
@@ -373,7 +373,7 @@ jobs:
             MODE_ARGS="--pro ${{ inputs.pro_slug }} --pro-specs only"
           fi
 
-          node ../themegrill-qa/plugins/themegrill-qa/scripts/run-suite.mjs \
+          node ../claudegrill/plugins/claudegrill/scripts/run-suite.mjs \
             --tier fresh $MODE_ARGS \
             --install --json --full-results \
             --timeout-ms ${{ inputs.timeout_ms }} \
@@ -407,13 +407,13 @@ jobs:
         if: always() && steps.manifest.outputs.found == 'true'
         working-directory: ${{ env.SUITE_DIR }}
         run: |
-          node ../themegrill-qa/plugins/themegrill-qa/scripts/suite-index.mjs \
+          node ../claudegrill/plugins/claudegrill/scripts/suite-index.mjs \
             > ../index.json 2>/dev/null || echo '{"suite":false}' > ../index.json
 
       - name: Build the HTML report
         if: always() && steps.manifest.outputs.found == 'true'
         run: |
-          node themegrill-qa/plugins/themegrill-qa/scripts/report-suite.mjs \
+          node claudegrill/plugins/claudegrill/scripts/report-suite.mjs \
             --suite suite.json --index index.json \
             --format html --out qa-report.html \
             --product-dir ${{ env.SUITE_DIR }} \

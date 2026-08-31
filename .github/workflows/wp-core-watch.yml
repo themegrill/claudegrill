@@ -1,6 +1,6 @@
 name: Watch WordPress core releases
 
-# Lives in themegrill-qa, not in the products. Polls the WordPress.org version API and,
+# Lives in claudegrill, not in the products. Polls the WordPress.org version API and,
 # when core ships a version we have not swept against, fans a repository_dispatch
 # out to every product repo so each runs its own sweep.
 #

@@ -12,7 +12,7 @@
 #   UI, or it will drift across the four pro products.
 #
 # Everything else resolves on its own. `GITHUB_TOKEN` checks out this repo (it
-# is the one running the workflow) and the public free repo, and themegrill-qa
+# is the one running the workflow) and the public free repo, and claudegrill
 # is public so its reusable workflows are callable with no token and no
 # Settings → Actions → Access change.
 #
@@ -45,7 +45,7 @@ jobs:
     # Draft PRs do not spend metered minutes. The author reopens it as ready
     # when they want the answer.
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    uses: ThemeGrill/themegrill-qa/.github/workflows/pro-suite.yml@main
+    uses: ThemeGrill/claudegrill/.github/workflows/pro-suite.yml@main
     with:
       product_slug: colormag
       product_type: theme

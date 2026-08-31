@@ -9,9 +9,9 @@
 #
 #   qa-suite.yml    caller-suite.yml    free, required check, every PR
 #   qa-review.yml   this file           agent, advisory
-#   qa-command.yml  caller-command.yml  @themegrill-qa
+#   qa-command.yml  caller-command.yml  @claudegrill
 #
-# Everything else lives in themegrill-qa.
+# Everything else lives in claudegrill.
 
 name: QA review
 
@@ -25,7 +25,7 @@ on:
 
 jobs:
   qa:
-    uses: ThemeGrill/themegrill-qa/.github/workflows/pr-qa.yml@main
+    uses: ThemeGrill/claudegrill/.github/workflows/pr-qa.yml@main
     with:
       product_slug: colormag
       product_type: theme

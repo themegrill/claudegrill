@@ -28,7 +28,7 @@ const {
 	expectThemeModPersists,
 	expectCleanRender,
 	collectConsoleErrors,
-} = require("@themegrill-qa/core");
+} = require("@claudegrill/core");
 
 test.describe("ColorMag — customizer and rendering", () => {
 	let postId;
@@ -146,12 +146,12 @@ test.describe("ColorMag — customizer and rendering", () => {
 
 		await requestUtils.rest({
 			method: "POST",
-			path: "/themegrill-qa/v1/cli",
+			path: "/claudegrill/v1/cli",
 			data: { command: "theme activate twentytwentyfive" },
 		});
 		await requestUtils.rest({
 			method: "POST",
-			path: "/themegrill-qa/v1/cli",
+			path: "/claudegrill/v1/cli",
 			data: { command: "theme activate colormag" },
 		});
 

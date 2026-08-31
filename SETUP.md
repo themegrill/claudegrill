@@ -12,7 +12,7 @@ This document is just the steps.
 
 1. **A CI check on every PR** that runs the product's own Playwright specs, with
    no API key and no agent.
-2. **A local command** — `/themegrill-qa:verify-fix` — that verifies a fix and
+2. **A local command** — `/claudegrill:verify-fix` — that verifies a fix and
    turns it into a committed spec, so the CI tier grows.
 3. **The pro jobs**, for the four products that have a pro edition.
 4. **Optional agent tiers**, off by default, for a product whose suite is still
@@ -30,13 +30,13 @@ branch with the fix → CI runs that spec on every PR from then on.
 - Per product: `pnpm install` and `pnpm exec playwright install chromium` in the
   checkout, once.
 
-**Who runs what.** Developers only ever type `/themegrill-qa:…` commands — they
+**Who runs what.** Developers only ever type `/claudegrill:…` commands — they
 install nothing and need no copy of this repo. The setup steps below that invoke
 scripts directly are run **once per product by whoever does the onboarding**,
 from a checkout of this repo:
 
 ```bash
-git clone git@github.com:ThemeGrill/themegrill-qa.git && cd themegrill-qa
+git clone git@github.com:ThemeGrill/claudegrill.git && cd claudegrill
 ```
 
 Commands written as `npm run …` assume that checkout is your working directory;
@@ -63,7 +63,7 @@ The full detail is in [INSTALL.md](INSTALL.md). The short version:
    only thing that triggers an update** — `plugin.json` deliberately has no
    version, so the marketplace entry is what counts.
 2. Validate: `claude plugin validate .` and `claude plugin validate
-   ./plugins/themegrill-qa`. One warning about a missing version is **expected
+   ./plugins/claudegrill`. One warning about a missing version is **expected
    and correct** — do not silence it.
 3. An org owner adds this in **claude.ai → Admin Settings → Claude Code →
    Managed settings**:
@@ -72,24 +72,24 @@ The full detail is in [INSTALL.md](INSTALL.md). The short version:
 {
   "extraKnownMarketplaces": {
     "themegrill": {
-      "source": { "source": "github", "repo": "ThemeGrill/themegrill-qa" },
+      "source": { "source": "github", "repo": "ThemeGrill/claudegrill" },
       "autoUpdate": true
     }
   },
-  "enabledPlugins": { "themegrill-qa@themegrill": true }
+  "enabledPlugins": { "claudegrill@themegrill": true }
 }
 ```
 
 4. Developers restart Claude Code. Verify on one machine with `/status` — the
    **Setting sources** line must read `Enterprise managed settings (remote)`.
 
-**Tell the team the commands are namespaced:** `/themegrill-qa:verify-fix`, not
+**Tell the team the commands are namespaced:** `/claudegrill:verify-fix`, not
 `/verify-fix`. This is the most likely day-one support question.
 
 ## Phase 2 — First product · one command
 
 ```
-/themegrill-qa:setup
+/claudegrill:setup
 ```
 
 That is the whole of Phase 2 and Phase 3 for most products. It finds every theme
@@ -133,7 +133,7 @@ content and never gates anything.
 
 ```bash
 cd <the product checkout>
-node <themegrill-qa>/plugins/themegrill-qa/scripts/suite-index.mjs --pretty
+node <claudegrill>/plugins/claudegrill/scripts/suite-index.mjs --pretty
 ```
 
 Read `by_tier`, `hygiene.untagged_tier`, and `areas_uncovered`.
@@ -164,7 +164,7 @@ Then confirm the whole chain works:
 
 ```bash
 cd <the product checkout>
-node <themegrill-qa>/plugins/themegrill-qa/scripts/run-suite.mjs --tier fresh --json
+node <claudegrill>/plugins/claudegrill/scripts/run-suite.mjs --tier fresh --json
 ```
 
 Exit 0 with a real `total` is success. Exit 2 means the harness is broken — which
@@ -174,7 +174,7 @@ includes *zero tests ran*, because a run that executed nothing is not a pass.
 
 `.themegrill-qa/knowledge.md` in the product repo. Use
 [knowledge/_TEMPLATE.md](knowledge/_TEMPLATE.md), or draft one with
-`/themegrill-qa:knowledge-init` and have a maintainer correct it.
+`/claudegrill:knowledge-init` and have a maintainer correct it.
 
 The **critical-flows list is load-bearing**: `suite-index.mjs` derives
 `areas_uncovered` from it, so a wrong list sends every future effort to the wrong
@@ -183,7 +183,7 @@ place. `ingest-docs.mjs` can seed the area list from the product's docs site.
 ### 2.5 Run it against fixes you already checked by hand
 
 ```
-/themegrill-qa:verify-fix
+/claudegrill:verify-fix
 ```
 
 Pick three fixes whose outcome you already know and compare verdicts. This is the
@@ -214,7 +214,7 @@ check that is red on arrival is one nobody ever turns green.
 ## Phase 4 — The pro edition, if the product has one · ~30 min
 
 Only for ColorMag Pro, Zakra Pro, User Registration Pro and Everest Forms Pro.
-`/themegrill-qa:setup` does steps 1, 2 and 4 of this when it detects a pro
+`/claudegrill:setup` does steps 1, 2 and 4 of this when it detects a pro
 product — it recognises them from `licenses.json` — and step 3 is the one part it
 cannot do, because only a repo admin can set a secret. Full reasoning in
 [PRO.md](PRO.md).
@@ -230,7 +230,7 @@ cannot do, because only a repo admin can set a secret. Full reasoning in
    removes the probe afterwards. Then:
 
    ```bash
-   node <themegrill-qa>/plugins/themegrill-qa/scripts/run-suite.mjs --tier fresh --pro <slug>-pro --json
+   node <claudegrill>/plugins/claudegrill/scripts/run-suite.mjs --tier fresh --pro <slug>-pro --json
    ```
 
    A `@pro` run either verifies the licence or refuses with `licence not active`
@@ -244,8 +244,8 @@ cannot do, because only a repo admin can set a secret. Full reasoning in
 3. **Add one secret** to that pro repo — `TGQA_LICENSE_<PRODUCT>`:
 
    ```sh
-   node plugins/themegrill-qa/scripts/sync-secrets.mjs --audit
-   node plugins/themegrill-qa/scripts/sync-secrets.mjs --confirm
+   node plugins/claudegrill/scripts/sync-secrets.mjs --audit
+   node plugins/claudegrill/scripts/sync-secrets.mjs --confirm
    ```
 
    That is the only secret. No GitHub App, and nothing in the free repo.
@@ -253,7 +253,7 @@ cannot do, because only a repo admin can set a secret. Full reasoning in
 4. **Install the pre-commit key guard** in any repo that holds a key:
 
    ```sh
-   node plugins/themegrill-qa/scripts/install-git-hook.mjs
+   node plugins/claudegrill/scripts/install-git-hook.mjs
    ```
 
 Keep `run_free_with_pro: true`. It is the only job that catches "installing pro
@@ -265,12 +265,12 @@ The suite is the only automated safety net. An area with no specs is an area
 where a regression ships unnoticed.
 
 ```bash
-node <themegrill-qa>/plugins/themegrill-qa/scripts/suite-index.mjs --pretty
+node <claudegrill>/plugins/claudegrill/scripts/suite-index.mjs --pretty
 ```
 
 `areas_uncovered` is the backlog. The CI job prints the same list in its summary
 and PR comment, so developers see it without running anything. Every
-`/themegrill-qa:verify-fix` that ends VERIFIED should add one spec and shorten
+`/claudegrill:verify-fix` that ends VERIFIED should add one spec and shorten
 it.
 
 ## Phase 6 — Optional extras, in order of value
@@ -292,8 +292,8 @@ Repeat Phase 2, 3 and 4. Nothing from Phase 0 or 1 repeats.
 
 | Symptom | Cause |
 |---|---|
-| `/verify-fix` not found | Plugin skills are namespaced — use `/themegrill-qa:verify-fix` |
-| Both `/verify-fix` and `/themegrill-qa:verify-fix` exist | An old symlinked copy in `~/.claude/skills` **wins** over the plugin. Delete it |
+| `/verify-fix` not found | Plugin skills are namespaced — use `/claudegrill:verify-fix` |
+| Both `/verify-fix` and `/claudegrill:verify-fix` exist | An old symlinked copy in `~/.claude/skills` **wins** over the plugin. Delete it |
 | Detected the wrong product | Detection resolves the **git repo root** of your cwd. Several products in one repo means the first header found wins — give each product its own checkout |
 | `not a WordPress theme or plugin` | You are above the product. `cd` into the product checkout itself |
 | Suite exits 2, "no base URL" | No `.env.local`, no `--base-url`, no `--boot` |
@@ -308,7 +308,7 @@ Repeat Phase 2, 3 and 4. Nothing from Phase 0 or 1 repeats.
 **Once, for the org**
 - [ ] Marketplace version bumped, plugin validated
 - [ ] Managed settings deployed; `/status` verified on one machine
-- [ ] Team told about the `/themegrill-qa:` prefix
+- [ ] Team told about the `/claudegrill:` prefix
 
 **Per product**
 - [ ] `.themegrill-qa/suite.json`, with `area_paths` if you want scoping
