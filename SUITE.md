@@ -90,7 +90,7 @@ Playwright's `--grep` matches:
 | Tag | Runs on | Meaning |
 |---|---|---|
 | `@fresh` | a clean `boot-wp` site seeded only by the blueprint | CI-safe. This is the tier that gates PRs. |
-| `@demo` | a site with the product's demo content imported | Local / nightly only. **Not CI coverage.** |
+| `@demo` | a site with the product's demo content imported | Local only. **Not CI coverage.** |
 
 Rules, enforced in code and not merely documented:
 

@@ -96,8 +96,9 @@ These are load-bearing. Changing one is a design decision, not a refactor.
 
 4. **Nothing has write authority it does not need.** The PR runner comments; it
    never approves, merges, commits or pushes. The sweep files tickets only when a
-   human passes `--file-tickets`, capped at five, into a triage state. Scheduled
-   runs can never file tickets.
+   human passes `--file-tickets`, capped at five, into a triage state. Nothing
+   in this repo runs on a schedule at all: QA is a local `verify-fix` plus the
+   e2e suite on the PR, and there is no cron and no core-release watcher.
 
 5. **A finding requires reproduction twice plus cited evidence.** The six-part
    gate in `regression-sweep` is the reason this is trusted. Do not relax it, and
@@ -284,9 +285,10 @@ decision in the suite layer.
   runner's own output diverted to a log file. Before the fix it was ~2.5KB of
   Playwright progress going straight into the calling agent's context — `--json`
   was parsed and then never used
-- **One live CI run**: `wp-core-watch.yml` executed and pushed
-  `f6dea3d chore: WordPress 7.1 swept` as `themegrill-qa-bot`. This is the first
-  workflow in this repo to run at all
+- **One live CI run happened**, historically: `wp-core-watch.yml` executed and
+  pushed `f6dea3d chore: WordPress 7.1 swept` as `themegrill-qa-bot`. That
+  workflow has since been **deleted** — the team runs no scheduled QA — so no
+  surviving CI path in this repo has ever run
 - `claude plugin validate` passes on both the plugin and the marketplace
 - All YAML and JSON parses; every `.mjs` passes `node --check`
 
@@ -485,8 +487,9 @@ decision in the suite layer.
   If `artifact-url` ever arrives empty the comment degrades to naming the run
   instead, which is handled but also untested.
 
-- **Every CI path except `wp-core-watch.yml`.** That one has now run for real.
-  `suite.yml`, `pr-qa.yml` and `pr-command.yml` have not, and there is a known
+- **Every CI path.** The only workflow that ever ran live was `wp-core-watch.yml`,
+  now deleted. `suite.yml`, `pro-suite.yml`, `pr-qa.yml` and `pr-command.yml`
+  have not, and there is a known
   blocker in front of them: **`claudegrill` is a private repo and
   `secrets.GITHUB_TOKEN` cannot check it out from another repository.** Every
   reusable workflow's "Check out shared QA tooling" step fails with a 404 that

@@ -1,58 +1,32 @@
-# Install
+# Installing the plugin
 
-**Nobody installs anything.** An organisation owner deploys the plugin once and
-it reaches every developer's Claude Code on their next restart.
+**How the claudegrill plugin reaches the team.** One organisation owner does
+this once; nobody else installs anything.
 
-That is the whole story for the team. The rest of this document is for the owner
-doing the deploy, and for whoever works on the tooling itself.
+This file is only about the plugin and its marketplace. **Setting a product up
+is [SETUP.md](SETUP.md)** — that is a different job, done per product, by the
+developer who works on it.
 
 ---
 
-## The developer's experience
+## What a developer does
 
 1. Restart Claude Code.
 2. Run `/claudegrill:setup` once per product.
-3. Run `/claudegrill:verify-fix` whenever they fix something.
+3. Run `/claudegrill:write-fix` and `/claudegrill:verify-fix` as they work.
 
 **The commands are namespaced.** Plugin skills always are, so it is
 `/claudegrill:setup`, not `/setup`. This is the most likely day-one support
 question — say it in the announcement.
 
-`/claudegrill:setup` finds the themes and plugins in the WordPress install the
-developer is standing in, asks which one, and does the rest: the
-`.themegrill-qa/` directory, the suite manifest, the docs ingest, the knowledge
-file, `pnpm install` and Chromium, the CI workflow, and a real suite run to prove
-it works. It skips anything already present, so it is safe to re-run.
-
-It asks for three things, because nothing can derive them:
-
-- the **docs URL**, if the product has one — optional
-- the **base URL and WordPress admin credentials** of the site they test on
-- on a pro product, the **licence key** — required, not optional
-
-Those land in a gitignored `.themegrill-qa/.env.local`, which the setup command
-adds to `.gitignore` *before* writing anything into it:
-
-```
-TGQA_BASE_URL=http://test-colormag.local
-CMP_ADMIN_USER=admin
-CMP_ADMIN_PASS=password
-TGQA_LICENSE_COLORMAG_PRO=...          # pro products only
-```
-
-The admin variable names come from the product's own `suite.json`
-(`env.admin_user`, `env.admin_pass`) — ColorMag uses `CM_*`, ColorMag Pro `CMP_*`.
-`TGQA_ADMIN_USER` and `TGQA_ADMIN_PASS` work everywhere as a fallback.
-
-There is **no licence probe to install**. `run-suite.mjs --pro` puts one into the
-site's `mu-plugins/`, reads the product's own pro gate, and removes it again.
-
-To do any of it by hand instead, [SETUP.md](SETUP.md) Phase 2 is the same steps
-written out.
+Everything else a developer needs — what `setup` asks for, credentials, licence
+keys, the CI workflow — is in [SETUP.md](SETUP.md). Nothing on this page is
+their concern.
 
 ---
 
 ## Deploying it — organisation owner, once
+
 
 ### 1. Public or private
 
@@ -138,38 +112,9 @@ it up within the hour or at next launch. Forget the bump and nobody gets it.
 
 ---
 
-## Pro products — one secret each
-
-Only for the **pro** repos (ColorMag Pro, Zakra Pro, User Registration Pro,
-Everest Forms Pro). Free repos need none of it. The reasoning is in
-[PRO.md](PRO.md) §4.
-
-1. **A dedicated QA licence key per product** — not the company key. Revocable
-   without disturbing a customer or a colleague.
-
-2. **Set it as a secret in that pro repo**, named `TGQA_LICENSE_<PRODUCT>`.
-   Organisation secrets are not accessible to private repositories on GitHub
-   Free, so it has to be per-repo:
-
-   ```sh
-   node plugins/claudegrill/scripts/sync-secrets.mjs --audit    # what is missing where
-   node plugins/claudegrill/scripts/sync-secrets.mjs --confirm  # set them
-   ```
-
-That is the whole list — four secrets across four repos, and nothing in the free
-repos. No GitHub App is involved: `qa-pro.yml` lives in the pro repo, so the pro
-code under test is the caller's own checkout, and the free product it extends is
-public.
-
-Then install the pre-commit licence-key guard in every repo that holds a key:
-
-```sh
-node plugins/claudegrill/scripts/install-git-hook.mjs
-```
-
----
 
 ## What the plugin contains
+
 
 ```
 plugins/claudegrill/
@@ -203,6 +148,7 @@ cost a release once.
 
 ## CI installs nothing either
 
+
 The reusable workflows check this repository out at run time. Product repos gain
 no dependency and commit nothing beyond their own caller workflow and their
 `.themegrill-qa/` directory.
@@ -210,6 +156,7 @@ no dependency and commit nothing beyond their own caller workflow and their
 ---
 
 ## Working on the tooling itself
+
 
 Not for the team — for whoever changes the skills or scripts.
 
@@ -235,3 +182,19 @@ Run the scripts directly from the checkout when you need them:
 npm run suite:index      # what the suite covers
 npm run check            # every .mjs parses
 ```
+
+---
+
+## Checklist — the organisation owner's half
+
+- [ ] Public/private decided; token and Access settings done if private
+- [ ] Marketplace version bumped, plugin validated
+- [ ] Managed settings deployed; `/status` verified on one machine
+- [ ] Team told about the `/claudegrill:` prefix
+
+---
+
+## Next
+
+The plugin being installed does nothing on its own. Each product still has to be
+set up once — see **[SETUP.md](SETUP.md)**, which is one command.

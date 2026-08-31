@@ -1,7 +1,8 @@
 # claudegrill
 
-> **Start here:** [SETUP.md](SETUP.md) is the ordered onboarding runbook.
-> [INSTALL.md](INSTALL.md) is how the plugin reaches the team.
+> **Start here — two different jobs, two files:**
+> [INSTALL.md](INSTALL.md) deploys the plugin to the org. Once, by an owner.
+> [SETUP.md](SETUP.md) sets a product up with `/claudegrill:setup`. Per product.
 > [SUITE.md](SUITE.md) is the contract between this platform and a product's suite.
 > [CONVENTIONS.md](CONVENTIONS.md) governs every spec written against this.
 > [PRO.md](PRO.md) covers the pro tier — licences, secrets, the pro CI jobs.
@@ -23,7 +24,7 @@ alongside the fix. CI then runs that spec on every future PR, deterministically.
 | 1 | `/claudegrill:write-fix` | You, on a bug or a feature | The change, to house standards, PHPCS-clean, verified |
 | 2 | `/claudegrill:verify-fix` | You, locally, on a fix | A verdict, and a spec on your branch |
 | 3 | `/claudegrill:write-spec` | A verified finding, or the spec queue | A `@fresh` spec, proved against broken and fixed code |
-| 4 | **QA suite** (CI) | Every PR, and nightly | A pass/fail check and one PR comment |
+| 4 | **QA suite** (CI) | Every PR | A pass/fail check and one PR comment |
 | 5 | **QA suite — pro** (CI) | Every PR on a pro repo | The same, plus `@pro` and `@unlicensed` |
 | 6 | `/claudegrill:regression-sweep` | Manual, on a release | A report; Jira tickets only when asked |
 

@@ -2,7 +2,7 @@
 
 ColorMag is the pilot product and is **already set up**. This is its status, not
 a walkthrough — for onboarding a new product, follow
-[SETUP.md](SETUP.md) Phase 2, and Phase 4 for its pro edition.
+[SETUP.md](SETUP.md), and its *pro edition* section for ColorMag Pro.
 
 ## What is in place
 

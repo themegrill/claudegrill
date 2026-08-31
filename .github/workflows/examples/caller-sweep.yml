@@ -35,17 +35,9 @@ on:
   # release:
   #   types: [published]
   #
-  # Weekly heartbeat. 02:00 UTC Monday = 07:45 Sunday evening Kathmandu.
-  #
-  # schedule:
-  #   - cron: '0 2 * * 1'
-  #
-  # Fired by claudegrill's wp-core-watch.yml when WordPress core ships a new version.
-  # Cheapest early warning for the "core update broke our theme" bug class —
-  # consider enabling on the two flagship themes only, at smoke depth.
-  #
-  # repository_dispatch:
-  #   types: [wp-core-released]
+  # Nothing scheduled, deliberately. The team runs QA at two points only: a local
+  # /claudegrill:verify-fix while the fix is written, and the e2e suite on the PR.
+  # There is no nightly job and no WordPress-core watcher to dispatch one.
 
 jobs:
   sweep:

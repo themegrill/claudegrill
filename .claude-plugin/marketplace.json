@@ -5,14 +5,14 @@
     "url": "https://themegrill.com"
   },
   "description": "Internal Claude Code plugins for ThemeGrill engineering",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "plugins": [
     {
       "name": "claudegrill",
       "source": "./plugins/claudegrill",
       "displayName": "Claudegrill",
       "description": "Set a product up, write a fix to house standards, verify it, review a PR, or sweep a whole product before release.",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "author": {
         "name": "ThemeGrill Engineering"
       },
