@@ -3,11 +3,16 @@ name: QA suite — pro (reusable)
 # The pro tier. Everything suite.yml does, plus private pro code and a real
 # licence — which changes three things and every one of them is load-bearing.
 #
-# 1. THE PRO REPO IS PRIVATE, and `secrets.GITHUB_TOKEN` is scoped to the repo
-#    running the workflow. It cannot check out a different private repository
-#    and fails with a 404 that reads as if the repo does not exist. A GitHub App
-#    installation token does the checkout instead — Contents: read-only,
-#    installed only on the pro repos.
+# 1. THIS WORKFLOW IS CALLED FROM THE PRO REPO, so the pro code under test is
+#    the CALLER's own checkout — `secrets.GITHUB_TOKEN` reaches it, because it
+#    is the repository running the workflow. The free product it extends is a
+#    separate, PUBLIC repo, which the same token can also clone. No GitHub App,
+#    no installation token, nothing for an org admin to install per product.
+#
+#    An earlier version minted an App token to check out `pro_repo` — the very
+#    repository the workflow was already running in — while never checking out
+#    the free product at all. `free-with-pro` therefore mounted pro's code as
+#    the free theme and could not possibly catch the bug class it exists for.
 #
 # 2. ORGANISATION SECRETS DO NOT REACH PRIVATE REPOS ON GITHUB FREE. The docs
 #    are explicit about it. So every secret this workflow needs must exist in
@@ -39,19 +44,22 @@ on:
         description: "theme or plugin — the FREE product's type"
         required: true
         type: string
+      product_repo:
+        description: >
+          owner/name of the FREE product repo, e.g. ThemeGrill/colormag. Public,
+          so `GITHUB_TOKEN` clones it. Required because the pro code under test
+          comes from the caller and the free product must come from somewhere.
+        required: true
+        type: string
+      product_ref:
+        description: "Ref of the free repo to test against. Default: its default branch."
+        required: false
+        type: string
+        default: ""
       pro_slug:
         description: "Pro product slug as it appears in licenses.json, e.g. colormag-pro"
         required: true
         type: string
-      pro_repo:
-        description: "owner/name of the private pro repo, e.g. ThemeGrill/colormag-pro"
-        required: true
-        type: string
-      pro_ref:
-        description: "Ref of the pro repo to test against"
-        required: false
-        type: string
-        default: ""
       run_pro_specs:
         description: "Run the @pro tier"
         required: false
@@ -101,12 +109,6 @@ on:
       QA_REPO_TOKEN:
         description: "Read access to the private themegrill-qa repo."
         required: false
-      TGQA_APP_ID:
-        description: "GitHub App id. Contents: read-only, installed on the pro repos only."
-        required: false
-      TGQA_APP_PRIVATE_KEY:
-        description: "GitHub App private key."
-        required: false
       TGQA_LICENSE_KEY:
         description: >
           The licence key for THIS product, from the repo's own secrets
@@ -129,46 +131,21 @@ jobs:
     outputs:
       modes: ${{ steps.check.outputs.modes }}
     steps:
-      # Two secrets, two DIFFERENT capabilities, and collapsing them costs the
-      # most valuable job in the matrix:
+      # ONE secret decides everything here: can we licence what we checked out?
       #
-      #   TGQA_APP_ID       can we check the private pro repo out at all?
-      #   TGQA_LICENSE_KEY  can we licence what we checked out?
-      #
-      # The `unlicensed` mode needs the first and deliberately not the second.
-      # Gating it on the licence key would mean the one job that observes the
-      # state every customer passes through only runs where it is least needed.
+      # `unlicensed` deliberately does not need it — that mode's whole purpose is
+      # an unlicensed site, so it runs on a fork PR with no secrets at all, which
+      # is the one place pro QA can still say something true.
       - name: Which pro jobs can this run actually do?
         id: check
         env:
           KEY: ${{ secrets.TGQA_LICENSE_KEY }}
-          APP_ID: ${{ secrets.TGQA_APP_ID }}
         run: |
           # A JSON array, because GitHub has no way to drop a matrix entry with
           # an `if:`; `fromJSON` on a job output is the one mechanism that does.
           MODES=""
           add() { MODES="${MODES:+$MODES,}\"$1\""; }
 
-          if [ -z "$APP_ID" ]; then
-            echo "modes=[]" >> "$GITHUB_OUTPUT"
-            {
-              echo "### Pro suite skipped"
-              echo ""
-              echo "No GitHub App credentials, so the private pro repository cannot be"
-              echo "checked out and **no pro job can run**."
-              echo ""
-              echo "On a **fork pull request** this is expected and correct — forks get no"
-              echo "secrets, by design. The jobs skip rather than failing, and nothing falls"
-              echo "through to testing the free version, which would report pro coverage"
-              echo "that does not exist."
-              echo ""
-              echo "On a branch of this repository a secret is missing. Run"
-              echo '`node plugins/themegrill-qa/scripts/sync-secrets.mjs --audit`'
-              echo "against this repo to see which."
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "::notice::pro suite skipped: no licence available on fork PRs"
-            exit 0
-          fi
 
           if [ -n "$KEY" ]; then
             [ "${{ inputs.run_pro_specs }}" = "true" ] && add pro
@@ -222,6 +199,15 @@ jobs:
     permissions:
       contents: read
 
+    env:
+      # Which checkout holds the suite this mode runs.
+      #
+      # `free-with-pro` runs the FREE product's own specs in an environment where
+      # pro is installed and licensed — running pro's copy of them would defeat
+      # the entire point, which is to notice that installing pro broke something
+      # the free product promises. The other two modes run pro's own suite.
+      SUITE_DIR: ${{ matrix.mode == 'free-with-pro' && 'product' || 'pro' }}
+
     concurrency:
       group: qa-pro-${{ matrix.mode }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
@@ -238,10 +224,24 @@ jobs:
           echo "::add-mask::$KEY"
           echo "started=$(date +%s)" >> "$GITHUB_ENV"
 
-      - name: Check out the product
+      # The PRO code under test: THIS pull request's own commit. Deliberately no
+      # `repository:` and no `ref:` — naming the repo explicitly, even its own
+      # name, makes checkout take the default branch instead of the PR merge
+      # commit, and the run would then test code the PR does not contain.
+      # fetch-depth 0 so `run-suite.mjs --since` can diff against the base.
+      - name: Check out the pro product (this repo)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          path: pro
+
+      # The FREE product the pro one extends. Public, so `GITHUB_TOKEN` clones it
+      # with no App and no extra secret.
+      - name: Check out the free product
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.product_repo }}
+          ref: ${{ inputs.product_ref || '' }}
           path: product
 
       - name: Check out shared QA tooling
@@ -252,27 +252,6 @@ jobs:
           token: ${{ secrets.QA_REPO_TOKEN || secrets.GITHUB_TOKEN }}
           path: themegrill-qa
 
-      # A GitHub App installation token, scoped to this one repository for this
-      # one run. `secrets.GITHUB_TOKEN` cannot do this: it is scoped to the repo
-      # running the workflow, and against another private repo it returns a 404
-      # that reads exactly like "no such repository", which is the single most
-      # time-wasting error message in this whole setup.
-      - name: Mint a token for the private pro repo
-        id: pro-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.TGQA_APP_ID }}
-          private-key: ${{ secrets.TGQA_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ inputs.pro_slug }}
-
-      - name: Check out the pro product
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ inputs.pro_repo }}
-          ref: ${{ inputs.pro_ref || '' }}
-          token: ${{ steps.pro-token.outputs.token }}
-          path: pro
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -285,7 +264,7 @@ jobs:
 
       - name: Look for a suite manifest
         id: manifest
-        working-directory: product
+        working-directory: ${{ env.SUITE_DIR }}
         run: |
           if [ -f .themegrill-qa/suite.json ]; then
             echo "found=true" >> "$GITHUB_OUTPUT"
@@ -296,7 +275,7 @@ jobs:
 
       - name: Install the product's dependencies and its Chromium
         if: steps.manifest.outputs.found == 'true'
-        working-directory: product
+        working-directory: ${{ env.SUITE_DIR }}
         run: |
           set -euo pipefail
           pm=$(node -p 'require("./.themegrill-qa/suite.json").package_manager || "npm"')
@@ -370,7 +349,7 @@ jobs:
       - name: Run the suite
         id: suite
         if: steps.manifest.outputs.found == 'true'
-        working-directory: product
+        working-directory: ${{ env.SUITE_DIR }}
         run: |
           set +e
           # --pro in BOTH modes: it is what mounts pro into scope and what makes
@@ -426,7 +405,7 @@ jobs:
 
       - name: Index the suite's coverage
         if: always() && steps.manifest.outputs.found == 'true'
-        working-directory: product
+        working-directory: ${{ env.SUITE_DIR }}
         run: |
           node ../themegrill-qa/plugins/themegrill-qa/scripts/suite-index.mjs \
             > ../index.json 2>/dev/null || echo '{"suite":false}' > ../index.json
@@ -437,7 +416,7 @@ jobs:
           node themegrill-qa/plugins/themegrill-qa/scripts/report-suite.mjs \
             --suite suite.json --index index.json \
             --format html --out qa-report.html \
-            --product-dir product \
+            --product-dir ${{ env.SUITE_DIR }} \
             --repo "${{ github.repository }}" \
             --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

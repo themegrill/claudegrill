@@ -10,17 +10,16 @@ This document is just the steps.
 
 ## What you are setting up
 
-Three things, in this order of importance:
-
-1. **A free CI check on every PR.** Runs the product's own Playwright specs. No
-   API key, no agent, no per-run cost.
+1. **A CI check on every PR** that runs the product's own Playwright specs, with
+   no API key and no agent.
 2. **A local command** — `/themegrill-qa:verify-fix` — that verifies a fix and
-   turns it into a committed spec, so the free tier grows.
-3. **Optional agent tiers**, off by default, for a product whose suite is still
+   turns it into a committed spec, so the CI tier grows.
+3. **The pro jobs**, for the four products that have a pro edition.
+4. **Optional agent tiers**, off by default, for a product whose suite is still
    too thin to trust.
 
 The loop: developer fixes a bug → verifies it locally → a spec lands on their
-branch with the fix → CI runs that spec forever, for free.
+branch with the fix → CI runs that spec on every PR from then on.
 
 ## Before you start
 
@@ -40,25 +39,21 @@ from a checkout of this repo:
 git clone git@github.com:ThemeGrill/themegrill-qa.git && cd themegrill-qa
 ```
 
-Commands below written as `npm run …` assume that checkout is your working
-directory; `-- ` passes flags through to the script.
+Commands written as `npm run …` assume that checkout is your working directory;
+`-- ` passes flags through to the script.
 
 ---
 
-## Phase 0 — Decide: public or private · 5 min, and it saves hours
+## Phase 0 — Public or private · already decided
 
-**This repo should probably be public.** There are no keys, no customer data — it
-is QA tooling. Keeping it private costs you three recurring things:
+**This repo is public.** Nothing in Phase 0 needs doing. It matters only because
+three things depend on it and all three are now free: CI needs no
+`QA_REPO_TOKEN`, the reusable workflows resolve with no Access setting, and
+developers need no individual git access for the plugin to load.
 
-- CI needs a `QA_REPO_TOKEN` secret on every product, because `GITHUB_TOKEN` is
-  scoped to the calling repo and **cannot** check out another private repo. It
-  fails with a 404 that reads like the repo does not exist.
-- This repo needs Settings → Actions → General → Access set to *"Accessible from
-  repositories in the organization"*, or the `uses:` line cannot resolve at all.
-- Every developer needs git access to it before the plugin will install.
-
-Making it public deletes all three. If you keep it private, do both settings
-above now rather than debugging them later.
+If it is ever made private again, set both: **Settings → Actions → General →
+Access** → *"Accessible from repositories in the organization"*, and an org
+secret `QA_REPO_TOKEN` with `contents: read`.
 
 ## Phase 1 — Deploy the plugin to the org · 15 min, once
 
@@ -99,7 +94,7 @@ Add `.themegrill-qa/suite.json` to the product repo. The schema, every field and
 what is inferred when omitted, is [SUITE.md §1](SUITE.md).
 
 If the product has no Playwright suite at all, that is a real decision to make
-first — see Phase 5.
+first — see Phase 6.
 
 ### 2.2 Tier every spec
 
@@ -133,7 +128,10 @@ CM_ADMIN_USER=admin
 CM_ADMIN_PASS=password
 ```
 
-Add `.env.local` to the product's `.gitignore` **before** writing it.
+The admin variable names come from the product's own `suite.json`
+(`env.admin_user`, `env.admin_pass`); `TGQA_ADMIN_USER` / `TGQA_ADMIN_PASS` work
+everywhere as a fallback. Add `.env.local` to the product's `.gitignore`
+**before** writing it.
 
 Then confirm the whole chain works:
 
@@ -143,7 +141,7 @@ node <themegrill-qa>/plugins/themegrill-qa/scripts/run-suite.mjs --tier fresh --
 ```
 
 Exit 0 with a real `total` is success. Exit 2 means the harness is broken — which
-now includes *zero tests ran*, because a run that executed nothing is not a pass.
+includes *zero tests ran*, because a run that executed nothing is not a pass.
 
 ### 2.4 The knowledge file — the hour that decides output quality
 
@@ -173,7 +171,7 @@ Copy [`.github/workflows/examples/caller-suite.yml`](.github/workflows/examples/
 into the product as `.github/workflows/qa-suite.yml` and set the slug. It has two
 jobs and both matter:
 
-- **`pr`** — scoped to the areas the diff touches. Fast. This is the required check.
+- **`pr`** — scoped to the areas the diff touches. This is the required check.
 - **`nightly`** — the whole `@fresh` tier on a schedule. Advisory.
 
 **Do not drop the nightly job.** Once PR runs are scoped, nothing else runs the
@@ -186,31 +184,77 @@ run is a full run, which is correct, just slower.
 **Make it required only once it has been green twice on real PRs.** A required
 check that is red on arrival is one nobody ever turns green.
 
-## Phase 4 — Grow the coverage · ongoing, and this is the actual work
+## Phase 4 — The pro edition, if the product has one · ~30 min
 
-Under this model the suite is the **only** automated safety net. An area with no
-specs is an area where a regression ships unnoticed.
+Only for ColorMag Pro, Zakra Pro, User Registration Pro and Everest Forms Pro.
+Full reasoning in [PRO.md](PRO.md); these are the steps.
+
+1. **Locally**, add the licence key to the same gitignored `.env.local`:
+
+   ```
+   TGQA_LICENSE_COLORMAG_PRO=...
+   ```
+
+   Nothing else. `run-suite.mjs --pro` installs its own probe into the site's
+   `mu-plugins/`, verifies the licence through the product's own gate, and
+   removes the probe afterwards. Then:
+
+   ```bash
+   node <themegrill-qa>/plugins/themegrill-qa/scripts/run-suite.mjs --tier fresh --pro <slug>-pro --json
+   ```
+
+   A `@pro` run either verifies the licence or refuses with `licence not active`
+   and exit 2. It never skips quietly and never passes on an assumed licence.
+
+2. **In CI**, copy
+   [`.github/workflows/examples/caller-pro-suite.yml`](.github/workflows/examples/caller-pro-suite.yml)
+   into the **pro** repo as `.github/workflows/qa-pro.yml`, set `product_slug`,
+   `pro_slug` and `product_repo` (the free repo).
+
+3. **Add one secret** to that pro repo — `TGQA_LICENSE_<PRODUCT>`:
+
+   ```sh
+   node plugins/themegrill-qa/scripts/sync-secrets.mjs --audit
+   node plugins/themegrill-qa/scripts/sync-secrets.mjs --confirm
+   ```
+
+   That is the only secret. No GitHub App, and nothing in the free repo.
+
+4. **Install the pre-commit key guard** in any repo that holds a key:
+
+   ```sh
+   node plugins/themegrill-qa/scripts/install-git-hook.mjs
+   ```
+
+Keep `run_free_with_pro: true`. It is the only job that catches "installing pro
+broke a free feature", which is invisible to the free repo's own CI.
+
+## Phase 5 — Grow the coverage · ongoing, and this is the actual work
+
+The suite is the only automated safety net. An area with no specs is an area
+where a regression ships unnoticed.
 
 ```bash
 node <themegrill-qa>/plugins/themegrill-qa/scripts/suite-index.mjs --pretty
 ```
 
 `areas_uncovered` is the backlog. The CI job prints the same list in its summary
-and PR comment, so developers see it without running anything. Every `/themegrill-qa:verify-fix` that ends
-VERIFIED should add one spec and shorten it.
+and PR comment, so developers see it without running anything. Every
+`/themegrill-qa:verify-fix` that ends VERIFIED should add one spec and shorten
+it.
 
-## Phase 5 — Optional extras, in order of value
+## Phase 6 — Optional extras, in order of value
 
 - **The agent tiers.** `pr-qa.yml` and `pr-command.yml` are in this repo, unused.
-  They need an `ANTHROPIC_API_KEY` and cost real money — see [COSTS.md](COSTS.md).
-  Worth it only for a product whose suite is still too thin to trust.
+  They need an `ANTHROPIC_API_KEY`. Worth it only for a product whose suite is
+  still too thin to trust.
 - **Regression sweeps** for release candidates. `--file-tickets` is off by
   default and should stay off until the team has read several reports.
 - **Jira filing.** Needs Rovo API-token auth. Defer until sweeps are trusted.
 
-## Phase 6 — Remaining products · ~2 hours each
+## Phase 7 — Remaining products · ~2 hours each
 
-Repeat Phase 2 and 3. Nothing from Phase 0 or 1 repeats.
+Repeat Phase 2, 3 and 4. Nothing from Phase 0 or 1 repeats.
 
 ---
 
@@ -219,17 +263,19 @@ Repeat Phase 2 and 3. Nothing from Phase 0 or 1 repeats.
 | Symptom | Cause |
 |---|---|
 | `/verify-fix` not found | Plugin skills are namespaced — use `/themegrill-qa:verify-fix` |
-| Both `/verify-fix` and `/themegrill-qa:verify-fix` exist | An old symlinked copy in `~/.claude/skills` **wins** over the plugin. Delete it — the clone install that created it is gone |
-| CI: 404 checking out themegrill-qa | `GITHUB_TOKEN` cannot read another private repo. See Phase 0 |
-| CI: "QA suite — passed, 0 tests" | Fixed — zero tests is now exit 2. Update your `qa_ref` |
+| Both `/verify-fix` and `/themegrill-qa:verify-fix` exist | An old symlinked copy in `~/.claude/skills` **wins** over the plugin. Delete it |
+| Detected the wrong product | Detection resolves the **git repo root** of your cwd. Several products in one repo means the first header found wins — give each product its own checkout |
+| `not a WordPress theme or plugin` | You are above the product. `cd` into the product checkout itself |
 | Suite exits 2, "no base URL" | No `.env.local`, no `--base-url`, no `--boot` |
+| `licence not active`, exit 2 | The product's own pro gate returned false, or the probe could not be installed. Is the pro product active on the site? |
+| Probe not installed on a remote site | Deliberate — it only writes to `localhost`, `127.0.0.1`, `*.local` and `*.test`. Pass `--probe-url` for anything else |
+| CI: "workflow was not found" | Reusable-workflow access. See Phase 0 |
 | Playground boot fails on activation | Fixed — it used to mount by directory name instead of slug |
 | Specs pass locally, fail in CI | Almost always mis-tiered `@fresh`. See Phase 2.2 |
 
 ## Checklist
 
 **Once, for the org**
-- [ ] Public/private decided; token and Access settings done if private
 - [ ] Marketplace version bumped, plugin validated
 - [ ] Managed settings deployed; `/status` verified on one machine
 - [ ] Team told about the `/themegrill-qa:` prefix
@@ -241,3 +287,9 @@ Repeat Phase 2 and 3. Nothing from Phase 0 or 1 repeats.
 - [ ] `knowledge.md` with a critical-flows list a maintainer agrees with
 - [ ] `run-suite.mjs --tier fresh` exits 0 locally
 - [ ] `qa-suite.yml` added, both jobs, green twice before making it required
+
+**Per pro product, additionally**
+- [ ] `TGQA_LICENSE_<PRODUCT>` in `.env.local`, and `--pro` verifies locally
+- [ ] `qa-pro.yml` added with `product_repo` set to the free repo
+- [ ] `TGQA_LICENSE_<PRODUCT>` set as a secret in the pro repo
+- [ ] Pre-commit key guard installed

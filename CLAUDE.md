@@ -65,7 +65,7 @@ plugin into its own cache, and a copied plugin cannot reach files outside its
 directory. Anything a skill needs must travel with it.
 
 **[PRO.md](PRO.md) covers the pro tier** — the four-product licensing inventory
-(two Freemius, two EDD), the GitHub App, per-repo secrets, and the safety rules
+(two Freemius, two EDD), per-repo secrets, and the safety rules
 around unlimited lifetime keys. Read it before touching anything under
 `scripts/lib/license/`.
 
@@ -172,12 +172,12 @@ two must not coexist on one machine.
 
 This is the shape of the whole platform, and the reason the suite layer exists.
 
-| Layer | Remembers | Where | Cost per run |
+| Layer | Remembers | Where | Re-checked by |
 |---|---|---|---|
-| `knowledge.md` | how the product is *meant* to work | product repo | free (read) |
-| findings ledger `.jsonl` | every confirmed finding, fingerprinted | product repo | free (read) |
-| `tests/e2e/**` | the bug, frozen as a deterministic assertion | product repo | runner minutes |
-| agent exploration | anything not yet in the three above | — | **tokens, every run** |
+| `knowledge.md` | how the product is *meant* to work | product repo | reading it |
+| findings ledger `.jsonl` | every confirmed finding, fingerprinted | product repo | reading it |
+| `tests/e2e/**` | the bug, frozen as a deterministic assertion | product repo | the runner |
+| agent exploration | anything not yet in the three above | — | **an agent, every run** |
 
 **Work moves downward through those layers, never upward.**
 
@@ -186,14 +186,9 @@ line in the knowledge file. Nothing that is already a spec goes back to being
 explored — that is what `suite-index.mjs`'s `areas_uncovered` is for, and why
 every skill reads it before deriving missions.
 
-Stated as economics, because it is the reason for every decision in the suite
-layer: an agent finding costs tokens on **every run, forever**; the same finding
-as a committed spec costs tokens **once**, then runs for approximately free on
-every PR for the life of the product. A verified finding that does not become a
-spec is a finding you have arranged to pay for again.
-
-`node plugins/themegrill-qa/scripts/estimate-cost.mjs --projection 24` prints
-that curve.
+A verified finding that does not become a spec is a finding that has to be
+rediscovered on every run, by an agent, forever. That is the reason for every
+decision in the suite layer.
 
 ## Conventions
 
@@ -209,7 +204,7 @@ that curve.
 - Path resolution: derive locations from `import.meta.url`, and honour
   `THEMEGRILL_QA_HOME` when set. Never assume the working directory.
 - Workflows: reusable (`workflow_call`) here, thin callers in product repos.
-- Cost control is a first-class feature — path filters, a triage step, draft-PR
+- Runs are scoped, not exhaustive — path filters, a triage step, draft-PR
   skipping, `cancel-in-progress`, Sonnet by default, Chromium only.
 - Comments explain *why*, not *what*. The what is readable from the code.
 
@@ -414,13 +409,33 @@ that curve.
   breaks a free feature" class, and nothing but the `free-with-pro` job could
   have found it.
 
+- **The product's own pro gate returning TRUE on a real licensed site**, which
+  every other part of the pro tier assumes and none had observed. Against
+  `test-colormag.local` with ColorMag Pro active and its licence activated by
+  hand in wp-admin, the probe answered `pro: {checked: true, active: true,
+  expression: "FS_ThemeGrill::freemius()->can_use_premium_code()"}`.
+
+  It also corrected the gate. That same response carried `license: null` —
+  `tgqa_license_state` is written only by the seeder, so a site licensed by hand
+  has none, and the old rule (`state !== "valid"` → refuse) would have rejected
+  the one site a developer verifying a pro fix actually has. The product's own
+  gate now outranks that bookkeeping, which is a stronger check rather than a
+  weaker one: it asks the product instead of trusting a file we wrote.
+
+- **`run-suite.mjs` installing the probe itself** on a local site it did not
+  boot, deriving `wp-content/mu-plugins` from the product root and `pro_check`
+  from the registry. Verified on the real site: auto-install, gate pass
+  (`pro_gate: true` with `state: "not attempted"`), removal of every file it
+  wrote on both the success and the `cannotRun` path, `TGQA_KEEP_PROBE` holding
+  them, a remote base URL refused rather than written to, and an unresolvable
+  gate (`--pro zakra-pro`) still refusing with `FS_ZakraTheme not loaded`.
+
 **Not verified**
 
-- **The `valid` branch of the licence path.** Every other branch is proved, but
-  no real key was available on this machine, so "the licence resolves to valid
-  and the product's own gate returns TRUE" has never actually happened. This is
-  `license.mjs check-all` against real keys — the single most important thing
-  left to run, because everything else assumes it.
+- **`license.mjs check-all` against the stores with real keys.** The product-side
+  half of the `valid` branch is now proved (see the probe result under Verified),
+  but the store-side half — EDD and Freemius answering `valid` for a real key —
+  still has not run.
 - **Anything about Everest Forms Pro.** Its repo is not on any machine used here;
   the registry row is deliberately incomplete and `license.mjs` refuses to act on
   it. See PRO.md §1.
@@ -429,9 +444,9 @@ that curve.
   to a free THEME, so the free theme must stay active alongside it — a mounting
   shape nothing has tested.
 - **Every pro CI path.** `pro-suite.yml` parses and every command in it has been
-  run by hand, but it inherits the same blocker as the rest of the CI tier: the
-  cross-repo checkout of this private repo. It additionally needs a GitHub App
-  that does not exist yet.
+  run by hand, but no run has happened. It no longer needs a GitHub App (see
+  PRO.md §4.3), and with themegrill-qa public the cross-repo checkout blocker is
+  gone too, so the only thing left is to let it run.
 - **`sync-secrets.mjs --confirm` against real repos**, and `--audit` against
   them. Only the unauthenticated-`gh` failure path has been exercised.
 - **The `@unlicensed` job.** The spec is written and the workflow mode exists;

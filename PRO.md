@@ -196,26 +196,42 @@ node <qa>/scripts/boot-wp.mjs --with-pro colormag-pro --license
 node <qa>/scripts/run-suite.mjs --tier fresh --pro --boot
 ```
 
-### 4.3 A GitHub App, because `GITHUB_TOKEN` cannot do this
+### 4.3 No GitHub App — the caller IS the pro repo
 
 `secrets.GITHUB_TOKEN` is scoped to the repository running the workflow and
-**cannot check out a different private repository.** It fails with a 404 that
-reads exactly like "no such repository", which is the single most time-wasting
-error message in this whole setup.
+cannot check out a *different* private repository. That fact is real, and an
+earlier version of `pro-suite.yml` answered it with an org-owned GitHub App.
 
-1. Create an org-owned GitHub App. **Contents: read-only.** Nothing else — it has
-   no reason to write anything, ever.
-2. Install it on the **pro repos only**.
-3. Put its id and private key in each calling repo as `TGQA_APP_ID` and
-   `TGQA_APP_PRIVATE_KEY`.
+It was answering a question nobody had asked. `qa-pro.yml` lives in the **pro**
+repo, so the pro code under test is the caller's own checkout, which
+`GITHUB_TOKEN` reaches by definition; the free product it extends is **public**,
+which the same token can also clone. The App minted a scoped token to fetch the
+repository the workflow was already running in — while the free product was
+never checked out at all, so `free-with-pro` mounted pro's code as the free
+theme and could not possibly catch the bug class it exists for.
+
+So: no App, no `TGQA_APP_ID`, no `TGQA_APP_PRIVATE_KEY`, and nothing for an org
+admin to install per product. `pro-suite.yml` takes a `product_repo` input
+naming the free repo, and checks out the caller into `pro/`.
+
+Two things this relies on, and both are worth confirming before adding a
+product: the free repo is public, and `qa-pro.yml` lives in the pro repo rather
+than the free one.
 
 ### 4.4 Per-repository secrets, because org secrets do not reach private repos
 
 GitHub's documentation is explicit: *"Organization-level secrets and variables
-are not accessible by private repositories for GitHub Free."* Every secret must
-therefore exist in every repository. Doing that by hand across four products
-guarantees drift, and the drift shows up as a workflow that suddenly cannot
-licence anything.
+are not accessible by private repositories for GitHub Free."* So a secret has to
+exist in each repository that reads it. Doing that by hand guarantees drift, and
+the drift shows up as a workflow that suddenly cannot licence anything.
+
+That is now **one secret per pro repo and nothing anywhere else** — four in
+total, down from twenty-four. The App pair is gone with the App (§4.3), and the
+licence key no longer goes to the **free** repos: the "free suite with pro
+installed" job runs from the pro repo's own workflow, and `suite.yml` — the only
+thing a free repo calls — declares no licence secret at all. Sending a key there
+wrote a real credential into a *public* repository's secrets for a job that
+never read it.
 
 ```sh
 node plugins/themegrill-qa/scripts/sync-secrets.mjs --audit    # what is missing where
@@ -290,4 +306,5 @@ more metered minutes reaching the same store.
   is a licence seeder pointed at a customer's site.
 - **Never commit a `.freemius` directory or Freemius install state** — it holds
   install ids tied to the account. Gitignored and scanned for.
-- **The GitHub App is Contents: read-only**, installed only on the pro repos.
+- **No GitHub App exists to be over-scoped.** The workflow reaches everything
+  it needs with `GITHUB_TOKEN`; see §4.3.

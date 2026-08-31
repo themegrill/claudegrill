@@ -109,33 +109,29 @@ if (entries.length === 0) {
 /**
  * Which secrets belong in which repository.
  *
- * A product's own licence key goes in its own pro repo, and — because the free
- * repo's CI runs the "free suite with pro installed" job — in the free repo too.
- * The GitHub App credentials go everywhere, because every caller workflow needs
- * a token to check the private pro repo out.
+ * One line now: a product's own licence key, in its own pro repo.
+ *
+ * It used to be three things, and both of the others were wrong.
+ *
+ * The GitHub App credentials went to every repo, because every caller was
+ * believed to need a token to check the private pro repo out. There is no App
+ * any more — the pro code under test is the caller's own checkout. PRO.md §4.3.
+ *
+ * The licence key also went to the FREE repo, on the grounds that the "free
+ * suite with pro installed" job ran there. It does not: it runs from the pro
+ * repo's own workflow, and `suite.yml` — the only thing a free repo calls —
+ * declares no licence secret at all. So this was writing a real licence key
+ * into a PUBLIC repository's secrets for a job that never read it.
  */
-const APP_SECRETS = ["TGQA_APP_ID", "TGQA_APP_PRIVATE_KEY"];
-
 function plan() {
   const byRepo = new Map();
   const add = (repo, name) => {
-    if (!repo) return;
+    if (!repo || !name) return;
     if (!byRepo.has(repo)) byRepo.set(repo, new Set());
     byRepo.get(repo).add(name);
   };
 
-  for (const e of entries) {
-    add(e.repo, e.key_env);
-    for (const a of APP_SECRETS) add(e.repo, a);
-
-    // The free repo runs the pro-installed job, so it needs the same key.
-    if (e.requires && e.repo) {
-      const owner = e.repo.split("/")[0];
-      const freeRepo = `${owner}/${e.requires}`;
-      add(freeRepo, e.key_env);
-      for (const a of APP_SECRETS) add(freeRepo, a);
-    }
-  }
+  for (const e of entries) add(e.repo, e.key_env);
 
   return [...byRepo.entries()]
     .map(([repo, names]) => ({ repo, names: [...names].sort() }))

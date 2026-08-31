@@ -2,17 +2,37 @@
 
 ColorMag is the pilot product and is **already set up**. This is its status, not
 a walkthrough — for onboarding a new product, follow
-[SETUP.md](SETUP.md) Phase 2.
+[SETUP.md](SETUP.md) Phase 2, and Phase 4 for its pro edition.
 
 ## What is in place
+
+### ColorMag (free)
 
 | | Where |
 |---|---|
 | Suite manifest | `.themegrill-qa/suite.json` |
 | Knowledge file | `.themegrill-qa/knowledge.md` |
 | Ingested docs | `.themegrill-qa/docs/`, from `https://docs.themegrill.com/colormag` |
-| Specs | `tests/e2e/specs/` — 19 files, 24 tests, 20 `@fresh` / 4 `@demo` |
+| Specs | `tests/e2e/specs/` — 18 files, 23 tests, 19 `@fresh` / 4 `@demo` |
 | CI | `.github/workflows/qa-suite.yml` |
+
+### ColorMag Pro
+
+A standalone **theme**, not a companion plugin — it replaces ColorMag rather than
+loading alongside it, which is why its jobs boot their own site.
+
+| | Where |
+|---|---|
+| Suite manifest | `.themegrill-qa/suite.json`, with `area_paths` for all 8 areas |
+| Knowledge file | `.themegrill-qa/knowledge.md` |
+| Specs | `tests/e2e/specs/` — 19 files, 31 tests, all `@fresh`: 18 `@pro`, 12 free, 1 `@unlicensed` |
+| CI | `.github/workflows/qa-pro.yml` |
+| Licence | `TGQA_LICENSE_COLORMAG_PRO` — in `.env.local` locally, a repo secret in CI |
+
+Only `footer` has no coverage. Note that its `style.css` declares
+`Text Domain: colormag`, so `detect-product.mjs` reports slug `colormag` for the
+pro checkout — harmless against an existing site, but it means a Playground boot
+would mount it at `themes/colormag`.
 
 Docblock hygiene is clean: zero incomplete docblocks, zero untagged tiers.
 
@@ -67,19 +87,37 @@ that is red on arrival is one nobody ever turns green.
 
 ## Local runs
 
-`.themegrill-qa/.env.local` points the suite at the developer's own site:
+`.themegrill-qa/.env.local` points the suite at the developer's own site.
+Gitignored in both repos — confirmed at `colormag/.gitignore:43` and
+`colormag-pro/.gitignore:44`.
 
 ```
 TGQA_BASE_URL=http://test-colormag.local
-CM_ADMIN_USER=admin
+CM_ADMIN_USER=admin          # CMP_* in colormag-pro
 CM_ADMIN_PASS=password
 ```
-
-Gitignored — confirmed at `.gitignore:43`.
 
 ```bash
 node <themegrill-qa>/plugins/themegrill-qa/scripts/run-suite.mjs --tier fresh --json
 ```
+
+For ColorMag Pro, add the key to the same file and pass `--pro`:
+
+```
+TGQA_LICENSE_COLORMAG_PRO=...
+```
+
+```bash
+node <themegrill-qa>/plugins/themegrill-qa/scripts/run-suite.mjs --tier fresh --pro colormag-pro --json
+```
+
+ColorMag Pro must be the **active theme** on the site — nothing checks that for
+you on an existing site, and the pro specs would otherwise run against free code.
+The licence probe installs and removes itself; there is nothing to set up.
+
+Verified on `test-colormag.local`: the probe reports
+`FS_ThemeGrill::freemius()->can_use_premium_code()` returning **true**, which is
+what lets a `@pro` run proceed.
 
 Measured runtimes: ~47s for the full `@fresh` tier against the Local site, ~35s
 scoped to two areas, ~291s against Playground.

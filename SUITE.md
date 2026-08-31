@@ -11,15 +11,13 @@ conforms to it by adding two files. Nothing else in either repo needs to change.
 
 ## Why this exists
 
-Stated as economics, because that is the reason for every decision below:
+An agent finding has to be rediscovered on every run. The same finding as a
+committed spec is checked deterministically, the same way, forever.
 
-- An agent finding costs tokens **on every run, forever**.
-- The same finding as a committed spec costs tokens **once**, then runs for
-  approximately free on every PR for the life of the product.
-
-So the platform runs a product's existing suite first and cheaply, spends agent
-tokens only on what the suite does not already cover, and converts every verified
-finding into a committed spec — so the expensive layer shrinks over time.
+So the platform runs a product's existing suite first, looks at only what the
+suite does not already cover, and converts every verified finding into a
+committed spec. The deterministic layer grows; the part that needs an agent
+shrinks.
 
 A product with no suite loses nothing. Every part of this degrades to the
 platform's previous behaviour when `suite.json` is absent.
@@ -445,11 +443,11 @@ string has neither.
 }
 ```
 
-**`areas_uncovered` is the cost lever.** It is the difference between the areas
+**`areas_uncovered` is the backlog.** It is the difference between the areas
 declared in the product's `.themegrill-qa/knowledge.md` (or `docs-index.json`'s
-`suggested_areas`) and the areas the suite actually covers, and **it is what the
-agent should spend its budget on**. An area with green `@fresh` specs does not
-need an agent shard; an area with none does.
+`suggested_areas`) and the areas the suite actually covers, and **it is where
+attention belongs**. An area with green `@fresh` specs does not need an agent
+shard; an area with none does.
 
 `thinnest_areas` ranks covered-but-barely areas — fewer than three `@fresh` tests
 — so a sweep can top them up rather than treating one smoke test as coverage.
@@ -492,12 +490,12 @@ repo is what makes it get drained.
 
 ## 9. Where work lives, and which way it moves
 
-| Layer | Remembers | Where | Cost per run |
+| Layer | Remembers | Where | Re-checked by |
 |---|---|---|---|
-| `knowledge.md` | how the product is *meant* to work | product repo | free (read) |
-| findings ledger `.jsonl` | every confirmed finding, fingerprinted | product repo | free (read) |
-| `tests/e2e/**` | the bug, frozen as a deterministic assertion | product repo | runner minutes |
-| agent exploration | anything not yet in the three above | — | **tokens, every run** |
+| `knowledge.md` | how the product is *meant* to work | product repo | reading it |
+| findings ledger `.jsonl` | every confirmed finding, fingerprinted | product repo | reading it |
+| `tests/e2e/**` | the bug, frozen as a deterministic assertion | product repo | the runner |
+| agent exploration | anything not yet in the three above | — | **an agent, every run** |
 
 **Work moves downward through those layers, never upward.** Something the agent
 discovered becomes a spec; something a spec proved becomes a line in the

@@ -23,6 +23,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -32,6 +33,7 @@ import { fileURLToPath } from "node:url";
 import { resolveQaHome } from "./lib/qa-home.mjs";
 import { isWindows, killTree, shellQuote } from "./lib/platform.mjs";
 import { PRO_TAG, UNLICENSED_TAG, parseSpecFile } from "./lib/spec-parse.mjs";
+import { loadRegistry } from "./lib/license/registry.mjs";
 import { detectProduct, loadManifest } from "./lib/suite-manifest.mjs";
 import { affectedAreas, areasGuarding, changedFiles } from "./lib/affected.mjs";
 
@@ -316,6 +318,114 @@ if (opt.baseUrl || process.env.TGQA_BASE_URL || envLocalUrl) {
 }
 
 /**
+ * Put the probe on a site this run did not boot.
+ *
+ * The probe was never meant to be ceremony a developer performs. CI has always
+ * had it for free — `boot-wp.mjs` stages the mu-plugin and prints `probe_url`
+ * itself — and only the local existing-site path made anyone do it by hand.
+ * That asymmetry, not the gate, is what made the pro tier expensive to adopt,
+ * and it multiplied by four products.
+ *
+ * Everything needed is derivable: a developer works on a product from inside a
+ * WordPress install, so `wp-content/mu-plugins` is an ancestor walk away, and
+ * `pro_check` comes from the registry. Nothing is asked beyond the `.env.local`
+ * the base URL already needs.
+ *
+ * Deliberately NOT the licence seeder. This site is licensed by hand already;
+ * re-activating would spend one of the key's activation slots to learn
+ * something the product can simply be asked.
+ */
+function installProbe(url, slug) {
+  let host;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return { ok: false, reason: `could not parse the base URL (${url})` };
+  }
+
+  // Writing files into a server because a flag was passed is not a thing to do
+  // to a remote host, however convenient it would be.
+  const local =
+    ["localhost", "127.0.0.1", "::1", "[::1]"].includes(host) ||
+    /\.(local|test|localhost)$/i.test(host);
+  if (!local) {
+    return { ok: false, reason: `${host} is not a local host, so the probe was not installed` };
+  }
+
+  const sitePath = process.env.TGQA_SITE_PATH ?? envLocal.TGQA_SITE_PATH ?? null;
+  let muDir = null;
+  if (sitePath) {
+    muDir = path.join(sitePath, "wp-content", "mu-plugins");
+  } else {
+    // The product lives at <site>/wp-content/{themes,plugins}/<product>.
+    for (let d = root; ; ) {
+      if (path.basename(d) === "wp-content") {
+        muDir = path.join(d, "mu-plugins");
+        break;
+      }
+      const up = path.dirname(d);
+      if (up === d) break;
+      d = up;
+    }
+  }
+  if (!muDir) {
+    return {
+      ok: false,
+      reason:
+        "could not find wp-content above the product — set TGQA_SITE_PATH in " +
+        ".themegrill-qa/.env.local to the WordPress root",
+    };
+  }
+
+  const entry = loadRegistry(qaHome)[slug];
+  const token = crypto.randomBytes(16).toString("hex");
+  const written = [];
+  try {
+    fs.mkdirSync(muDir, { recursive: true });
+
+    const probeDest = path.join(muDir, "tgqa-probe.php");
+    // Never clobber a file somebody else put here. If it is already the probe,
+    // reusing it is correct; if it is something else, that is theirs.
+    if (!fs.existsSync(probeDest)) {
+      fs.copyFileSync(path.join(qaHome, "mu-plugins", "tgqa-probe.php"), probeDest);
+      written.push(probeDest);
+    }
+
+    const tokenFile = path.join(muDir, "tgqa-probe.token");
+    fs.writeFileSync(tokenFile, token, { mode: 0o600 });
+    written.push(tokenFile);
+
+    // The pro_check expression and nothing else: the licence STATE is the
+    // product's to report, never ours to assert.
+    if (entry?.pro_check) {
+      const cfg = path.join(muDir, "tgqa-license.json");
+      if (!fs.existsSync(cfg)) {
+        fs.writeFileSync(cfg, JSON.stringify({ pro_check: entry.pro_check }, null, 2));
+        written.push(cfg);
+      }
+    }
+  } catch (err) {
+    return { ok: false, reason: `could not write to ${muDir}: ${err.message}` };
+  }
+
+  // Whatever happens next — a pass, a failure, a `cannotRun` on the next line —
+  // the developer's site goes back to how it was found.
+  process.on("exit", () => {
+    if (process.env.TGQA_KEEP_PROBE) return;
+    for (const f of written) {
+      try {
+        fs.rmSync(f, { force: true });
+      } catch {
+        /* best effort: this is cleanup, not the job */
+      }
+    }
+  });
+
+  say(`probe installed into ${muDir}`);
+  return { ok: true, url: `${url.replace(/\/$/, "")}/?tgqa_probe=${token}` };
+}
+
+/**
  * The pro gate. A `@pro` run either has a licence that resolved to VALID, or it
  * does not run.
  *
@@ -339,13 +449,20 @@ if (opt.baseUrl || process.env.TGQA_BASE_URL || envLocalUrl) {
 async function verifyLicence() {
   if (!opt.pro) return null;
 
-  const probeUrl = opt.probeUrl ?? process.env.TGQA_PROBE_URL ?? bootHandoff?.probe_url ?? null;
+  let probeUrl = opt.probeUrl ?? process.env.TGQA_PROBE_URL ?? bootHandoff?.probe_url ?? null;
+
+  let installReason = null;
+  if (!probeUrl) {
+    const installed = installProbe(baseUrl, proSlug);
+    if (installed.ok) probeUrl = installed.url;
+    else installReason = installed.reason;
+  }
 
   if (!probeUrl) {
     cannotRun(
-      "licence not active — pro features not under test. This run cannot verify a " +
-        "licence on a site it did not boot. Either add --boot, or pass --probe-url " +
-        "(boot-wp.mjs prints it as `probe_url`).",
+      "licence not active — pro features not under test. This run could not verify a " +
+        `licence on a site it did not boot: ${installReason}. Either add --boot, or ` +
+        "pass --probe-url (boot-wp.mjs prints it as `probe_url`).",
       { pro: true, licence: "unverifiable" },
     );
   }
@@ -368,22 +485,34 @@ async function verifyLicence() {
   const state = probe.license?.state ?? "not attempted";
   const gate = probe.pro ?? {};
 
-  if (state !== "valid") {
+  // The PRODUCT's own gate is the authoritative answer, and it outranks our
+  // bookkeeping. `tgqa_license_state` is only ever written by the seeder, so a
+  // site a developer licensed by hand in wp-admin has none — while
+  // can_use_premium_code() on that same site returns the truth. Demanding our
+  // option would reject every already-licensed local site, which is precisely
+  // the site someone verifying a pro fix is sitting on.
+  //
+  // This is not a relaxation of the gate: asking the product is a STRONGER
+  // check than trusting a state file we wrote ourselves.
+  const gateTrue = gate.checked === true && gate.active === true;
+
+  // The other direction is the "silently tested the free version" case:
+  // something claims licensed, the product disagrees. Always fatal.
+  if (gate.checked === true && gate.active === false) {
     cannotRun(
-      `licence not active — pro features not under test (state: ${state}` +
-        `${probe.license?.detail ? `; ${probe.license.detail}` : ""})`,
-      { pro: true, licence: state },
+      `licence not active — pro features not under test: the product's own gate ` +
+        `(${gate.expression}) returned false (licence state: ${state}). Is the pro code mounted ` +
+        `and the pro product active?`,
+      { pro: true, licence: state, pro_gate: false },
     );
   }
 
-  // Belt and braces: the licence resolved, but ask the PRODUCT whether it agrees
-  // it is premium. These disagree when the pro code is not mounted at all, which
-  // is precisely the "silently tested the free version" case.
-  if (gate.checked && gate.active === false) {
+  if (!gateTrue && state !== "valid") {
     cannotRun(
-      `licence not active — pro features not under test: the licence resolved valid but ` +
-        `the product's own gate (${gate.expression}) returned false. Is the pro code mounted?`,
-      { pro: true, licence: "valid", pro_gate: false },
+      `licence not active — pro features not under test (state: ${state}` +
+        `${probe.license?.detail ? `; ${probe.license.detail}` : ""}` +
+        `${gate.checked ? "" : `; pro gate unevaluated: ${gate.reason ?? "no reason given"}`})`,
+      { pro: true, licence: state },
     );
   }
 
@@ -393,7 +522,12 @@ async function verifyLicence() {
     say(`note: could not evaluate the product's pro gate (${gate.reason ?? "no reason given"})`);
   }
 
-  say(`licence verified: ${probe.license?.product} ${state}, pro gate ${gate.active === true ? "TRUE" : "unevaluated"}`);
+  say(
+    `licence verified: ${probe.license?.product ?? proSlug} — ` +
+      (gateTrue
+        ? `the product's own gate returns TRUE${state === "valid" ? "" : " (no seeded licence state; site licensed outside this run)"}`
+        : `licence state ${state}, pro gate unevaluated`),
+  );
   return { state, gate, environment_type: probe.environment_type };
 }
 

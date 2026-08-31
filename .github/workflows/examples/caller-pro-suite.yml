@@ -1,24 +1,24 @@
 # Copy this into a PRO product repo as .github/workflows/qa-pro.yml.
 #
-# It goes in the PRO repo (private), not the free one. The free repo keeps
-# caller-suite.yml and needs none of these secrets.
+# It goes in the PRO repo (private), not the free one — the pro code under test
+# is this repository's own checkout, which is why no App and no extra token are
+# needed to reach it.
 #
-# Before this can work, four things must be true. All four have bitten someone:
+# ONE secret, and nothing for an org admin to install:
 #
-#   1. A GitHub App exists, org-owned, **Contents: read-only**, installed on the
-#      pro repos ONLY. Its id and private key are secrets in THIS repo.
-#   2. `TGQA_LICENSE_KEY` is a secret in THIS repo. Organisation secrets are not
-#      accessible to private repositories on GitHub Free, so it must be set per
-#      repository — use `sync-secrets.mjs`, not the web UI, or it will drift.
-#   3. themegrill-qa's Settings → Actions → General → Access is set to
-#      "Accessible from repositories in the ThemeGrill organization". Without it
-#      every caller fails with "workflow was not found", which reads like a typo
-#      in the path below and is not.
-#   4. `QA_REPO_TOKEN` is a secret here while themegrill-qa is private.
+#   TGQA_LICENSE_KEY — the licence key for THIS product, set as a secret in THIS
+#   repository. Organisation secrets are not accessible to private repositories
+#   on GitHub Free, so it must be per-repo — use `sync-secrets.mjs`, not the web
+#   UI, or it will drift across the four pro products.
+#
+# Everything else resolves on its own. `GITHUB_TOKEN` checks out this repo (it
+# is the one running the workflow) and the public free repo, and themegrill-qa
+# is public so its reusable workflows are callable with no token and no
+# Settings → Actions → Access change.
 #
 # `pull_request`, never `pull_request_target`. The latter runs with secrets
-# available against fork-supplied code. Forks get no secrets here and the pro
-# jobs skip cleanly, which is the correct trade.
+# available against fork-supplied code. Forks get no secrets here; the licensed
+# jobs skip cleanly and `unlicensed` still runs, which is the correct trade.
 
 name: QA — pro
 
@@ -36,6 +36,7 @@ on:
       - "**/*.scss"
       - "**/*.css"
       - ".themegrill-qa/**"
+      - "tests/e2e/**"
       - ".github/workflows/qa-pro.yml"
   workflow_dispatch:
 
@@ -43,18 +44,17 @@ jobs:
   pro:
     # Draft PRs do not spend metered minutes. The author reopens it as ready
     # when they want the answer.
-    if: github.event.pull_request.draft == false
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
     uses: ThemeGrill/themegrill-qa/.github/workflows/pro-suite.yml@main
     with:
       product_slug: colormag
       product_type: theme
+      # The FREE product this one extends. Public, so no token is needed — and
+      # required, because `free-with-pro` has nothing to test without it.
+      product_repo: ThemeGrill/colormag
       pro_slug: colormag-pro
-      pro_repo: ThemeGrill/colormag-pro
       # Keep this on. It is the only job that catches "installing pro broke a
       # free feature", which is invisible to the free repo's own CI.
       run_free_with_pro: true
     secrets:
-      QA_REPO_TOKEN: ${{ secrets.QA_REPO_TOKEN }}
-      TGQA_APP_ID: ${{ secrets.TGQA_APP_ID }}
-      TGQA_APP_PRIVATE_KEY: ${{ secrets.TGQA_APP_PRIVATE_KEY }}
       TGQA_LICENSE_KEY: ${{ secrets.TGQA_LICENSE_COLORMAG_PRO }}

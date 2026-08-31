@@ -17,7 +17,7 @@ doing the deploy, and for whoever works on the tooling itself.
 `/themegrill-qa:verify-fix`, not `/verify-fix`. This is the most likely day-one
 support question — say it in the announcement.
 
-Two things they do need per product, once, and neither involves this repo:
+Two things they need per product, once, and neither involves this repo:
 
 ```bash
 pnpm install
@@ -28,32 +28,45 @@ and a gitignored `.themegrill-qa/.env.local` pointing at their own site:
 
 ```
 TGQA_BASE_URL=http://test-colormag.local
-CM_ADMIN_USER=admin
-CM_ADMIN_PASS=password
+CMP_ADMIN_USER=admin
+CMP_ADMIN_PASS=password
 ```
+
+The admin variable names come from the product's own `suite.json` (`env.admin_user`
+and `env.admin_pass`) — ColorMag uses `CM_*`, ColorMag Pro `CMP_*`. `TGQA_ADMIN_USER`
+and `TGQA_ADMIN_PASS` work everywhere as a fallback.
+
+**On a pro product, add the licence key to the same file** and nothing else:
+
+```
+TGQA_LICENSE_COLORMAG_PRO=...
+```
+
+`run-suite.mjs --pro` installs its own licence probe into the site's
+`mu-plugins/`, reads the result, and removes it again. There is no probe to set
+up by hand, per product or otherwise.
 
 ---
 
 ## Deploying it — organisation owner, once
 
-### 1. Decide public or private first
+### 1. Public or private
 
-Every developer's Claude Code **clones the marketplace repo with their own git
-credentials**. If this repo is private, each of them needs GitHub access to it
-before the plugin will load — and CI needs a `QA_REPO_TOKEN` on top of that.
+**This repo is public,** and that is the intended state: there are no keys and no
+customer data in it. Public removes three recurring problems at once — CI needs
+no `QA_REPO_TOKEN`, reusable workflows are callable with no Access setting, and
+developers need no individual git access for the plugin to load.
 
-There are no keys and no customer data in here. Making it public removes both
-problems. If you keep it private, confirm both settings now:
-
-- **Settings → Actions → General → Access** → *"Accessible from repositories in
-  the organization"*, or the CI `uses:` line cannot resolve at all
-- An org secret `QA_REPO_TOKEN` with `contents: read` on this repo
+If it is ever made private again, all three come back, and both of these have to
+be set: **Settings → Actions → General → Access** → *"Accessible from
+repositories in the organization"*, and an org secret `QA_REPO_TOKEN` with
+`contents: read`.
 
 ### 2. Version the release
 
 ```json
 // .claude-plugin/marketplace.json
-"version": "0.2.0"
+"version": "0.4.0"
 ```
 
 **This is the only thing that triggers an update.** `plugin.json` deliberately
@@ -121,6 +134,37 @@ it up within the hour or at next launch. Forget the bump and nobody gets it.
 
 ---
 
+## Pro products — one secret each
+
+Only for the **pro** repos (ColorMag Pro, Zakra Pro, User Registration Pro,
+Everest Forms Pro). Free repos need none of it. The reasoning is in
+[PRO.md](PRO.md) §4.
+
+1. **A dedicated QA licence key per product** — not the company key. Revocable
+   without disturbing a customer or a colleague.
+
+2. **Set it as a secret in that pro repo**, named `TGQA_LICENSE_<PRODUCT>`.
+   Organisation secrets are not accessible to private repositories on GitHub
+   Free, so it has to be per-repo:
+
+   ```sh
+   node plugins/themegrill-qa/scripts/sync-secrets.mjs --audit    # what is missing where
+   node plugins/themegrill-qa/scripts/sync-secrets.mjs --confirm  # set them
+   ```
+
+That is the whole list — four secrets across four repos, and nothing in the free
+repos. No GitHub App is involved: `qa-pro.yml` lives in the pro repo, so the pro
+code under test is the caller's own checkout, and the free product it extends is
+public.
+
+Then install the pre-commit licence-key guard in every repo that holds a key:
+
+```sh
+node plugins/themegrill-qa/scripts/install-git-hook.mjs
+```
+
+---
+
 ## What the plugin contains
 
 ```
@@ -128,20 +172,26 @@ plugins/themegrill-qa/
 ├── .claude-plugin/plugin.json
 ├── skills/          the six commands
 ├── scripts/         the Node helpers the skills invoke
+├── mu-plugins/      QA-only, mounted into the test site, never shipped
 ├── hooks/           the spec-guard Stop hook
 └── blueprints/      seeded WordPress state
 ```
 
-Scripts and blueprints ship **inside** the plugin deliberately: Claude Code
-copies a plugin into its own cache, and a copied plugin cannot reach files
-outside its own directory. The skills resolve their location through
-`CLAUDE_PLUGIN_ROOT`, and `boot-wp.mjs` resolves the plugin root from its own
-file path — so it behaves identically from the plugin cache or a CI checkout.
+Scripts, mu-plugins and blueprints ship **inside** the plugin deliberately:
+Claude Code copies a plugin into its own cache, and a copied plugin cannot reach
+files outside its own directory. The skills resolve their location through
+`CLAUDE_PLUGIN_ROOT`, and the scripts resolve the plugin root from their own file
+path — so they behave identically from the plugin cache or a CI checkout.
 
 The `spec-guard` Stop hook is registered automatically through the plugin's
 `hooks/hooks.json`. One thing worth knowing before you judge whether it works:
 **on exit 0 a hook's stderr goes to the debug log, not the terminal.** The
 visible signal is `.themegrill-qa/spec-queue.jsonl` appearing in `git status`.
+
+**Do not add a `hooks` field to `plugin.json`.** The standard `hooks/hooks.json`
+is discovered automatically; naming it in the manifest as well registers it twice
+and fails the **entire plugin load** with "Duplicate hooks file detected". This
+cost a release once.
 
 ---
 
@@ -171,50 +221,11 @@ uninstalling anything. `/reload-plugins` picks up edits without a restart.
 > *unnamespaced* and **wins over the plugin's copy**, so you end up with both
 > `/verify-fix` (your stale local copy) and `/themegrill-qa:verify-fix` (the real
 > one) and no indication which just ran. That is how someone runs a months-old
-> skill for weeks without noticing. This repo used to ship an `install.mjs` that
-> did exactly that; it has been removed.
+> skill for weeks without noticing.
 
 Run the scripts directly from the checkout when you need them:
 
 ```bash
 npm run suite:index      # what the suite covers
-npm run cost:projection  # the declining-spend curve
 npm run check            # every .mjs parses
-```
-
-## Pro products — four extra setup steps
-
-Only needed for the **pro** repos (ColorMag Pro, Zakra Pro, User Registration
-Pro, Everest Forms Pro). The free repos need none of this. Full detail and the
-reasoning is in [PRO.md](PRO.md) §4; these are the steps themselves, numbered
-because every one of them has cost someone an afternoon.
-
-1. **A dedicated QA licence key per product** — not the company key. Revocable
-   without disturbing a customer or a colleague.
-
-2. **An org-owned GitHub App, Contents: read-only**, installed on the pro repos
-   only. `secrets.GITHUB_TOKEN` is scoped to the repository running the workflow
-   and **cannot** check out another private repo — it fails with a 404 that reads
-   exactly like "no such repository".
-
-3. **Set every secret per repository.** Organisation secrets are not accessible
-   to private repositories on GitHub Free, so `TGQA_APP_ID`,
-   `TGQA_APP_PRIVATE_KEY` and the product's `TGQA_LICENSE_*` must exist in each
-   repo separately:
-
-   ```sh
-   node plugins/themegrill-qa/scripts/sync-secrets.mjs --audit
-   node plugins/themegrill-qa/scripts/sync-secrets.mjs --confirm
-   ```
-
-4. **themegrill-qa → Settings → Actions → General → Access →
-   "Accessible from repositories in the ThemeGrill organization".**
-   Without this every caller workflow fails with **"workflow was not found"**,
-   which reads like a typo in the `uses:` path and is not. This is a setting, not
-   a plan restriction — reusable workflows in a private repo do work on Free.
-
-Then install the pre-commit licence-key guard in every repo that holds a key:
-
-```sh
-node plugins/themegrill-qa/scripts/install-git-hook.mjs
 ```
