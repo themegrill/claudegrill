@@ -10,27 +10,27 @@
     "excluded from scope. Adding either is a new entry here plus, for a new",
     "provider, one adapter under scripts/lib/license/."
   ],
-
   "colormag-pro": {
     "type": "theme",
     "repo": "themegrill/colormag-pro",
     "requires": "colormag",
+    "requires_type": "theme",
     "delivery": "standalone-theme",
     "provider": "freemius",
     "freemius_id": "4212",
     "freemius_slug": "colormag",
     "freemius_public_key": "pk_414d89e1f7eda2dd7de41050ab418",
     "key_env": "TGQA_LICENSE_COLORMAG_PRO",
-    "entry_point": "FS_ThemeGrill::init() — functions.php:420, wrapping fs_dynamic_init() at functions.php:372",
+    "entry_point": "FS_ThemeGrill::init() \u2014 functions.php:420, wrapping fs_dynamic_init() at functions.php:372",
     "accessor": "FS_ThemeGrill::freemius()",
     "pro_check": "FS_ThemeGrill::freemius()->can_use_premium_code()",
     "notes": "Standalone pro theme, NOT a child theme and NOT a companion plugin. Replaces the free colormag; the two must never be active at once. Freemius slug is `colormag` with premium_slug `colormag-pro`."
   },
-
   "zakra-pro": {
     "type": "plugin",
     "repo": "themegrill/zakra-pro",
     "requires": "zakra",
+    "requires_type": "theme",
     "delivery": "companion-plugin",
     "provider": "freemius",
     "freemius_id": "4560",
@@ -38,16 +38,16 @@
     "freemius_public_key": "pk_7147c17354facd275c90c45a6aa66",
     "freemius_bundle_id": "4562",
     "key_env": "TGQA_LICENSE_ZAKRA_PRO",
-    "entry_point": "FS_ZakraTheme::init() — inc/class-fs-zakratheme.php:98, wrapping fs_dynamic_init() at :80",
+    "entry_point": "FS_ZakraTheme::init() \u2014 inc/class-fs-zakratheme.php:98, wrapping fs_dynamic_init() at :80",
     "accessor": "FS_ZakraTheme::freemius()",
     "pro_check": "FS_ZakraTheme::freemius()->can_use_premium_code()",
-    "notes": "Companion PLUGIN extending the free Zakra THEME — so the free theme must be mounted and active as well. Belongs to a Freemius bundle (4562); a bundle key is rejected by the product-specific activation path."
+    "notes": "Companion PLUGIN extending the free Zakra THEME \u2014 so the free theme must be mounted and active as well. Belongs to a Freemius bundle (4562); a bundle key is rejected by the product-specific activation path."
   },
-
   "user-registration-pro": {
     "type": "plugin",
     "repo": "wpeverest/user-registration-pro",
     "requires": "user-registration",
+    "requires_type": "plugin",
     "delivery": "replacement-plugin",
     "provider": "edd",
     "store_url": "https://wpeverest.com",
@@ -57,15 +57,15 @@
     "option_key": "user-registration_license_key",
     "option_status": "user-registration_license_active",
     "transient_plan": "ur_pro_license_plan",
-    "entry_point": "UR_Plugin_Updater::activate_license() — includes/class-ur-plugin-updater.php:343, calling UR_Updater_Key_API::activate() at includes/admin/updater/class-ur-plugin-updater-api.php:101",
+    "entry_point": "UR_Plugin_Updater::activate_license() \u2014 includes/class-ur-plugin-updater.php:343, calling UR_Updater_Key_API::activate() at includes/admin/updater/class-ur-plugin-updater-api.php:101",
     "pro_check": "false !== ur_get_license_plan()",
-    "notes": "The store resolves the product from the key alone — no item_id is sent, confirmed at class-ur-plugin-updater-api.php:101-107. `option_status` holds the WHOLE decoded activate response object, not a status string; the licence is valid when its ->license === 'valid'. UR_PRO_ACTIVE is only 'the pro plugin is installed' and says nothing about the licence — do not use it as a pro gate."
+    "notes": "The store resolves the product from the key alone \u2014 no item_id is sent, confirmed at class-ur-plugin-updater-api.php:101-107. `option_status` holds the WHOLE decoded activate response object, not a status string; the licence is valid when its ->license === 'valid'. UR_PRO_ACTIVE is only 'the pro plugin is installed' and says nothing about the licence \u2014 do not use it as a pro gate."
   },
-
   "everest-forms-pro": {
     "type": "plugin",
     "repo": "wpeverest/everest-forms-pro",
     "requires": "everest-forms",
+    "requires_type": "plugin",
     "delivery": "companion-plugin",
     "provider": "edd",
     "store_url": null,
@@ -83,6 +83,6 @@
       "option_status",
       "entry_point"
     ],
-    "notes": "INCOMPLETE ON PURPOSE. everest-forms-pro is not checked out on this machine, and EVF_Updater_Key_API — which holds the store endpoint — is defined only in the pro plugin. Everything recorded here is proved from the FREE plugin, which carries the gate itself: evf_get_license_plan() at includes/evf-core-functions.php:1624 reads get_option('everest-forms-pro_license_key') and requires is_plugin_active('everest-forms-pro/everest-forms-pro.php'). The EDD shape is inferred from EVF_Updater_Key_API::check/version call sites mirroring UR's UR_Updater_Key_API exactly (same vendor). The store host is NOT inferred: everestforms.net appears only as marketing and docs URLs in the free plugin. Fill store_url/api_path from the pro repo before this row is usable — license.mjs refuses to act on it until then."
+    "notes": "INCOMPLETE ON PURPOSE. everest-forms-pro is not checked out on this machine, and EVF_Updater_Key_API \u2014 which holds the store endpoint \u2014 is defined only in the pro plugin. Everything recorded here is proved from the FREE plugin, which carries the gate itself: evf_get_license_plan() at includes/evf-core-functions.php:1624 reads get_option('everest-forms-pro_license_key') and requires is_plugin_active('everest-forms-pro/everest-forms-pro.php'). The EDD shape is inferred from EVF_Updater_Key_API::check/version call sites mirroring UR's UR_Updater_Key_API exactly (same vendor). The store host is NOT inferred: everestforms.net appears only as marketing and docs URLs in the free plugin. Fill store_url/api_path from the pro repo before this row is usable \u2014 license.mjs refuses to act on it until then."
   }
 }

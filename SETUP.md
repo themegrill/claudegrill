@@ -86,7 +86,34 @@ The full detail is in [INSTALL.md](INSTALL.md). The short version:
 **Tell the team the commands are namespaced:** `/themegrill-qa:verify-fix`, not
 `/verify-fix`. This is the most likely day-one support question.
 
-## Phase 2 — First product · ~half a day
+## Phase 2 — First product · one command
+
+```
+/themegrill-qa:setup
+```
+
+That is the whole of Phase 2 and Phase 3 for most products. It finds every theme
+and plugin in the WordPress install you are standing in, asks which one, then
+works through everything below — asking only for what it cannot derive: the docs
+URL, the site credentials, and on a pro product the licence key.
+
+**It is resumable and skips whatever is already done.** Running it on a
+half-configured product finishes the rest; running it on a finished one says so
+and stops. Nothing is overwritten without `--force`.
+
+It ends by actually running the suite, because files existing is not the same as
+a setup that works.
+
+Two things it deliberately does **not** do, both because a wrong answer is worse
+than none:
+
+- **`area_paths`** — nobody can infer a product's area map, and a wrong one
+  silently narrows CI. Until you add it, every run is a full run.
+- **The knowledge file's critical-flows list** — it drafts one, but the draft
+  needs a maintainer. `suite-index.mjs` derives `areas_uncovered` from that list.
+
+The rest of this phase is what the command does, in order, for when you want to
+do a step by hand or understand what it wrote.
 
 ### 2.1 Declare the suite
 
@@ -187,7 +214,10 @@ check that is red on arrival is one nobody ever turns green.
 ## Phase 4 — The pro edition, if the product has one · ~30 min
 
 Only for ColorMag Pro, Zakra Pro, User Registration Pro and Everest Forms Pro.
-Full reasoning in [PRO.md](PRO.md); these are the steps.
+`/themegrill-qa:setup` does steps 1, 2 and 4 of this when it detects a pro
+product — it recognises them from `licenses.json` — and step 3 is the one part it
+cannot do, because only a repo admin can set a secret. Full reasoning in
+[PRO.md](PRO.md).
 
 1. **Locally**, add the licence key to the same gitignored `.env.local`:
 

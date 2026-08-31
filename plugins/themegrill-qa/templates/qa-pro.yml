@@ -1,0 +1,53 @@
+# Written by `/themegrill-qa:setup`. Safe to edit — it is a plain caller.
+#
+# This belongs in the PRO repo, not the free one. The pro code under test is
+# THIS repository's own checkout, which is why no GitHub App and no extra token
+# are needed to reach it.
+#
+# ONE secret, and nothing for an org admin to install:
+#
+#   __LICENSE_SECRET__ — the licence key for this product, set as a secret in
+#   THIS repository. Organisation secrets are not accessible to private repos on
+#   GitHub Free, so it must be per-repo. Use `sync-secrets.mjs`, not the web UI.
+#
+# `pull_request`, never `pull_request_target`. The latter runs with secrets
+# available against fork-supplied code. Forks get no secrets here; the licensed
+# jobs skip cleanly and `unlicensed` still runs, which is the correct trade.
+
+name: QA — pro
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      # Private-repo minutes are metered, so a README change must not spend any.
+      - "**/*.php"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.scss"
+      - "**/*.css"
+      - ".themegrill-qa/**"
+      - "tests/e2e/**"
+      - ".github/workflows/qa-pro.yml"
+  workflow_dispatch:
+
+jobs:
+  pro:
+    # Drafts do not spend metered minutes. The author marks it ready when they
+    # want the answer.
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    uses: ThemeGrill/themegrill-qa/.github/workflows/pro-suite.yml@main
+    with:
+      product_slug: __PRODUCT_SLUG__
+      product_type: __PRODUCT_TYPE__
+      # The FREE product this one extends. Public, so no token is needed — and
+      # required, because `free-with-pro` has nothing to test without it.
+      product_repo: __FREE_REPO__
+      pro_slug: __PRO_SLUG__
+      # Keep this on. It is the only job that catches "installing pro broke a
+      # free feature", which is invisible to the free repo's own CI.
+      run_free_with_pro: true
+    secrets:
+      TGQA_LICENSE_KEY: ${{ secrets.__LICENSE_SECRET__ }}

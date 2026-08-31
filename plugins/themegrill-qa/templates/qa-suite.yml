@@ -1,0 +1,52 @@
+# Written by `/themegrill-qa:setup`. Safe to edit — it is a plain caller.
+#
+# THIS IS THE ONLY PR CHECK MOST PRODUCTS NEED. No ANTHROPIC_API_KEY, no agent,
+# runner minutes only.
+#
+# It works without AI because the developer already wrote the spec: they ran
+# /themegrill-qa:verify-fix locally, write-spec added a @fresh spec to their
+# branch, and they committed it with the fix. By the time CI sees the PR the
+# regression is already a deterministic assertion.
+#
+# TWO JOBS, and the split is the point:
+#
+#   pr        every PR, scoped to the areas the diff maps to. Fast feedback.
+#   nightly   the WHOLE @fresh tier, on a schedule.
+#
+# The nightly job is not optional garnish. Once PR runs are scoped, NOTHING else
+# runs the full suite — a spec whose area is never touched would stop executing
+# entirely, and you would not find out until the regression it guards shipped.
+#
+# Scoping is safe by construction: a changed file matching no `area_paths`
+# pattern in .themegrill-qa/suite.json falls back to the full tier. An unmapped
+# change costs runner time, never coverage.
+
+name: QA suite
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    # 03:00 UTC daily. Catches what the scoped PR runs did not.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  # The required check. Scoped, fast, runs on every PR including drafts.
+  pr:
+    if: github.event_name == 'pull_request'
+    uses: ThemeGrill/themegrill-qa/.github/workflows/suite.yml@main
+    with:
+      product_slug: __PRODUCT_SLUG__
+      product_type: __PRODUCT_TYPE__
+      scope: changed
+
+  # The safety net. Everything, every night. Advisory — do not make it required,
+  # or an unrelated flake blocks merges the next morning.
+  nightly:
+    if: github.event_name != 'pull_request'
+    uses: ThemeGrill/themegrill-qa/.github/workflows/suite.yml@main
+    with:
+      product_slug: __PRODUCT_SLUG__
+      product_type: __PRODUCT_TYPE__
+      scope: full

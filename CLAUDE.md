@@ -20,6 +20,7 @@ knowledge file. Nothing is installed into them.
 plugins/themegrill-qa/   the installable plugin — everything the skills need
   .claude-plugin/plugin.json
   skills/                the judgement layer — one skill per entry point
+    setup/               one-command onboarding for a product; resumable
     verify-fix/          local: verify the change in the working tree
     pr-qa-review/        CI: review a PR, post one comment
     full-test/           manual: whole-product sweep, fans out to CI
@@ -27,6 +28,7 @@ plugins/themegrill-qa/   the installable plugin — everything the skills need
     knowledge-init/      draft a product's knowledge file
     write-spec/          verified finding -> committed regression spec
   scripts/               the deterministic layer — Node, zero dependencies
+    setup-product.mjs    the deterministic half of `setup`: status + idempotent writes
     detect-product.mjs   identify the product from source -> JSON
     license.mjs          pro licences: status/activate/seed/check-all
     sync-secrets.mjs     per-repo secrets, because org secrets fail on Free
@@ -43,6 +45,7 @@ plugins/themegrill-qa/   the installable plugin — everything the skills need
                          affected, diagnose (the failure triage table)
       license/           registry (+ redaction), edd, freemius adapters
   licenses.json          the pro registry. Structure tracked, KEYS NEVER.
+  templates/             CI workflow callers `setup-product.mjs` renders per product
   mu-plugins/            QA-only, mounted into the disposable site, never shipped
     tgqa-license.php     puts a licence where WordPress can see it
     tgqa-probe.php       reports what the booted site ACTUALLY believes

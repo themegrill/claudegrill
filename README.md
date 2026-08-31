@@ -11,12 +11,15 @@
 
 A Claude Code plugin, plus a CI check that needs no API key.
 
+Getting a product onto it is one command: **`/themegrill-qa:setup`**.
+
 The loop: a developer fixes a bug, verifies it locally with
 `/themegrill-qa:verify-fix`, and a regression spec lands on their branch
 alongside the fix. CI then runs that spec on every future PR, deterministically.
 
 | # | Entry point | Trigger | Output |
 |---|---|---|---|
+| 0 | `/themegrill-qa:setup` | Once per product | Everything below, configured and proved |
 | 1 | `/themegrill-qa:verify-fix` | You, locally, on a fix | A verdict, and a spec on your branch |
 | 2 | `/themegrill-qa:write-spec` | A verified finding, or the spec queue | A `@fresh` spec, proved against broken and fixed code |
 | 3 | **QA suite** (CI) | Every PR, and nightly | A pass/fail check and one PR comment |
@@ -64,8 +67,9 @@ The pro workflow runs three modes, and the third is the one nothing else can do:
 themegrill-qa/                     ← this repo is also the plugin marketplace
 ├── .claude-plugin/marketplace.json
 ├── plugins/themegrill-qa/         ← the installable plugin
-│   ├── skills/                    the six commands
+│   ├── skills/                    the seven commands
 │   ├── scripts/                   Node helpers, zero dependencies
+│   ├── templates/                 CI workflows `setup` writes into a product
 │   ├── mu-plugins/                QA-only, mounted into the test site, never shipped
 │   ├── hooks/                     the spec-guard Stop hook
 │   └── blueprints/                seeded WordPress for theme / plugin testing

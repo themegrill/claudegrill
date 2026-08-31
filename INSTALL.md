@@ -11,40 +11,44 @@ doing the deploy, and for whoever works on the tooling itself.
 ## The developer's experience
 
 1. Restart Claude Code.
-2. Run `/themegrill-qa:verify-fix` in a product checkout.
+2. Run `/themegrill-qa:setup` once per product.
+3. Run `/themegrill-qa:verify-fix` whenever they fix something.
 
 **The commands are namespaced.** Plugin skills always are, so it is
-`/themegrill-qa:verify-fix`, not `/verify-fix`. This is the most likely day-one
-support question — say it in the announcement.
+`/themegrill-qa:setup`, not `/setup`. This is the most likely day-one support
+question — say it in the announcement.
 
-Two things they need per product, once, and neither involves this repo:
+`/themegrill-qa:setup` finds the themes and plugins in the WordPress install the
+developer is standing in, asks which one, and does the rest: the
+`.themegrill-qa/` directory, the suite manifest, the docs ingest, the knowledge
+file, `pnpm install` and Chromium, the CI workflow, and a real suite run to prove
+it works. It skips anything already present, so it is safe to re-run.
 
-```bash
-pnpm install
-pnpm exec playwright install chromium
-```
+It asks for three things, because nothing can derive them:
 
-and a gitignored `.themegrill-qa/.env.local` pointing at their own site:
+- the **docs URL**, if the product has one — optional
+- the **base URL and WordPress admin credentials** of the site they test on
+- on a pro product, the **licence key** — required, not optional
+
+Those land in a gitignored `.themegrill-qa/.env.local`, which the setup command
+adds to `.gitignore` *before* writing anything into it:
 
 ```
 TGQA_BASE_URL=http://test-colormag.local
 CMP_ADMIN_USER=admin
 CMP_ADMIN_PASS=password
+TGQA_LICENSE_COLORMAG_PRO=...          # pro products only
 ```
 
-The admin variable names come from the product's own `suite.json` (`env.admin_user`
-and `env.admin_pass`) — ColorMag uses `CM_*`, ColorMag Pro `CMP_*`. `TGQA_ADMIN_USER`
-and `TGQA_ADMIN_PASS` work everywhere as a fallback.
+The admin variable names come from the product's own `suite.json`
+(`env.admin_user`, `env.admin_pass`) — ColorMag uses `CM_*`, ColorMag Pro `CMP_*`.
+`TGQA_ADMIN_USER` and `TGQA_ADMIN_PASS` work everywhere as a fallback.
 
-**On a pro product, add the licence key to the same file** and nothing else:
+There is **no licence probe to install**. `run-suite.mjs --pro` puts one into the
+site's `mu-plugins/`, reads the product's own pro gate, and removes it again.
 
-```
-TGQA_LICENSE_COLORMAG_PRO=...
-```
-
-`run-suite.mjs --pro` installs its own licence probe into the site's
-`mu-plugins/`, reads the result, and removes it again. There is no probe to set
-up by hand, per product or otherwise.
+To do any of it by hand instead, [SETUP.md](SETUP.md) Phase 2 is the same steps
+written out.
 
 ---
 
@@ -170,14 +174,16 @@ node plugins/themegrill-qa/scripts/install-git-hook.mjs
 ```
 plugins/themegrill-qa/
 ├── .claude-plugin/plugin.json
-├── skills/          the six commands
+├── skills/          the seven commands
 ├── scripts/         the Node helpers the skills invoke
+├── templates/       the CI workflows `setup` writes into a product repo
 ├── mu-plugins/      QA-only, mounted into the test site, never shipped
 ├── hooks/           the spec-guard Stop hook
 └── blueprints/      seeded WordPress state
 ```
 
-Scripts, mu-plugins and blueprints ship **inside** the plugin deliberately:
+Scripts, templates, mu-plugins and blueprints ship **inside** the plugin
+deliberately:
 Claude Code copies a plugin into its own cache, and a copied plugin cannot reach
 files outside its own directory. The skills resolve their location through
 `CLAUDE_PLUGIN_ROOT`, and the scripts resolve the plugin root from their own file
