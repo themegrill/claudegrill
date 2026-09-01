@@ -94,6 +94,17 @@ These are load-bearing. Changing one is a design decision, not a refactor.
    or workflow may start WordPress by another route. New environments are new
    branches in that one file.
 
+4b. **A pull request runs only what its diff maps to, and nothing when it maps
+   to nothing.** `pr-scope.mjs` gates every expensive step — Composer, pnpm,
+   Chromium, Playground — so an out-of-scope PR costs seconds, not minutes. This
+   REPLACED the older rule that an unmapped file forces the full tier: that
+   fallback turned one push into three full Playground runs and ~90 metered
+   minutes. The trade is real and deliberate — an unmapped file now ships
+   unchecked — so the unmapped files are printed in the run summary on every PR
+   that has them. A visible gap gets an `area_paths` entry; a hidden one does
+   not. Non-PR runs are unscoped: a manual dispatch means somebody asked for
+   everything.
+
 4. **Nothing has write authority it does not need.** The PR runner comments; it
    never approves, merges, commits or pushes. The sweep files tickets only when a
    human passes `--file-tickets`, capped at five, into a triage state. Nothing

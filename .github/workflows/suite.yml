@@ -59,7 +59,7 @@ on:
         description: "Hard ceiling on the suite run itself, in milliseconds."
         required: false
         type: number
-        default: 900000
+        default: 480000
 
     secrets:
       QA_REPO_TOKEN:
@@ -72,7 +72,7 @@ on:
 jobs:
   suite:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     # Read-only except for the checks the annotations produce. No comment is
     # posted and nothing is written back to the PR: the job's own pass/fail is
@@ -132,7 +132,65 @@ jobs:
       #
       # Packagist only — no `repositories` block in either composer.json — so no
       # token and no auth are involved.
+      # THE COST GATE. Everything expensive below is conditional on this.
+      #
+      # A pull request tests exactly what its diff maps to. When the diff maps to
+      # no spec area, the job stops here — before Composer, before pnpm, before
+      # Chromium, before Playground — because those five steps are most of the
+      # metered minutes and running them to execute zero specs is pure waste.
+      #
+      # This deliberately does NOT fall back to the full tier on an unmapped
+      # file. That fallback is what made one push cost ninety minutes. The
+      # unmapped files are printed instead, so the gap in `area_paths` is visible
+      # on every PR that has one rather than hidden behind a full run.
+      - name: Work out what this PR touches
+        id: scope
+        run: |
+          set -o pipefail
+
+          # Only a pull request is scoped. A manual run is somebody deliberately
+          # asking for everything, and skipping it would be surprising.
+          if [ -z "${{ github.event.pull_request.base.ref }}" ]; then
+            echo '{"ok":true,"run":true,"areas":[],"reason":"not a pull request — full fresh tier"}' > scope.json
+            cat scope.json
+          else
+          node claudegrill/plugins/claudegrill/scripts/pr-scope.mjs \
+            --diff-root product \
+            ${{ github.event.pull_request.base.ref && format('--since origin/{0}', github.event.pull_request.base.ref) || '' }} \
+            | tee scope.json
+          fi
+
+          node -e '
+            const s = JSON.parse(require("fs").readFileSync("scope.json","utf8"));
+            const fs = require("fs"), out = process.env.GITHUB_OUTPUT;
+            fs.appendFileSync(out, `run=${s.run ? "true" : "false"}\n`);
+            fs.appendFileSync(out, `areas=${(s.areas||[]).join(",")}\n`);
+            fs.appendFileSync(out, `ok=${s.ok ? "true" : "false"}\n`);
+            fs.appendFileSync(out, `reason=${s.reason}\n`);
+            const sum = process.env.GITHUB_STEP_SUMMARY;
+            const gaps = s.unmapped || [];
+            if (!s.ok) {
+              fs.appendFileSync(sum, `### could not work out the PR scope\n\n${s.reason}\n`);
+            } else if (!s.run) {
+              fs.appendFileSync(sum, `### nothing to run\n\n${s.reason}\n\n` +
+                (gaps.length ? `These changed files match no \`area_paths\` pattern, so **nothing tested them**:\n\n` +
+                  gaps.map((f) => `- \`${f}\``).join("\n") + `\n\nAdd them to \`area_paths\` in .themegrill-qa/suite.json.\n` : ""));
+            } else {
+              fs.appendFileSync(sum, `Scope: **${s.areas.join(", ")}** (${s.changed} changed files)\n`);
+              if (gaps.length) fs.appendFileSync(sum, `\n${gaps.length} changed file(s) map to no area and were **not** covered:\n\n` +
+                gaps.map((f) => `- \`${f}\``).join("\n") + `\n`);
+            }
+          '
+
+          # A diff we could not compute is a broken configuration, not an empty
+          # PR, and must never pass quietly.
+          if [ "$(node -pe 'JSON.parse(require("fs").readFileSync("scope.json","utf8")).ok')" != "true" ]; then
+            echo "::error::could not work out the PR scope — see the summary"
+            exit 1
+          fi
+
       - name: Install PHP dependencies
+        if: steps.scope.outputs.run == 'true'
         run: |
           for dir in product; do
             if [ -f "$dir/composer.json" ]; then
@@ -145,17 +203,35 @@ jobs:
           done
 
       - name: Install pnpm
+        if: steps.scope.outputs.run == 'true'
         uses: pnpm/action-setup@v4
         with:
           version: 10
 
       - uses: actions/setup-node@v4
+        if: steps.scope.outputs.run == 'true'
         with:
           node-version: ${{ inputs.node_version }}
 
       # Does this product even have a suite? No suite is a valid state, and the
       # job should be a visible skip rather than a confusing green.
+      # Three matrix jobs each re-downloaded Chromium (~150 MB) and re-resolved
+      # the pnpm store from scratch. On a metered private repo that is pure
+      # overhead paid three times per push, before a single spec runs.
+      - name: Cache the pnpm store and Playwright's browsers
+        if: steps.scope.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.local/share/pnpm/store
+            ~/.pnpm-store
+          key: qa-deps-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml', '**/package-lock.json') }}
+          restore-keys: |
+            qa-deps-${{ runner.os }}-
+
       - name: Look for a suite manifest
+        if: steps.scope.outputs.run == 'true'
         id: manifest
         working-directory: product
         run: |
@@ -229,9 +305,11 @@ jobs:
           # area_paths pattern falls back to the full tier, so an unmapped
           # change costs runner time rather than coverage.
           SCOPE_ARGS=""
-          if [ "${{ inputs.scope }}" = "changed" ] && [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch origin "${{ github.event.pull_request.base.ref }}" --depth=50 -q || true
-            SCOPE_ARGS="--since origin/${{ github.event.pull_request.base.ref }}"
+          # The scope gate already resolved this, for pull requests and for
+          # everything else. `scope: full` still means the whole tier.
+          SCOPE_ARGS="--area '${{ steps.scope.outputs.areas }}'"
+          if [ -z "${{ steps.scope.outputs.areas }}" ] || [ "${{ inputs.scope }}" = "full" ]; then
+            SCOPE_ARGS=""
           fi
 
           node ../claudegrill/plugins/claudegrill/scripts/run-suite.mjs \
