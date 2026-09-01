@@ -420,12 +420,17 @@ function installProbe(url, slug) {
   try {
     fs.mkdirSync(muDir, { recursive: true });
 
-    const probeDest = path.join(muDir, "tgqa-probe.php");
-    // Never clobber a file somebody else put here. If it is already the probe,
-    // reusing it is correct; if it is something else, that is theirs.
-    if (!fs.existsSync(probeDest)) {
-      fs.copyFileSync(path.join(qaHome, "mu-plugins", "tgqa-probe.php"), probeDest);
-      written.push(probeDest);
+    // The probe answers the licence gate; the theme-mod endpoint gives specs an
+    // engine-agnostic way to set a setting without a Customizer round trip. Both
+    // read the same token file, so they install and clean up together.
+    for (const f of ["tgqa-probe.php", "tgqa-theme-mod.php"]) {
+      const dest = path.join(muDir, f);
+      // Never clobber a file somebody else put here. If it is already ours,
+      // reusing it is correct; if it is something else, that is theirs.
+      if (!fs.existsSync(dest)) {
+        fs.copyFileSync(path.join(qaHome, "mu-plugins", f), dest);
+        written.push(dest);
+      }
     }
 
     const tokenFile = path.join(muDir, "tgqa-probe.token");
@@ -483,6 +488,15 @@ function installProbe(url, slug) {
  * people's day, which is why part 7 asks for `licence not active` as a distinct
  * non-retryable failure.
  */
+/**
+ * The probe URL the licence gate settled on, published to the suite.
+ *
+ * The token in it also opens `tgqa-theme-mod.php`, which is how a spec sets a
+ * theme mod in ~20ms instead of a thirty-second Customizer round trip. Without
+ * this the endpoint exists and nothing can address it.
+ */
+let resolvedProbeUrl = null;
+
 async function verifyLicence() {
   if (!opt.pro) return null;
 
@@ -494,6 +508,11 @@ async function verifyLicence() {
     if (installed.ok) probeUrl = installed.url;
     else installReason = installed.reason;
   }
+
+  // Capture only once it is FINAL: `installProbe` above may have created it, and
+  // capturing before that recorded null on precisely the local path this exists
+  // to serve.
+  resolvedProbeUrl = probeUrl;
 
   if (!probeUrl) {
     cannotRun(
@@ -730,6 +749,9 @@ const adminPass =
 
 const runEnv = {
   ...process.env,
+  // Present only when a probe was resolved or installed. A spec must treat its
+  // absence as "no fast path here" and fall back, never as a failure.
+  ...(resolvedProbeUrl ? { TGQA_PROBE_URL: resolvedProbeUrl } : {}),
   TGQA_BASE_URL: baseUrl,
   TGQA_ADMIN_USER: adminUser,
   TGQA_ADMIN_PASS: adminPass,

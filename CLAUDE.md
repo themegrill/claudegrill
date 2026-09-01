@@ -549,6 +549,52 @@ decision in the suite layer.
   `unlicensed` differs. `run_unlicensed` now defaults to **false**: it spent
   2m49s to run one spec, nearly all of it setup.
 
+- **Why ColorMag Pro's specs cost ~60s each, measured from a real run's log.**
+  Not hanging, not failing — eight specs completed and every one PASSED, at
+  1.0-1.1m apiece. Each does: seed 3-5 posts with a featured image over REST,
+  `customizer.open()`, `publishControls()` (click #save, await admin-ajax, await
+  `saved` state), load the front end, assert — and then teardown **re-opens the
+  Customizer and republishes to restore**, so every test pays that round trip
+  TWICE. `grid-columns.spec.ts` repeats the whole cycle three times to vary one
+  integer.
+
+  `--test-timeout-ms` cannot cap this: every one of those specs calls
+  `test.setTimeout(120_000)` in its body, and a body-level setTimeout always
+  beats the CLI `--timeout`. There is no flag that overrides it, so the per-test
+  ceiling is best-effort and a spec can opt out.
+
+- **`tgqa-theme-mod.php`, and the constraint it had to respect.** ColorMag free
+  snapshots theme mods by shelling out to `mysql`; pro's config documents that
+  this cannot work on Playground (PHP-WASM, SQLite, no mysql binary) and is
+  exactly why its fixture restores through the Customizer UI instead. HTTP is the
+  one channel every engine has, so the new mu-plugin gets the fast path back
+  without giving up Playground. Verified against the real site: read **52ms**,
+  set-with-previous **23ms**, against a Customizer load+publish of roughly thirty
+  seconds. The absent sentinel round-trips correctly, so a restore removes a key
+  that never existed rather than leaving a row that would shadow
+  `get_theme_mod()`'s default. Staged by `boot-wp.mjs` and installed by
+  `run-suite.mjs` alongside the probe, sharing its token.
+
+  It does **not** replace Customizer specs. The `*-three-way` specs assert that
+  control, preview and front end agree — there the round trip IS the subject.
+
+- **The fast path proved on a real spec.** `grid-columns.spec.ts` rewritten to
+  set theme mods over `tgqa-theme-mod.php` instead of driving the Customizer.
+  Same seeding, same assertions, `test.setTimeout(120_000)` removed because the
+  reprieve was only ever for the round trip. Like-for-like on the same site:
+  **41.5s -> 10.5s, 6/6 passing both ways** — 4x. At the measured 6.2x Playground
+  penalty that is ~4.3 min -> ~1.1 min in CI, and projects the whole pro tier
+  from ~14 min to ~3.5, inside its 8-minute ceiling.
+
+  Two bugs surfaced on the way, both worth keeping in mind:
+  - `resolvedProbeUrl` was captured BEFORE `installProbe()` could set it, so the
+    URL was always null on precisely the local path the fast lane serves.
+  - `env.ts`'s `licenceState()` carried the same fault `run-suite.mjs` had:
+    `state === 'valid' && gate.active` demands the seeder's bookkeeping, which a
+    site licensed by hand in wp-admin never has. It now asks the product's own
+    gate first and falls back to the licence row only when the gate cannot be
+    evaluated. A gate reporting FALSE still fails, always.
+
 **Not verified**
 
 - **`license.mjs check-all` against the stores with real keys.** The product-side

@@ -348,7 +348,12 @@ function stageMuPlugins(siteUrl) {
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
 
-  for (const f of ["tgqa-probe.php", ...(opt.license ? ["tgqa-license.php"] : [])]) {
+  for (const f of [
+    "tgqa-probe.php",
+    // Shares the probe's token, so it costs no extra staging.
+    "tgqa-theme-mod.php",
+    ...(opt.license ? ["tgqa-license.php"] : []),
+  ]) {
     fs.copyFileSync(path.join(qaHome, "mu-plugins", f), path.join(dir, f));
   }
 
