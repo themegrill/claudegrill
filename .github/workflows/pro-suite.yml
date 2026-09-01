@@ -253,6 +253,31 @@ jobs:
           path: claudegrill
 
 
+      # The product's PHP dependencies, which are NOT in the checkout: every
+      # ThemeGrill product gitignores `vendor/`, and both the free and pro themes
+      # pull `themegrill/themegrill-sdk` — the package that defines
+      # `FS_ThemeGrill`, and therefore the pro gate itself.
+      #
+      # Without this the theme still activates and nothing fatals, because
+      # `functions.php` guards the autoload require with `file_exists`. The
+      # symptom is much worse than a crash: the pro gate becomes unevaluable, the
+      # licence seeder reports `not attempted`, and the run fails looking exactly
+      # like a bad licence key. That cost a full debugging round trip once.
+      #
+      # Packagist only — no `repositories` block in either composer.json — so no
+      # token and no auth are involved.
+      - name: Install PHP dependencies
+        run: |
+          for dir in product pro; do
+            if [ -f "$dir/composer.json" ]; then
+              echo "composer install in $dir"
+              composer install --working-dir="$dir" \
+                --no-dev --no-interaction --no-progress --prefer-dist
+            else
+              echo "no composer.json in $dir — skipped"
+            fi
+          done
+
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -322,25 +347,100 @@ jobs:
       # `licence not active` is its own failure, distinct and non-retryable, so a
       # store outage is instantly distinguishable from a product bug. Retrying a
       # licence failure just spends more metered minutes reaching the same store.
+      # Three distinct failures that used to report as one.
+      #
+      # The old rule was `licensed != "valid"` and nothing else, which called
+      # every one of them a bad licence key. A run where the pro code was not
+      # loaded at all — no SDK, theme not active — reported "check the store and
+      # the secret", sending everyone to look at a secret that was fine.
+      #
+      # The product's own gate outranks our bookkeeping, exactly as it does in
+      # run-suite.mjs: `tgqa_license_state` is written only by the seeder, so a
+      # site licensed by any other route has none while `can_use_premium_code()`
+      # still returns the truth. Asking the product is the stronger check.
       - name: Verify the licence resolved
         if: steps.manifest.outputs.found == 'true' && matrix.mode != 'unlicensed'
         run: |
-          STATE=$(node -e '
+          eval "$(node -e '
             const b = JSON.parse(require("fs").readFileSync("boot.json","utf8"));
-            process.stdout.write(String(b.licensed ?? "unknown"));
-          ')
-          PRO=$(node -e '
-            const b = JSON.parse(require("fs").readFileSync("boot.json","utf8"));
-            process.stdout.write(String(b.probe?.pro_active ?? "unknown"));
-          ')
-          echo "licence state: $STATE · product pro gate: $PRO"
+            const q = (v) => String(v ?? "").replace(/"/g, "");
+            const seed = (b.license_seed || []).map((s) => s.reason || s.state).filter(Boolean);
+            process.stdout.write(
+              `STATE="${q(b.licensed ?? "unknown")}"\n` +
+              `PRO="${q(b.probe?.pro_active ?? "unknown")}"\n` +
+              `THEME="${q(b.probe?.active_theme)}"\n` +
+              `CHECK="${q(b.probe?.pro_check)}"\n` +
+              `PROBE_ERR="${q(b.probe?.error)}"\n` +
+              `SEED="${q(seed.join("; "))}"\n`,
+            );
+          ')"
+          echo "licence state: $STATE · product pro gate: $PRO · active theme: $THEME"
+
+          # The probe never answered, so every value below is absent rather than
+          # false. That is a boot failure, and calling it "pro code not loaded"
+          # would repeat the misdirection this step was rewritten to remove.
+          if [ -n "$PROBE_ERR" ]; then
+            {
+              echo "### the probe did not answer"
+              echo ""
+              echo "\`$PROBE_ERR\`. Nothing about the licence or the pro code is known,"
+              echo "because the booted site never responded. Check the boot step above."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::the probe did not answer — $PROBE_ERR"
+            exit 1
+          fi
+
+          # The product says premium is on. Nothing else can outrank that.
+          if [ "$PRO" = "true" ]; then
+            echo "pro gate TRUE — pro features are genuinely under test"
+            exit 0
+          fi
+
+          # An unevaluable gate is only fatal when the licence ALSO failed to
+          # resolve. A registry row with no `pro_check` yet is a gap in our
+          # bookkeeping, not evidence the product is unlicensed — run-suite.mjs
+          # makes the same distinction and passes with a note.
+          if [ "$PRO" = "unknown" ] && [ "$STATE" = "valid" ]; then
+            echo "::warning::licence valid but the pro gate could not be evaluated ($CHECK) — pro coverage is unconfirmed"
+            exit 0
+          fi
+
+          if [ "$PRO" = "unknown" ]; then
+            {
+              echo "### pro code not loaded"
+              echo ""
+              echo "The probe could not evaluate \`$CHECK\`, so the pro gate is unknown and"
+              echo "**this is not a licence problem** — the licence was never reached."
+              echo ""
+              echo "Active theme was \`$THEME\`. The usual cause is the Freemius SDK missing"
+              echo "from \`vendor/\`, which every product gitignores: check the"
+              echo "*Install PHP dependencies* step above actually ran for this checkout."
+              [ -n "$SEED" ] && echo "" && echo "Seeder said: $SEED"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::pro code not loaded — $CHECK could not be evaluated (active theme: $THEME)"
+            exit 1
+          fi
+
+          if [ "$PRO" = "false" ]; then
+            {
+              echo "### pro gate returned false"
+              echo ""
+              echo "\`$CHECK\` returned false with the pro code loaded, so the licence did not"
+              echo "activate. Licence state: \`$STATE\`."
+              [ -n "$SEED" ] && echo "" && echo "Seeder said: $SEED"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::licence not active — the product's own gate returned false (state: $STATE)"
+            exit 1
+          fi
+
           if [ "$STATE" != "valid" ]; then
             {
               echo "### licence not active"
               echo ""
               echo "The licence resolved to \`$STATE\`, so **pro features are not under test**."
-              echo "This is a harness failure, not a product failure, and retrying will not"
-              echo "change it. Check the store and the repo's \`TGQA_LICENSE_KEY\` secret."
+              echo "Retrying will not change it. Check the store and this repo's"
+              echo "\`TGQA_LICENSE_KEY\` secret."
+              [ -n "$SEED" ] && echo "" && echo "Seeder said: $SEED"
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::licence not active — pro features not under test (state: $STATE)"
             exit 1

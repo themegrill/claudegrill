@@ -441,6 +441,30 @@ decision in the suite layer.
   them, a remote base URL refused rather than written to, and an unresolvable
   gate (`--pro zakra-pro`) still refusing with `FS_ZakraTheme not loaded`.
 
+- **The first real `pro-suite.yml` run, and the two bugs it exposed.** It failed
+  with `licence state: not attempted · product pro gate: unknown`, which reads
+  exactly like a bad licence key and was not one — the secret was set and valid.
+  Both signals meant the same thing: `FS_ThemeGrill` was never defined in the
+  booted site.
+
+  `FS_ThemeGrill` ships in `vendor/themegrill/themegrill-sdk`, pulled by
+  Composer. **Every product gitignores `vendor/`** (`colormag-pro/.gitignore:35`,
+  0 files tracked) and **neither `suite.yml` nor `pro-suite.yml` ran
+  `composer install`.** Nothing fataled, because `functions.php` guards the
+  autoload `require` with `file_exists` — so the theme activated, the pro gate
+  became unevaluable, and the seeder correctly reported `not attempted`. Both
+  workflows now install PHP dependencies before booting. Packagist only, so no
+  token is involved.
+
+  The second bug is why it cost a round trip: `pro-suite.yml`'s verify step
+  tested `licensed != "valid"` and nothing else, so it reported "check the store
+  and the secret" for a failure that had nothing to do with either. It now
+  separates four outcomes — probe silent, gate TRUE, gate FALSE, gate
+  unevaluable — and the product's own gate outranks the seeder's bookkeeping,
+  matching `run-suite.mjs`. All six branches tested against synthetic
+  `boot.json` fixtures, including "licence valid but gate unevaluable", which
+  passes with a warning rather than failing.
+
 **Not verified**
 
 - **`license.mjs check-all` against the stores with real keys.** The product-side
@@ -487,9 +511,10 @@ decision in the suite layer.
   If `artifact-url` ever arrives empty the comment degrades to naming the run
   instead, which is handled but also untested.
 
-- **Every CI path.** The only workflow that ever ran live was `wp-core-watch.yml`,
-  now deleted. `suite.yml`, `pro-suite.yml`, `pr-qa.yml` and `pr-command.yml`
-  have not, and there is a known
+- **A green CI run.** `pro-suite.yml` HAS now run live on colormag-pro
+  (run 99464739372) and failed at licence verification. Root cause found and
+  fixed, see Verified below; a passing run has still not happened.
+  `suite.yml`, `pr-qa.yml` and `pr-command.yml` have not run at all, and there is a known
   blocker in front of them: **`claudegrill` is a private repo and
   `secrets.GITHUB_TOKEN` cannot check it out from another repository.** Every
   reusable workflow's "Check out shared QA tooling" step fails with a 404 that

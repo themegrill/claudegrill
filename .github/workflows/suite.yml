@@ -116,6 +116,31 @@ jobs:
       #
       # Pinned to 10 because the products' lockfiles are lockfileVersion 9.0,
       # which pnpm 8 cannot read — it would fail `--frozen-lockfile` instead.
+      # The product's PHP dependencies, which are NOT in the checkout: every
+      # ThemeGrill product gitignores `vendor/`, and both the free and pro themes
+      # pull `themegrill/themegrill-sdk` — the package that defines
+      # `FS_ThemeGrill`, and therefore the pro gate itself.
+      #
+      # Without this the theme still activates and nothing fatals, because
+      # `functions.php` guards the autoload require with `file_exists`. The
+      # symptom is much worse than a crash: the pro gate becomes unevaluable, the
+      # licence seeder reports `not attempted`, and the run fails looking exactly
+      # like a bad licence key. That cost a full debugging round trip once.
+      #
+      # Packagist only — no `repositories` block in either composer.json — so no
+      # token and no auth are involved.
+      - name: Install PHP dependencies
+        run: |
+          for dir in product; do
+            if [ -f "$dir/composer.json" ]; then
+              echo "composer install in $dir"
+              composer install --working-dir="$dir" \
+                --no-dev --no-interaction --no-progress --prefer-dist
+            else
+              echo "no composer.json in $dir — skipped"
+            fi
+          done
+
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
