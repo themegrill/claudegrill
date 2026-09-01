@@ -710,6 +710,10 @@ if (opt.engine === "playground") {
             active_plugins: probe.active_plugins,
             pro_active: probe.pro?.checked ? probe.pro.active : null,
             pro_check: probe.pro?.expression ?? null,
+            // WHY it could not be evaluated. Omitting this made a missing
+            // Freemius submodule ("no Freemius instance") indistinguishable
+            // from a licence failure, which cost two CI round trips.
+            pro_reason: probe.pro?.reason ?? null,
             license: probe.license ?? null,
           }
         : { error: "probe did not answer" },

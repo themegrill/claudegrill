@@ -89,6 +89,9 @@ jobs:
       - name: Check out the product
         uses: actions/checkout@v4
         with:
+          # A product may vendor an SDK as a submodule; an empty submodule
+          # directory fails silently rather than loudly. See pro-suite.yml.
+          submodules: recursive
           fetch-depth: 0
           path: product
 

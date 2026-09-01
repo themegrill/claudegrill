@@ -447,14 +447,19 @@ decision in the suite layer.
   Both signals meant the same thing: `FS_ThemeGrill` was never defined in the
   booted site.
 
-  `FS_ThemeGrill` ships in `vendor/themegrill/themegrill-sdk`, pulled by
-  Composer. **Every product gitignores `vendor/`** (`colormag-pro/.gitignore:35`,
-  0 files tracked) and **neither `suite.yml` nor `pro-suite.yml` ran
-  `composer install`.** Nothing fataled, because `functions.php` guards the
-  autoload `require` with `file_exists` — so the theme activated, the pro gate
-  became unevaluable, and the seeder correctly reported `not attempted`. Both
-  workflows now install PHP dependencies before booting. Packagist only, so no
-  token is involved.
+  The cause was a **git submodule**. `colormag-pro/freemius` is a gitlink (mode
+  160000) pointing at the public `Freemius/wordpress-sdk`, and no workflow passed
+  `submodules: recursive` to `actions/checkout`. The directory was therefore
+  empty in CI, and the failure is silent **by design**:
+  `FS_ThemeGrill::init()` guards the require with `file_exists`, adds an
+  `admin_notices` callback nobody sees, and returns null. So the theme activated,
+  the class existed, `freemius()` existed — and returned null. All three
+  checkouts now use `submodules: recursive`.
+
+  A first diagnosis blamed `vendor/` and `composer install`, which every product
+  also gitignores and no workflow ran. That was a real gap and both workflows now
+  install PHP dependencies — but it was **not** this bug: `FS_ThemeGrill` is
+  declared in the theme's own `functions.php`, not in the Composer package.
 
   The second bug is why it cost a round trip: `pro-suite.yml`'s verify step
   tested `licensed != "valid"` and nothing else, so it reported "check the store
@@ -464,6 +469,13 @@ decision in the suite layer.
   matching `run-suite.mjs`. All six branches tested against synthetic
   `boot.json` fixtures, including "licence valid but gate unevaluable", which
   passes with a warning rather than failing.
+
+  The third bug was the one that made the second round trip necessary: the probe
+  knew the answer all along — `pro.reason` said `no Freemius instance` — and
+  `boot-wp.mjs` threw it away instead of putting it in `boot.json`. It is now
+  carried through as `probe.pro_reason` and printed in the failure summary. A
+  diagnostic that reports *that* something failed without *why* is worth very
+  little; this one cost two runs.
 
 **Not verified**
 

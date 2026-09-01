@@ -232,6 +232,15 @@ jobs:
       - name: Check out the pro product (this repo)
         uses: actions/checkout@v4
         with:
+          # ColorMag Pro vendors the Freemius SDK as a SUBMODULE (`freemius`,
+          # pointing at the public Freemius/wordpress-sdk). Without this the
+          # directory is EMPTY in CI, and the failure is silent by design:
+          # `FS_ThemeGrill::init()` guards the require with `file_exists`, prints
+          # an admin notice nobody sees, and returns null. The theme loads, the
+          # class exists, `freemius()` exists — and returns null. The pro gate
+          # then reads as unevaluable, which looks exactly like a licence
+          # problem and is not one.
+          submodules: recursive
           fetch-depth: 0
           path: pro
 
@@ -242,6 +251,8 @@ jobs:
         with:
           repository: ${{ inputs.product_repo }}
           ref: ${{ inputs.product_ref || '' }}
+          # Harmless when the product has none; free ColorMag has no submodules.
+          submodules: recursive
           path: product
 
       - name: Check out shared QA tooling
@@ -371,6 +382,7 @@ jobs:
               `THEME="${q(b.probe?.active_theme)}"\n` +
               `CHECK="${q(b.probe?.pro_check)}"\n` +
               `PROBE_ERR="${q(b.probe?.error)}"\n` +
+              `REASON="${q(b.probe?.pro_reason)}"\n` +
               `SEED="${q(seed.join("; "))}"\n`,
             );
           ')"
@@ -412,12 +424,15 @@ jobs:
               echo "The probe could not evaluate \`$CHECK\`, so the pro gate is unknown and"
               echo "**this is not a licence problem** — the licence was never reached."
               echo ""
-              echo "Active theme was \`$THEME\`. The usual cause is the Freemius SDK missing"
-              echo "from \`vendor/\`, which every product gitignores: check the"
-              echo "*Install PHP dependencies* step above actually ran for this checkout."
+              echo "Active theme was \`$THEME\`."
+              [ -n "$REASON" ] && echo "The product said: **$REASON**"
+              echo ""
+              echo "\`no Freemius instance\` means the SDK never loaded. It is vendored as a"
+              echo "git SUBMODULE, so an empty \`freemius/\` directory is the usual cause —"
+              echo "check the checkout used \`submodules: recursive\`."
               [ -n "$SEED" ] && echo "" && echo "Seeder said: $SEED"
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::pro code not loaded — $CHECK could not be evaluated (active theme: $THEME)"
+            echo "::error::pro code not loaded — $CHECK could not be evaluated: ${REASON:-no reason reported} (active theme: $THEME)"
             exit 1
           fi
 
