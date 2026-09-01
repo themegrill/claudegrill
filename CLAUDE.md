@@ -488,6 +488,45 @@ decision in the suite layer.
   diagnostic that reports *that* something failed without *why* is worth very
   little; this one cost two runs.
 
+- **The pro CI tier running end to end.** After the submodule fix, run #4 on
+  colormag-pro reported `free-with-pro` **passed** (6m18s) and `unlicensed`
+  **passed** (2m49s) — the first genuinely meaningful green CI jobs this repo has
+  produced. Diff scoping and dependency caching both worked: the scope resolved
+  to 7 areas from 51 changed files, with the 9 unmapped files listed in the
+  summary.
+
+  `pro` still fails, and for the reason SETUP-COLORMAG.md already documents about
+  the free tier: **the specs are too slow on Playground.** 18 `@pro` specs
+  exceeded the 8-minute run ceiling. The measured penalty is 47s local vs 291s on
+  Playground for the free tier, and CLAUDE.md's own record says seven Customizer
+  specs time out on 20s `wp.customize.state("saved")` waits under WASM PHP. Pro's
+  specs concentrate in the same areas and have never been validated there.
+
+  That failure was also **undiagnosable**: a whole-run ceiling kills the process
+  tree and reports nothing, so the log said time ran out and not which spec ate
+  it. `run-suite.mjs` now takes `--test-timeout-ms` (a ceiling on ONE test) and
+  `--max-failures`, both wired into the workflows at 90s and 5. A hanging spec
+  now fails and is named in the report instead of killing the run. Verified
+  against ColorMag Pro's real suite: with a 1.5s ceiling the run finished in 3.4s
+  with the offending test named, rather than hanging.
+
+- **Three faults in this repo's own cost controls, found by them failing.**
+  Worth recording because each one turned a diagnosable failure into an opaque
+  one:
+  - **Two ceilings that contradicted each other.** `max_failures 5` x
+    `test_timeout_ms 90s` = 450s against a 480s run ceiling, leaving 30s for
+    passing specs — so `--max-failures` could essentially never stop a run before
+    the wall did. Rebalanced to 3 x 45s (135s, 345s of headroom), and
+    `run-suite.mjs` now warns when the product of the two crowds the run ceiling.
+  - **`say()` is a no-op under `--json`,** which is the only mode CI uses. The
+    warning above was therefore invisible in the one place it mattered. Anything
+    a caller must act on now travels in the JSON as `warnings[]`.
+  - **A killed run reported nothing.** Playwright writes its JSON report only at
+    the end, so a timeout produced "time ran out" and no more — while its `list`
+    reporter had been streaming per-spec progress into the log the whole time.
+    The timeout path now reads that tail and names `last_spec`, the spec that was
+    still running when the kill arrived.
+
 **Not verified**
 
 - **`license.mjs check-all` against the stores with real keys.** The product-side

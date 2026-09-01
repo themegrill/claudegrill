@@ -54,7 +54,9 @@ const opt = {
   install: false,
   grep: null,
   json: !process.stdout.isTTY,
-  timeoutMs: 0, // 0 = no ceiling
+  timeoutMs: 0,     // 0 = no ceiling on the WHOLE run
+  testTimeoutMs: 0, // 0 = leave the product's own per-test timeout alone
+  maxFailures: 0,   // 0 = run everything, however many fail
   since: null,  // git ref: narrow to the areas this diff could have broken
   // Evidence. A failure nobody can reproduce costs more than the run that found
   // it, so the default captures a trace — but only for the tests that failed.
@@ -91,6 +93,14 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--grep") opt.grep = argv[++i];
   else if (a === "--json" || a === "--quiet") opt.json = true;
   else if (a === "--timeout-ms") opt.timeoutMs = Number(argv[++i]);
+  // A ceiling on ONE test, which the whole-run ceiling cannot express. Without
+  // it a single hanging spec burns the entire budget and the run is killed with
+  // no report at all — the harness knows only that time ran out, not which spec
+  // ate it. With it, that spec fails, the run finishes, and the report names it.
+  else if (a === "--test-timeout-ms") opt.testTimeoutMs = Number(argv[++i]);
+  // Stop after N failures. A suite that is going to fail thirty times tells you
+  // everything it is going to tell you in the first few.
+  else if (a === "--max-failures") opt.maxFailures = Number(argv[++i]);
   else if (a === "--since") opt.since = argv[++i];
   else if (a === "--trace") opt.trace = argv[++i];
   else if (a === "--no-trace") opt.trace = null;
@@ -148,8 +158,21 @@ const say = (msg) => {
   console.error(msg);
 };
 
+/**
+ * Configuration problems the caller must see.
+ *
+ * `say()` is silenced under --json, which is the only mode CI uses — so a
+ * warning routed through it reaches nobody. These ride out in the JSON instead.
+ */
+const warnings = [];
+function warn(msg) {
+  warnings.push(msg);
+  say(`warning: ${msg}`);
+}
+
 /** The single line of stdout, and the exit. */
 function emit(payload, code) {
+  if (warnings.length) payload = { ...payload, warnings };
   process.stdout.write(JSON.stringify(payload) + "\n");
   process.exit(code);
 }
@@ -203,6 +226,20 @@ let bootHandoff = null;
 // "<free slug>-pro", and `--pro <slug>` overrides it for anything that stops
 // following the convention.
 const proSlug = opt.proSlug ?? `${info.slug}-pro`;
+
+// Two ceilings that contradict each other are worse than one: if N failures at
+// the per-test limit can reach the whole-run limit on their own, `--max-failures`
+// never gets to stop anything and every bad run dies at the wall with no report.
+if (opt.timeoutMs > 0 && opt.testTimeoutMs > 0 && opt.maxFailures > 0) {
+  const worst = opt.testTimeoutMs * opt.maxFailures;
+  if (worst >= opt.timeoutMs * 0.75) {
+    warn(
+      `--max-failures ${opt.maxFailures} x --test-timeout-ms ${opt.testTimeoutMs} = ${worst}ms, ` +
+        `which crowds --timeout-ms ${opt.timeoutMs}. Failures alone can reach the run ceiling ` +
+        `before max-failures stops them, and the run then dies with no report.`,
+    );
+  }
+}
 
 function bootSite(engine) {
   say(`booting a disposable site (${engine}) …`);
@@ -576,6 +613,31 @@ function sink() {
 }
 
 /** Run a command in the product root, inheriting stdio. */
+/** The last lines the runner printed before it was killed. */
+function readLogTail(n) {
+  try {
+    return fs.readFileSync(logFile, "utf8").split(/\r?\n/).filter(Boolean).slice(-n);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The spec the `list` reporter had started but not finished.
+ *
+ * It prints a line per test, marking completion with a status glyph or a
+ * duration. The last line carrying neither is the one still running when the
+ * kill arrived — which is the spec that ate the budget.
+ */
+function lastStartedSpec(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i].trim();
+    const m = l.match(/^(?:\d+\s+)?[›»\-\s]*(.*\.spec\.[cm]?[jt]sx?[^\s].*)$/);
+    if (m) return m[1].replace(/\s+\(\d+(?:\.\d+)?m?s\)\s*$/, "").trim();
+  }
+  return null;
+}
+
 function runInProduct(command, extraArgs = [], env = process.env, timeoutMs = 0) {
   const parts = argvOf(command);
   const all = [...parts.slice(1), ...extraArgs];
@@ -906,6 +968,8 @@ async function main() {
   // flag; those are config-only, which is why the trace IS the recording here —
   // it carries a frame-by-frame filmstrip, the DOM, network and console.
   if (opt.trace) args.push(`--trace=${opt.trace}`);
+  if (opt.testTimeoutMs > 0) args.push(`--timeout=${opt.testTimeoutMs}`);
+  if (opt.maxFailures > 0) args.push(`--max-failures=${opt.maxFailures}`);
 
   say(`running: ${m.command} ${args.join(" ")}`);
   say(`  base URL  ${baseUrl}`);
@@ -944,7 +1008,24 @@ async function main() {
     });
   }
   if (r.timedOut) {
-    cannotRun(`run exceeded --timeout-ms ${opt.timeoutMs}`, {
+    // Playwright writes its JSON report only at the end, so a killed run reports
+    // nothing through that channel. Its `list` reporter, however, has been
+    // streaming progress into logFile the whole time — which means the last spec
+    // it started IS known, and reporting "time ran out" without it is throwing
+    // away the only useful fact we have.
+    const tail = readLogTail(40);
+    const lastSpec = lastStartedSpec(tail);
+
+    cannotRun(
+      `run exceeded --timeout-ms ${opt.timeoutMs}` +
+        (lastSpec ? ` — last spec running: ${lastSpec}` : "") +
+        (opt.testTimeoutMs > 0
+          ? ""
+          : " — no per-test ceiling was set, so a single hanging spec can do this. " +
+            "Pass --test-timeout-ms to make the spec fail instead of the run"),
+      {
+      last_spec: lastSpec,
+      log_tail: tail,
       runner: m.runner,
       base_url: baseUrl,
       duration_ms: durationMs,

@@ -55,6 +55,26 @@ on:
         required: false
         type: string
         default: "playground"
+      test_timeout_ms:
+        description: >
+          Ceiling on ONE test. The whole-run ceiling cannot express this, and
+          without it a single hanging spec burns the entire budget and the run is
+          killed with no report — you learn that time ran out, not which spec ate
+          it. 90s is generous against Playground's WASM PHP while still capping a
+          runaway. Kept well below `timeout_ms` divided by `max_failures`, so a
+          run of failures cannot reach the whole-run ceiling before max_failures
+          stops it — two ceilings that contradict each other report nothing.
+        required: false
+        type: number
+        default: 45000
+      max_failures:
+        description: >
+          Stop after this many failures. A suite that is going to fail twenty
+          times has told you everything useful by the fifth, and the rest is
+          metered minutes.
+        required: false
+        type: number
+        default: 3
       timeout_ms:
         description: "Hard ceiling on the suite run itself, in milliseconds."
         required: false
@@ -315,6 +335,8 @@ jobs:
           node ../claudegrill/plugins/claudegrill/scripts/run-suite.mjs \
             --tier fresh --install --json --full-results $SCOPE_ARGS \
             --timeout-ms ${{ inputs.timeout_ms }} \
+            --test-timeout-ms ${{ inputs.test_timeout_ms }} \
+            --max-failures ${{ inputs.max_failures }} \
             --base-url "$TGQA_BASE_URL" > ../suite.json
           echo "exit=$?" >> "$GITHUB_OUTPUT"
           cat ../suite.json
