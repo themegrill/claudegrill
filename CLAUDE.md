@@ -595,6 +595,27 @@ decision in the suite layer.
     gate first and falls back to the licence row only when the gate cannot be
     evaluated. A gate reporting FALSE still fails, always.
 
+- **Four spec files converted to the fast path, measured.** `grid-columns`,
+  `blog-layout-image-position`, `excerpt-length-and-read-more` and
+  `transparent-header` now set theme mods over HTTP instead of driving the
+  Customizer. Full `@pro` set on the local site: **20/21 passing in 82.4s**,
+  3.9s/test. The one failure — "Blog Layout 1 Style 2 mirrors it" — was checked
+  against the ORIGINAL file and fails identically there, so it is pre-existing
+  and not caused by the conversion. Projected on Playground: ~24s/test, so a
+  12-test scoped CI run is ~4.8 min against an 8-minute ceiling.
+
+  Only the proven shape was converted — `customizer.open()` immediately followed
+  by `publishControls()`. Four files use `open({ control })` + `publishControl()`
+  instead (`scroll-to-top`, `breadcrumb`, `reading-progress-bar`,
+  `dynamic-css-empty-declarations`); passing a control id to `open()` plausibly
+  asserts that the control EXISTS in the Customizer UI, and converting them
+  blindly would delete that check silently. They need reading individually.
+
+- **`progressFromLog` undercounted every slow test.** Playwright prints `(1.1m)`
+  for anything over a minute and the duration regex matched only `ms|s`, so the
+  timeout that had completed eight tests reported "got through 2". Minutes are
+  now parsed.
+
 **Not verified**
 
 - **`license.mjs check-all` against the stores with real keys.** The product-side

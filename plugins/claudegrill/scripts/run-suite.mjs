@@ -660,8 +660,13 @@ function progressFromLog(lines) {
     // before every spec, and a hang THERE is the case most likely to produce a
     // timeout with no specs finished. Excluding it reported "nothing ran" for a
     // run whose setup was the thing that died.
-    const m = raw.match(/(\S+\.[cm]?[jt]sx?:\d+:\d+.*?)\s+\((\d+(?:\.\d+)?)(m?s)\)\s*$/);
-    if (m) done.push({ title: m[1].trim(), ms: m[3] === "s" ? Number(m[2]) * 1000 : Number(m[2]) });
+    // Playwright prints ms, s AND m — "(1.1m)" for anything over a minute, which
+    // is every slow spec. Matching only ms|s undercounted exactly the tests worth
+    // counting, and reported "got through 2" for a run that had done eight.
+    const m = raw.match(/(\S+\.[cm]?[jt]sx?:\d+:\d+.*?)\s+\((\d+(?:\.\d+)?)(ms|s|m)\)\s*$/);
+    if (!m) continue;
+    const mult = m[3] === "m" ? 60000 : m[3] === "s" ? 1000 : 1;
+    done.push({ title: m[1].trim(), ms: Number(m[2]) * mult });
   }
   if (!done.length) return { completed: 0, last: null, slowest: null };
   const slowest = done.reduce((a, b) => (b.ms > a.ms ? b : a));
