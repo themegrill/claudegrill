@@ -637,7 +637,11 @@ function progressFromLog(lines) {
   for (const raw of lines) {
     // `  ok 12 [project] > path/to.spec.ts:31:5 > title (2.3s)` and its
     // ✓/✘/skipped variants. The duration suffix is what marks it finished.
-    const m = raw.match(/(\S+\.spec\.[cm]?[jt]sx?:\d+:\d+.*?)\s+\((\d+(?:\.\d+)?)(m?s)\)\s*$/);
+    // Any test file, not just `*.spec.*`: a setup project (`auth.setup.ts`) runs
+    // before every spec, and a hang THERE is the case most likely to produce a
+    // timeout with no specs finished. Excluding it reported "nothing ran" for a
+    // run whose setup was the thing that died.
+    const m = raw.match(/(\S+\.[cm]?[jt]sx?:\d+:\d+.*?)\s+\((\d+(?:\.\d+)?)(m?s)\)\s*$/);
     if (m) done.push({ title: m[1].trim(), ms: m[3] === "s" ? Number(m[2]) * 1000 : Number(m[2]) });
   }
   if (!done.length) return { completed: 0, last: null, slowest: null };
@@ -973,7 +977,14 @@ async function main() {
     // platform must never mutate a product's playwright.config.*. It takes a
     // comma list, so the machine-readable and human-readable reports coexist —
     // verified against Playwright 1.62.1.
-    `--reporter=${htmlDir ? "json,html" : "json"}`,
+    // `list` is here for one reason: it is the ONLY reporter that streams
+    // per-test progress as the run happens. `json` writes once at the end, so a
+    // run killed by the timeout produces nothing at all — and forcing json,html
+    // from the CLI also overrode the product config's own list reporter, which
+    // is how a timeout came to report "not one spec completed" when specs had in
+    // fact been completing all along. The stream costs nothing: under --json it
+    // is diverted into the log file, not the caller's output.
+    `--reporter=${htmlDir ? "list,json,html" : "list,json"}`,
   ];
   // Forced from the CLI for the same reason. There is no --video or --screenshot
   // flag; those are config-only, which is why the trace IS the recording here —
@@ -1030,9 +1041,9 @@ async function main() {
     cannotRun(
       `run exceeded --timeout-ms ${opt.timeoutMs}` +
         (progress.completed
-          ? ` — got through ${progress.completed} spec(s); last finished: ${progress.last}` +
+          ? ` — got through ${progress.completed} test(s); last finished: ${progress.last}` +
             (progress.slowest ? `; slowest seen: ${progress.slowest}` : "")
-          : " — not one spec completed, so the runner never really started") +
+          : " — not one test completed; if a `setup` project is configured, suspect that first") +
         (opt.testTimeoutMs > 0
           ? ""
           : " — no per-test ceiling was set, so a single hanging spec can do this. " +
