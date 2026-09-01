@@ -527,6 +527,28 @@ decision in the suite layer.
     The timeout path now reads that tail and names `last_spec`, the spec that was
     still running when the kill arrived.
 
+- **`--engine wp-env` cannot run the pro tier, and must not be offered as the
+  fix for Playground's slowness.** The wp-env branch of `boot-wp.mjs` ignores
+  `proMounts` entirely, never calls `stageMuPlugins()`, and emits no `probe_url`,
+  no `licensed` and no `probe` object. Switching `pro-suite.yml` to it would fail
+  at "Verify the licence resolved" with `pro code not loaded`, because there
+  would be no probe to ask. Teaching that branch to mount pro and stage the
+  mu-plugins is real work and is the prerequisite for any escape from
+  Playground's 6.2x penalty.
+
+- **Why the pro job kept hitting its ceiling — the arithmetic, not a guess.**
+  18 `@pro` specs run strictly serially (`workers: 1`, forced by the shared
+  `theme_mods` row) against an environment measured at 6.2x native. That is ~6
+  minutes of irreducible work against an 8-minute ceiling, and the ceiling also
+  contained a **redundant `pnpm install`**: the workflow's own step runs the
+  manifest's install command, and `--install` then made `run-suite.mjs` run it
+  again inside the timed window. `--install` is gone from both workflows.
+
+  The three-job matrix also paid ~2m10s of fixed setup three times for **two**
+  real environments — `pro` and `free-with-pro` boot identically, only
+  `unlicensed` differs. `run_unlicensed` now defaults to **false**: it spent
+  2m49s to run one spec, nearly all of it setup.
+
 **Not verified**
 
 - **`license.mjs check-all` against the stores with real keys.** The product-side

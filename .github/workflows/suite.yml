@@ -333,7 +333,7 @@ jobs:
           fi
 
           node ../claudegrill/plugins/claudegrill/scripts/run-suite.mjs \
-            --tier fresh --install --json --full-results $SCOPE_ARGS \
+            --tier fresh --json --full-results $SCOPE_ARGS \
             --timeout-ms ${{ inputs.timeout_ms }} \
             --test-timeout-ms ${{ inputs.test_timeout_ms }} \
             --max-failures ${{ inputs.max_failures }} \

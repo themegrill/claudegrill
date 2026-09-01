@@ -75,11 +75,18 @@ on:
       run_unlicensed:
         description: >
           Run the @unlicensed specs — pro code mounted, deliberately NO licence.
-          This is the state every customer passes through between installing and
+          The state every customer passes through between installing and
           activating, and no other job can observe it.
+
+          OFF by default, and that is a cost decision rather than a judgement
+          about its value. It needs its own site — an unlicensed boot — so it
+          cannot share the licensed job, and it spent 2m49s of metered time to
+          run ONE spec, nearly all of it fixed setup. The activation path also
+          changes far less often than the pro features do. Turn it on for merges
+          to the release branch, or dispatch it by hand.
         required: false
         type: boolean
-        default: true
+        default: false
       qa_ref:
         required: false
         type: string
@@ -593,7 +600,7 @@ jobs:
 
           node ../claudegrill/plugins/claudegrill/scripts/run-suite.mjs \
             --tier fresh $MODE_ARGS $AREA_ARGS \
-            --install --json --full-results \
+            --json --full-results \
             --timeout-ms ${{ inputs.timeout_ms }} \
             --test-timeout-ms ${{ inputs.test_timeout_ms }} \
             --max-failures ${{ inputs.max_failures }} \

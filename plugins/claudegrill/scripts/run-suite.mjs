@@ -623,19 +623,30 @@ function readLogTail(n) {
 }
 
 /**
- * The spec the `list` reporter had started but not finished.
+ * How far the runner actually got before it was killed.
  *
- * It prints a line per test, marking completion with a status glyph or a
- * duration. The last line carrying neither is the one still running when the
- * kill arrived — which is the spec that ate the budget.
+ * A previous version looked for a test the reporter had STARTED but not
+ * finished. There is no such line: Playwright's `list` reporter rewrites a
+ * status line in place on a TTY, and in CI — never a TTY — it prints only on
+ * COMPLETION. So the honest answer is the last test that finished plus how many
+ * did, which is exactly what distinguishes "one spec is hanging" from "all of
+ * them are slow and there were simply too many".
  */
-function lastStartedSpec(lines) {
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const l = lines[i].trim();
-    const m = l.match(/^(?:\d+\s+)?[›»\-\s]*(.*\.spec\.[cm]?[jt]sx?[^\s].*)$/);
-    if (m) return m[1].replace(/\s+\(\d+(?:\.\d+)?m?s\)\s*$/, "").trim();
+function progressFromLog(lines) {
+  const done = [];
+  for (const raw of lines) {
+    // `  ok 12 [project] > path/to.spec.ts:31:5 > title (2.3s)` and its
+    // ✓/✘/skipped variants. The duration suffix is what marks it finished.
+    const m = raw.match(/(\S+\.spec\.[cm]?[jt]sx?:\d+:\d+.*?)\s+\((\d+(?:\.\d+)?)(m?s)\)\s*$/);
+    if (m) done.push({ title: m[1].trim(), ms: m[3] === "s" ? Number(m[2]) * 1000 : Number(m[2]) });
   }
-  return null;
+  if (!done.length) return { completed: 0, last: null, slowest: null };
+  const slowest = done.reduce((a, b) => (b.ms > a.ms ? b : a));
+  return {
+    completed: done.length,
+    last: done[done.length - 1].title,
+    slowest: `${slowest.title} (${Math.round(slowest.ms / 1000)}s)`,
+  };
 }
 
 function runInProduct(command, extraArgs = [], env = process.env, timeoutMs = 0) {
@@ -1013,18 +1024,23 @@ async function main() {
     // streaming progress into logFile the whole time — which means the last spec
     // it started IS known, and reporting "time ran out" without it is throwing
     // away the only useful fact we have.
-    const tail = readLogTail(40);
-    const lastSpec = lastStartedSpec(tail);
+    const tail = readLogTail(60);
+    const progress = progressFromLog(tail);
 
     cannotRun(
       `run exceeded --timeout-ms ${opt.timeoutMs}` +
-        (lastSpec ? ` — last spec running: ${lastSpec}` : "") +
+        (progress.completed
+          ? ` — got through ${progress.completed} spec(s); last finished: ${progress.last}` +
+            (progress.slowest ? `; slowest seen: ${progress.slowest}` : "")
+          : " — not one spec completed, so the runner never really started") +
         (opt.testTimeoutMs > 0
           ? ""
           : " — no per-test ceiling was set, so a single hanging spec can do this. " +
             "Pass --test-timeout-ms to make the spec fail instead of the run"),
       {
-      last_spec: lastSpec,
+      completed: progress.completed,
+      last_completed: progress.last,
+      slowest_seen: progress.slowest,
       log_tail: tail,
       runner: m.runner,
       base_url: baseUrl,
