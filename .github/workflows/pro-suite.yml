@@ -261,6 +261,7 @@ jobs:
 
     permissions:
       contents: read
+      pull-requests: write   # to post the one result comment per mode
 
     env:
       # Which checkout holds the suite this mode runs.
@@ -706,17 +707,65 @@ jobs:
             --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
+      # Before the comment, deliberately: the upload is what mints the URL the
+      # comment links to.
       - name: Upload the report and the evidence
+        id: upload
         if: always() && steps.manifest.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: qa-pro-${{ matrix.mode }}-${{ inputs.pro_slug }}-${{ github.event.pull_request.number || github.run_id }}
+          # SUITE_DIR, not a hardcoded `product/`. The `pro` and `unlicensed`
+          # modes run the suite in `pro/`, so these globs matched nothing for
+          # them and the artifact carried the report with NO evidence behind it —
+          # 49.7 KB against free-with-pro's 6.59 MB on the same run. Every trace
+          # and screenshot those two modes captured was discarded at upload.
           path: |
             qa-report.html
-            product/playwright-report/**
-            product/**/test-results/**
+            ${{ env.SUITE_DIR }}/playwright-report/**
+            ${{ env.SUITE_DIR }}/test-results/**
+            ${{ env.SUITE_DIR }}/**/test-results/**
             suite.json
           if-no-files-found: ignore
+          retention-days: 14
+
+      # The check status is the gate; this comment is how a human reads the
+      # result without opening the Actions tab and hunting for a job log.
+      # pro-suite.yml never had one — suite.yml has posted a comment since it was
+      # written, and the omission here is why a failing pro run said nothing on
+      # the PR at all.
+      #
+      # The marker carries the MODE. Two or three matrix jobs run per PR and a
+      # shared marker would make them overwrite each other's verdict, leaving
+      # whichever finished last as the only one anyone sees.
+      - name: Post the result on the PR
+        if: always() && steps.manifest.outputs.found == 'true' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          MODE: ${{ matrix.mode }}
+        run: |
+          node claudegrill/plugins/claudegrill/scripts/report-suite.mjs \
+            --suite suite.json --index index.json --format md --out body.md \
+            --repo "$REPO" \
+            --sha "${{ github.event.pull_request.head.sha }}" \
+            --artifact-url "${{ steps.upload.outputs.artifact-url }}" \
+            --artifact-name "qa-pro-$MODE-${{ inputs.pro_slug }}-$PR" \
+            --run-url "${{ github.server_url }}/$REPO/actions/runs/${{ github.run_id }}"
+
+          # Distinguish this mode's comment from the other modes' in the same run.
+          printf '\n<!-- claudegrill-pro-%s -->\n' "$MODE" >> body.md
+          printf '\n_Pro QA — `%s` mode._\n' "$MODE" >> body.md
+
+          ID="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                 --jq "[.[] | select(.body | contains(\"<!-- claudegrill-pro-$MODE -->\"))][0].id // empty")"
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@body.md >/dev/null
+            echo "updated comment $ID"
+          else
+            gh pr comment "$PR" --repo "$REPO" --body-file body.md
+          fi
 
       # Private repos are metered at 2,000 minutes/month on Free. Printing the
       # cost of every run is how that stays visible without anyone remembering
