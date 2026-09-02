@@ -158,6 +158,84 @@ function expectedReceived(text) {
   return best.length >= 2 ? best.join("\n") : null;
 }
 
+/**
+ * The failure in the words a person can act on.
+ *
+ * Playwright's error text is two things stuck together: the sentence the SPEC
+ * AUTHOR wrote into the assertion — "Layout 1 / Style 2 should also place the
+ * featured image beside the text at 1440px. Measured image y=277, text y=911." —
+ * followed by the matcher's own output, `expect(received).toBe(expected)` and
+ * `Expected: true / Received: false`.
+ *
+ * The first half is the only part that means anything to someone who did not
+ * write the test. The second half was what the PR comment showed, which is how
+ * a comment came to say "Expected: true, Received: false" about a misplaced
+ * image and tell nobody anything.
+ *
+ * So: take the author's prose, and split it on the sentence that states the
+ * expectation versus the one that reports the measurement. When there is no
+ * prose — a bare timeout has no assertion site and therefore no message — say
+ * what ran out in plain words instead of printing the stack.
+ */
+function plainProblem(f) {
+  const raw = String(f.error_full ?? f.error ?? "").replace(/\r/g, "");
+
+  // Everything before the matcher's own output. `expect(` and a blank line are
+  // both reliable boundaries; whichever comes first wins.
+  let head = raw.split(/\n\s*\n/)[0] ?? "";
+  const exp = head.indexOf("expect(");
+  if (exp > 0) head = head.slice(0, exp);
+  head = head
+    .replace(/^\s*(?:\w*Error|Error)\s*:\s*/, "")
+    // Drop stack frames, which are whole lines of the form `    at file:12:3`.
+    // Deliberately line-anchored and requiring the line:column: an earlier
+    // version matched ` at ` anywhere and silently ate the rest of the author's
+    // sentence — "...beside the text at 1440px. Measured image y=277..." became
+    // "...beside the text", losing both the condition and the measurement.
+    .split("\n")
+    .filter((l) => !/^\s+at\s+\S*:\d+:\d+\)?\s*$/.test(l))
+    .join("\n")
+    .trim();
+
+  // Timeouts carry no author message. Say what timed out, in seconds.
+  const testTimeout = raw.match(/Test timeout of (\d+)ms exceeded/);
+  if (testTimeout) {
+    return {
+      expected: null,
+      actual:
+        `The test ran out of time after ${Math.round(Number(testTimeout[1]) / 1000)} seconds. ` +
+        "Something it was waiting for never happened.",
+    };
+  }
+  const waitTimeout = raw.match(/Timeout (\d+)ms exceeded/);
+  if (waitTimeout && !head) {
+    return {
+      expected: null,
+      actual:
+        `The page never reached the state the test was waiting for, after ` +
+        `${Math.round(Number(waitTimeout[1]) / 1000)} seconds.`,
+    };
+  }
+
+  if (!head) return { expected: null, actual: null };
+
+  // Split the author's prose: the sentence stating the expectation, and the one
+  // reporting what was actually seen. "Measured", "Got", "Received" and "was"
+  // are how these are written in practice across this suite.
+  const sentences = head.split(/(?<=\.)\s+/).map((x) => x.trim()).filter(Boolean);
+  const actualIdx = sentences.findIndex((x) => /^(Measured|Got|Received|Instead|The .* was)\b/i.test(x));
+
+  if (actualIdx > 0) {
+    return {
+      expected: sentences.slice(0, actualIdx).join(" "),
+      actual: sentences.slice(actualIdx).join(" "),
+    };
+  }
+  // No measurement sentence: the whole message states the expectation, and the
+  // fact that it failed is what happened.
+  return { expected: head, actual: null };
+}
+
 // -------------------------------------------------------------------- verdict
 
 /**
@@ -244,42 +322,59 @@ function failureMarkdown(f, i) {
   const d = diagnoseFn(f);
   const out = [];
 
-  out.push(`<details open><summary><b>${i + 1}. ${escapeMd(f.title)}</b></summary>`, "");
-  // One line: GitHub turns a single newline inside a paragraph into a break,
-  // which would stack these three fragments down the comment.
-  const meta = [`**Broke at** ${link ? `[\`${at}\`](${link})` : `\`${at}\``}`];
-  if (f.area) meta.push(`area \`${f.area}\``);
-  if ((f.guards ?? []).length) meta.push(`guards ${f.guards.map((g) => `\`${g}\``).join(", ")}`);
-  out.push(meta.join(" · "), "");
+  // Plain title first. The tier and area tags are noise to a reader and are
+  // already in the technical block below.
+  const cleanTitle = String(f.title ?? "").replace(/\s*@[\w-]+/g, "").trim();
+  out.push(`#### ${i + 1}. ${escapeMd(cleanTitle || f.title)}`, "");
 
-  // The docblock's own sentence about why this spec exists. On a failure it is
-  // the most useful line available: it names the behaviour that just stopped.
-  if (f.why) out.push(`**This spec exists because:** ${escapeMd(f.why)}`, "");
-
-  out.push(`**Usually means:** ${d.cause}.`);
-  out.push(`**Check first:** ${d.check}.`, "");
-
-  const er = expectedReceived(f.error_full ?? f.error);
-  if (er) out.push("```diff", er, "```", "");
-
-  if (f.error_snippet) {
-    out.push("```", clip(f.error_snippet, 1200), "```", "");
-  } else if (f.error_full ?? f.error) {
-    out.push("```", clip(f.error_full ?? f.error, 1200), "```", "");
+  const p = plainProblem(f);
+  if (p.expected) out.push(`**What should happen:** ${escapeMd(p.expected)}`, "");
+  // "instead" only reads as English when something was stated first. A bare
+  // timeout has no expectation to contrast with.
+  if (p.actual) {
+    out.push(`**What happened${p.expected ? " instead" : ""}:** ${escapeMd(p.actual)}`, "");
   }
+  if (!p.expected && !p.actual) {
+    out.push("**What happened:** the check did not pass. The technical detail is below.", "");
+  }
+
+  // Why anyone should care that this particular check broke. Written by a human
+  // in the spec's docblock, so it is already in plain language.
+  if (f.why) out.push(`**Why this matters:** ${escapeMd(f.why)}`, "");
 
   if (f.retries > 0) {
-    out.push(`Retried ${f.retries} time${s(f.retries)} and failed every time.`, "");
+    out.push(`This was retried ${f.retries} time${s(f.retries)} and failed every time.`, "");
   }
+
+  // Everything a developer needs and a reader does not, folded away. The
+  // diagnosis lines and the raw matcher output live here now: "the product did
+  // something different from what the spec asserts" is true of every failure and
+  // told nobody anything at the top of a comment.
+  const tech = [];
+  tech.push(`Location: ${link ? `[\`${at}\`](${link})` : `\`${at}\``}`, "");
+  if (f.area) tech.push(`Area: \`${f.area}\``, "");
+  if ((f.guards ?? []).length) tech.push(`Guards: ${f.guards.map((g) => `\`${g}\``).join(", ")}`, "");
+  if (d?.cause) tech.push(`Likely cause: ${d.cause}. ${d.check ? `Check ${d.check}.` : ""}`.trim(), "");
+
+  const er = expectedReceived(f.error_full ?? f.error);
+  if (er) tech.push("```diff", er, "```", "");
+  if (f.error_snippet) tech.push("```", clip(f.error_snippet, 1000), "```", "");
+  else if (f.error_full ?? f.error) tech.push("```", clip(f.error_full ?? f.error, 1000), "```", "");
 
   const ev = evidenceOf(f);
   const bits = [];
   if (ev.screenshot.length) bits.push(`${ev.screenshot.length} screenshot${s(ev.screenshot.length)}`);
   if (ev.trace.length) bits.push(`${ev.trace.length} trace${s(ev.trace.length)}`);
   if (ev.video.length) bits.push(`${ev.video.length} video${s(ev.video.length)}`);
-  if (bits.length) out.push(`**Evidence:** ${bits.join(", ")} — in the report below.`, "");
+  if (bits.length) {
+    out.push(
+      `${bits.join(" and ")} of this failure ${bits.length > 1 || !/^1 /.test(bits[0]) ? "are" : "is"} ` +
+        "in the report linked at the bottom.",
+      "",
+    );
+  }
 
-  out.push("</details>");
+  out.push("<details><summary>Technical detail</summary>", "", ...tech, "</details>", "");
   return out;
 }
 
@@ -302,23 +397,21 @@ function markdown(detailed = false) {
   out.push(...v.lines);
 
   if (v.state === "passed" || v.state === "failed") {
+    // One sentence a person can read, then the numbers. The old first line was
+    // four counts and three jargon words before anything said what happened.
     out.push(
-      `**${r.passed} passed · ${r.failed} failed · ${r.skipped} skipped · ${r.flaky} flaky**`,
-      `tier \`${r.tier}\` · ${secs(r.duration_ms)} · ${r.total} tests`,
+      r.failed > 0
+        ? `**${r.failed} of ${r.total} checks failed.** The rest passed.`
+        : `**All ${r.total} checks passed.**`,
+      "",
+      `<sub>${r.passed} passed · ${r.failed} failed · ${r.skipped} skipped · ` +
+        `${r.flaky} flaky · ${secs(r.duration_ms)}</sub>`,
       "",
     );
     out.push(...scopeLines());
 
-    if (r.ok) {
-      out.push(
-        "**This covers only the areas that have specs** — see the coverage note",
-        "below before treating it as full assurance.",
-        "",
-      );
-    }
-
     if ((r.failures ?? []).length) {
-      out.push("### What failed", "");
+      out.push("---", "", "### What failed", "");
       // A budget, not a count: one enormous failure and twenty small ones
       // should both post. Exceeding GitHub's ceiling loses the whole comment.
       let used = out.join("\n").length;
@@ -358,9 +451,12 @@ function markdown(detailed = false) {
     }
   }
 
+  // The download goes LAST, and the coverage note is no longer here at all.
+  // Both were above or beside the failures and neither helps someone find out
+  // what broke; the coverage breakdown is in `qa-report.html`, where a reader
+  // who wants it has gone looking for it.
   out.push(...evidenceLinks());
-  out.push(...coverageLines(detailed));
-  out.push("", "<sub>Deterministic check — no AI, no API cost. The suite runs what developers committed.</sub>");
+  out.push("", "<sub>Automated check — no AI involved. It runs the tests in this branch.</sub>");
 
   let body = out.join("\n");
   if (body.length > opt.maxBytes) body = body.slice(0, opt.maxBytes - 200) + "\n\n_… truncated._";
@@ -379,28 +475,43 @@ function evidenceLinks() {
   const anything = (r.failures ?? []).length || (r.flaky_tests ?? []).length;
   if (!anything) return out;
 
-  out.push("", "---", "", "### The full report");
+  out.push("", "---", "", "### See it for yourself");
+
+  // GitHub only ever serves an artifact as a .zip and will not render an HTML
+  // file attached to a comment, so the readable report cannot be linked
+  // directly. That is why everything a reader needs is written ABOVE this line
+  // and the download is the deep dive, not the destination.
   if (opt.artifactUrl) {
     out.push(
       "",
-      `Download [**${opt.artifactName ?? "the QA artifact"}**](${opt.artifactUrl}) and open ` +
-        "`qa-report.html` — screenshots, the error in full, and what was and was not checked.",
+      `**[Download the full report](${opt.artifactUrl})** ` +
+        `(\`${opt.artifactName ?? "qa-report"}.zip\`). Unzip it and open **\`qa-report.html\`** ` +
+        "in any browser — it shows each failure with screenshots of the page at the " +
+        "moment it broke, and what the run did and did not check.",
     );
   } else if (opt.runUrl) {
-    out.push("", `The artifact is on [the run](${opt.runUrl}) — open \`qa-report.html\` inside it.`);
+    out.push(
+      "",
+      `**[Open the run](${opt.runUrl})**, download the artifact at the bottom of the page, ` +
+        "and open `qa-report.html` inside it.",
+    );
   }
   if (r.trace_mode && r.trace_mode !== "off") {
     out.push(
       "",
-      "For a step-by-step replay of a failing test — every action, the DOM at each " +
-        "step, network and console — unzip it and run:",
+      "<details><summary>Replaying a failure step by step (developers)</summary>",
+      "",
+      "The archive also carries a Playwright trace — every click, the page at each " +
+        "step, network and console. From the unzipped folder:",
       "",
       "```",
       `npx playwright show-report ${r.html_report ?? "playwright-report"}`,
       "```",
       "",
-      "<sub>The trace needs that command rather than opening the file directly; a " +
-        "trace viewer cannot start from a `file://` page.</sub>",
+      "It needs that command rather than opening the file directly: a trace viewer " +
+        "cannot start from a `file://` page.",
+      "",
+      "</details>",
     );
   }
   return out;

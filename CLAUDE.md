@@ -692,6 +692,30 @@ decision in the suite layer.
   `3 × 45s = 135s` rebalance recorded earlier is now moot rather than wrong:
   headroom went from 345s to 1665s.
 
+- **The PR comment rewritten for a reader, not a runner.** It led with
+  `Expected: true / Received: false` about a misplaced image, and with "the
+  product did something different from what the spec asserts" — true of every
+  failure, useful for none. Playwright's error text is two things joined: the
+  sentence the SPEC AUTHOR wrote into the assertion, then the matcher's own
+  output. `plainProblem()` takes the first and splits it into **What should
+  happen** / **What happened instead**; timeouts, which have no assertion site
+  and so no message, are rendered as "ran out of time after 45 seconds" rather
+  than a stack. Diagnosis lines, the raw matcher output and the code frame moved
+  into a collapsed *Technical detail*; the coverage breakdown left the comment
+  entirely for `qa-report.html`, and the download moved to the bottom.
+
+  One bug found by rendering it: the stack-frame stripper was `/\s+at\s+[^\n]*$/`,
+  which matched the word "at" in prose and silently ate the rest of the author's
+  sentence — "…beside the text at 1440px. Measured image y=277…" rendered as
+  "…beside the text", losing the condition AND the measurement. It is now
+  line-anchored and requires a `:line:col`. All five verdict branches x three
+  formats re-rendered without throwing, against the real failing run's own JSON.
+
+  GitHub serves artifacts only as `.zip` and will not render an HTML file
+  attached to a comment, so the readable report cannot be linked directly. That
+  is why the comment now carries the explanation itself and the archive is the
+  deep dive rather than the destination.
+
 **Not verified**
 
 - **`scope: specs` in a real run.** Every piece is proved locally and the
