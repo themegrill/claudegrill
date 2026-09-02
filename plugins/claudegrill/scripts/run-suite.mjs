@@ -45,6 +45,13 @@ const qaHome = resolveQaHome(here);
 const opt = {
   tier: "fresh",
   area: null, // null | string[]
+  // Specific spec FILES to run, repo-relative. Narrower than --area, and
+  // composes with the tier and pro filters rather than replacing them the way
+  // --grep does. Its reason for existing: a developer who ran /verify-fix has
+  // already committed the guard for this change on this branch, so the specs the
+  // diff touched are the ones that speak to it — running every spec in their
+  // AREA costs multiples of that for coverage the branch did not change.
+  spec: null, // null | string[]
   baseUrl: null,
   boot: null, // null | "playground" | "wp-env"
   pro: false,       // mount pro, licence it, and include @pro specs
@@ -74,6 +81,13 @@ for (let i = 0; i < argv.length; i++) {
     // one area, and running one area per invocation would boot and tear down
     // the runner N times for no reason.
     opt.area = (opt.area ?? []).concat(
+      argv[++i].split(",").map((x) => x.trim()).filter(Boolean),
+    );
+  }
+  else if (a === "--spec") {
+    // Comma-separated repo-relative spec paths, e.g.
+    // `--spec tests/e2e/specs/header/color-switcher.spec.ts,tests/e2e/specs/…`.
+    opt.spec = (opt.spec ?? []).concat(
       argv[++i].split(",").map((x) => x.trim()).filter(Boolean),
     );
   }
@@ -1019,6 +1033,15 @@ async function main() {
   if (opt.trace) args.push(`--trace=${opt.trace}`);
   if (opt.testTimeoutMs > 0) args.push(`--timeout=${opt.testTimeoutMs}`);
   if (opt.maxFailures > 0) args.push(`--max-failures=${opt.maxFailures}`);
+
+  // Spec files last, as POSITIONAL arguments — Playwright treats each as a
+  // regex matched against the file path, so the separators and the `.ts` are
+  // escaped rather than left to match any character. They compose with the tier
+  // and pro --grep above (unlike --grep itself, where a second flag wins), and
+  // a project `dependencies` setup project still runs: verified against
+  // ColorMag Pro's real config, whose `setup` project produces the storageState
+  // every other project needs.
+  for (const s of opt.spec ?? []) args.push(escapeRe(s.split(path.sep).join("/")));
 
   say(`running: ${m.command} ${args.join(" ")}`);
   say(`  base URL  ${baseUrl}`);

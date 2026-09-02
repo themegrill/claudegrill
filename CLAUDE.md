@@ -616,7 +616,95 @@ decision in the suite layer.
   timeout that had completed eight tests reported "got through 2". Minutes are
   now parsed.
 
+- **The Customizer teardown was half the pro tier's cost, and it is gone.**
+  `pro.ts`'s `customizer` fixture restored by re-opening the Customizer and
+  republishing, so every Customizer spec paid the round trip TWICE. That is why
+  `reading-progress-bar` burned 90s against a 45s ceiling in CI: 45s for the
+  test, 45s more tearing down. It now snapshots the mods over
+  `tgqa-theme-mod.php` before the first publish and posts them back in one
+  request, **verified by reading them back** and falling through to the
+  Customizer path if the read-back disagrees or the endpoint is absent.
+  Measured on the real site: full `@pro` tier **82.4s → 66s** from the teardown
+  alone, zero fallbacks.
+
+- **`color-switcher.spec.ts` converted, and proved by mutation.** It was one of
+  the two CI failures. Both its publishes were `publishControls()` — the shape
+  already proven convertible — so placement now goes over HTTP: **63.7s and
+  failing in CI, 7.2s locally before, 1.2s after.** The Customizer's ability to
+  save `colormag_header_builder` is still covered by `off-canvas-drawer` and
+  `off-canvas-escape-after-search`, which drive the same setting through the UI.
+  Proved it can still fail: with the placement mutated to `[]` it fails on the
+  **assertion** ("must render its checkbox"), not a timeout, and passes when
+  restored. Full tier after both changes: **21 tests, 20 passed, 55.2s**, the one
+  failure being the pre-existing Style 2 layout bug, which also fails locally.
+
+- **`themeMod.get()`**, because a nested setting has to be read before it can be
+  modified — `colormag_header_builder` holds every header element's placement at
+  once and writing a fragment wipes the rest. Returns `null` for a mod with no
+  row rather than inventing a default.
+
+- **Spec-level PR scoping — `run-suite.mjs --spec`.** Area scoping over-selects:
+  PR #303 changed 28 files, mapped to 4 areas, and ran **18 tests** — while
+  `pr-scope.mjs` had already computed the 6 spec files the diff touched and
+  **both workflows threw that list away**, writing only `run`/`areas`/`ok`/
+  `reason` to `GITHUB_OUTPUT`. `--spec` takes repo-relative paths as escaped
+  positional Playwright filters and **composes with `--tier` and `--pro`**
+  (unlike `--grep`, which replaces them). Verified against ColorMag Pro's real
+  config: exactly the named files run, the `setup` project still runs so
+  `storageState` still exists, and a stale path reports `ran_nothing` (exit 2)
+  rather than passing on zero tests.
+
+- **`pr-scope.mjs` now recommends a `mode`, and refuses to narrow when it must
+  not.** `mode: "specs"` requires BOTH that the diff changed spec files — a
+  source-only diff falls back to areas, or a fix pushed without a spec would run
+  nothing — AND that no harness file changed, since a changed fixture can break
+  any spec. All five branches exercised in a throwaway repo: source+spec →
+  specs, +harness → areas, source-only → areas, spec-only → specs, docs-only →
+  nothing. Against the real PR #303 branch it correctly answers **`areas`**,
+  because that diff touches `tests/e2e/fixtures/`.
+
+  `scope: specs` is opt-in on both workflows and defaults off. The trade is
+  stated in the input's own description and printed in the run summary on every
+  narrowed run: a spec in a touched area that the branch did not edit does not
+  run. Both workflows' embedded summary scripts were extracted and run against
+  fixtures for all four branches, including "pr-scope said specs but the caller
+  asked for changed", which must fall back to areas — it does.
+
+- **The run ceiling is 30 minutes and the job ceiling is 40.** `timeout_ms`
+  480000 → 1800000 on both workflows; `timeout-minutes` 15 → 40 on both run jobs.
+  The two must never be equal: the job ceiling kills the process tree and reports
+  nothing, while `run-suite.mjs`'s own ceiling stops the run and still names the
+  spec that was executing. Equal ceilings race, and the useless one can win —
+  which is exactly what made the first pro run undiagnosable.
+
+  This reverses an earlier deliberate constraint, at the team's instruction. The
+  reasoning behind that constraint still holds and is worth keeping in view:
+  minutes are metered per minute USED, so a raised ceiling costs nothing until a
+  run needs it — but a ceiling high enough to hide a runaway stops reporting one.
+  The scoping work above is what keeps ordinary runs at a few minutes; the
+  ceiling is now only a backstop.
+
+  **`test_timeout_ms` was deliberately NOT raised.** The CI failures never
+  reached it: `color-switcher` died on the fixture's hard-coded 30s
+  `wp.customize.state('saved')` wait, which no CLI flag reaches, and several
+  specs call `test.setTimeout()` in their body, which always beats `--timeout`.
+  Raising it makes a hang cost more without making anything pass. The
+  `3 × 45s = 135s` rebalance recorded earlier is now moot rather than wrong:
+  headroom went from 345s to 1665s.
+
 **Not verified**
+
+- **`scope: specs` in a real run.** Every piece is proved locally and the
+  workflows parse, but no CI run has used it: the callers still pin an older
+  claudegrill SHA and neither passes `scope: specs`.
+- **Whether the remaining nine Customizer-driving specs fit the ceiling.** Three
+  are `*-three-way` and must keep the round trip — it is their subject. The
+  other six (`breadcrumb`, `reading-progress-bar`, `scroll-to-top`,
+  `dynamic-css-empty-declarations`, and the two `off-canvas` ones) still pay one
+  ~30s publish each on Playground against the fixture's hard-coded 30s wait, so
+  they remain marginal there. Note also that the Playground penalty is NOT all
+  Customizer: `grid-columns` is already on the fast path and still costs ~22s per
+  test in CI against 1.8s locally, which is seeding and page loads under WASM.
 
 - **`license.mjs check-all` against the stores with real keys.** The product-side
   half of the `valid` branch is now proved (see the probe result under Verified),

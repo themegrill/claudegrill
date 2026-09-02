@@ -106,16 +106,54 @@ const r = affectedAreas(cf.files, m.manifest, specIndex);
 // report the rest as a gap.
 const areas = r.areas ?? [];
 const gaps = [...(r.unmapped ?? []), ...(r.harness ?? [])];
+const specs = r.specs ?? [];
+
+/**
+ * Can this run be narrowed from AREAS to the individual SPEC FILES the branch
+ * changed?
+ *
+ * The premise is the team's own workflow: the developer runs /verify-fix while
+ * writing the fix, write-spec commits the guard onto the same branch, and CI
+ * sees a diff that already contains the deterministic assertion for the change.
+ * When that is what the diff looks like, those spec files ARE the check, and
+ * running every other spec that happens to share their area is paying for
+ * coverage the branch did not touch.
+ *
+ * Two conditions, and both are load-bearing:
+ *
+ *   1. The diff changed at least one spec file. A source-only diff has no
+ *      committed guard, so it falls back to areas — otherwise a fix pushed
+ *      without a spec would run NOTHING, which is worse than what this replaces.
+ *   2. The harness did not change. A changed fixture or config can break any
+ *      spec, so narrowing to the ones the diff names would be exactly wrong;
+ *      `affectedAreas` already forces the full tier for that case and this must
+ *      not undercut it.
+ *
+ * The trade is stated rather than hidden: an existing spec in a touched area
+ * that the branch did not edit will NOT run in this mode. That is a real
+ * reduction in coverage per PR, taken deliberately to keep a run inside its
+ * ceiling, and `areas` is still emitted so a caller can choose otherwise.
+ */
+const harnessChanged = (r.harness ?? []).length > 0;
+const specMode = specs.length > 0 && !harnessChanged;
 
 out({
   ok: true,
-  run: areas.length > 0,
+  run: areas.length > 0 || specs.length > 0,
+  // What a caller SHOULD narrow to, given the diff. The caller still decides:
+  // suite.yml honours it only under `scope: specs`.
+  mode: specMode ? "specs" : "areas",
   areas,
   changed: cf.files.length,
-  specs: r.specs ?? [],
+  specs,
+  // The specs a `mode: "specs"` run would skip that an `areas` run would have
+  // executed cannot be known here without indexing the whole suite, so the
+  // areas are reported instead and the workflow names them in its summary.
   unmapped: gaps,
   would_have_run_full: Boolean(r.full),
-  reason: areas.length
-    ? `${cf.files.length} changed file(s) map to ${areas.length} area(s): ${areas.join(", ")}`
-    : `${cf.files.length} changed file(s) map to no spec area — nothing to run`,
+  reason: specMode
+    ? `${cf.files.length} changed file(s) include ${specs.length} spec file(s): ${specs.join(", ")}`
+    : areas.length
+      ? `${cf.files.length} changed file(s) map to ${areas.length} area(s): ${areas.join(", ")}`
+      : `${cf.files.length} changed file(s) map to no spec area — nothing to run`,
 });

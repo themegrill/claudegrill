@@ -47,6 +47,18 @@ on:
           falling back to the full tier whenever a changed source file matches
           no pattern. "full" always runs the whole @fresh tier. Scheduled and
           push runs should use "full".
+
+
+          "specs" narrows further: when the diff contains spec files and does not
+          touch the harness, it runs EXACTLY those spec files and nothing else.
+          That matches how the team works — /verify-fix writes the guard and the
+          developer commits it with the fix, so the branch already carries the
+          deterministic assertion for its own change. It is the mode to choose
+          when a run cannot fit its ceiling any other way. The trade is explicit:
+          an existing spec in a touched area that this branch did not edit will
+          not run, so a change that breaks a NEIGHBOURING guard ships unnoticed
+          until the next full run. A diff with no spec files, or one that touches
+          a fixture, falls back to "changed" behaviour on its own.
         required: false
         type: string
         default: "changed"
@@ -60,7 +72,7 @@ on:
           Ceiling on ONE test. The whole-run ceiling cannot express this, and
           without it a single hanging spec burns the entire budget and the run is
           killed with no report — you learn that time ran out, not which spec ate
-          it. 90s is generous against Playground's WASM PHP while still capping a
+          it. 45s is generous against Playground's WASM PHP while still capping a
           runaway. Kept well below `timeout_ms` divided by `max_failures`, so a
           run of failures cannot reach the whole-run ceiling before max_failures
           stops it — two ceilings that contradict each other report nothing.
@@ -76,10 +88,23 @@ on:
         type: number
         default: 3
       timeout_ms:
-        description: "Hard ceiling on the suite run itself, in milliseconds."
+        description: >
+          Hard ceiling on the suite run itself, in milliseconds. 30 minutes.
+
+
+          This is a ceiling, not a budget: a scoped run finishes in a few minutes
+          and is charged for what it used, so raising it costs nothing until a
+          run actually needs the room. What it buys is that a slow-but-honest run
+          FINISHES and reports, instead of being killed with a report Playwright
+          had not written yet.
+
+
+          The job's own `timeout-minutes` must stay comfortably ABOVE this, or
+          GitHub kills the process tree first and you learn only that time ran
+          out — never which spec ate it.
         required: false
         type: number
-        default: 480000
+        default: 1800000
 
     secrets:
       QA_REPO_TOKEN:
@@ -92,7 +117,13 @@ on:
 jobs:
   suite:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Above `timeout_ms` (30 min), not equal to it. The job ceiling kills the
+    # process tree outright and reports nothing; `run-suite.mjs`'s own ceiling
+    # stops the run and still writes a report naming the spec that was running.
+    # Equal ceilings would race, and the one that reports nothing could win.
+    # The margin covers checkout, dependencies, the boot and the upload —
+    # measured at ~2m15s together.
+    timeout-minutes: 40
 
     # Read-only except for the checks the annotations produce. No comment is
     # posted and nothing is written back to the PR: the job's own pass/fail is
@@ -165,6 +196,8 @@ jobs:
       # on every PR that has one rather than hidden behind a full run.
       - name: Work out what this PR touches
         id: scope
+        env:
+          SCOPE_INPUT: ${{ inputs.scope }}
         run: |
           set -o pipefail
 
@@ -187,14 +220,30 @@ jobs:
             fs.appendFileSync(out, `areas=${(s.areas||[]).join(",")}\n`);
             fs.appendFileSync(out, `ok=${s.ok ? "true" : "false"}\n`);
             fs.appendFileSync(out, `reason=${s.reason}\n`);
+            // The spec list and the mode pr-scope.mjs recommends. Whether they
+            // are USED is the caller`s decision (inputs.scope), so both are
+            // always emitted and the run step chooses.
+            fs.appendFileSync(out, `specs=${(s.specs||[]).join(",")}\n`);
+            fs.appendFileSync(out, `mode=${s.mode || "areas"}\n`);
             const sum = process.env.GITHUB_STEP_SUMMARY;
             const gaps = s.unmapped || [];
+            const specMode = process.env.SCOPE_INPUT === "specs" && s.mode === "specs";
             if (!s.ok) {
               fs.appendFileSync(sum, `### could not work out the PR scope\n\n${s.reason}\n`);
             } else if (!s.run) {
               fs.appendFileSync(sum, `### nothing to run\n\n${s.reason}\n\n` +
                 (gaps.length ? `These changed files match no \`area_paths\` pattern, so **nothing tested them**:\n\n` +
                   gaps.map((f) => `- \`${f}\``).join("\n") + `\n\nAdd them to \`area_paths\` in .themegrill-qa/suite.json.\n` : ""));
+            } else if (specMode) {
+              // Say what was NOT run, every time. A narrowed run that reports
+              // only what it did is the shape of check that is trusted for more
+              // than it checked.
+              fs.appendFileSync(sum, `Scope: **${s.specs.length} spec file(s) this branch changed** (${s.changed} changed files)\n\n` +
+                s.specs.map((f) => `- \`${f}\``).join("\n") +
+                `\n\nOther specs in ${s.areas.length ? `**${s.areas.join(", ")}**` : "the touched areas"} did **not** run — ` +
+                `\`scope: specs\` tests the guard this branch committed, not the whole area.\n`);
+              if (gaps.length) fs.appendFileSync(sum, `\n${gaps.length} changed file(s) map to no area:\n\n` +
+                gaps.map((f) => `- \`${f}\``).join("\n") + `\n`);
             } else {
               fs.appendFileSync(sum, `Scope: **${s.areas.join(", ")}** (${s.changed} changed files)\n`);
               if (gaps.length) fs.appendFileSync(sum, `\n${gaps.length} changed file(s) map to no area and were **not** covered:\n\n` +
@@ -330,6 +379,19 @@ jobs:
           SCOPE_ARGS="--area '${{ steps.scope.outputs.areas }}'"
           if [ -z "${{ steps.scope.outputs.areas }}" ] || [ "${{ inputs.scope }}" = "full" ]; then
             SCOPE_ARGS=""
+          fi
+
+          # `scope: specs` REPLACES the area filter with the spec files this
+          # branch changed, and only when pr-scope.mjs said that is safe — it
+          # answers "areas" whenever the diff has no spec files or touched a
+          # fixture, and this must not override that judgement.
+          #
+          # --spec composes with --tier and --pro (unlike --grep, which replaces
+          # them), so a @demo test inside a changed spec file still does not run
+          # on a runner that cannot support it.
+          if [ "${{ inputs.scope }}" = "specs" ] && [ "${{ steps.scope.outputs.mode }}" = "specs" ] \
+             && [ -n "${{ steps.scope.outputs.specs }}" ]; then
+            SCOPE_ARGS="--spec '${{ steps.scope.outputs.specs }}'"
           fi
 
           node ../claudegrill/plugins/claudegrill/scripts/run-suite.mjs \
