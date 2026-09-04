@@ -6,8 +6,10 @@ name: QA suite — pro (reusable)
 # 1. THIS WORKFLOW IS CALLED FROM THE PRO REPO, so the pro code under test is
 #    the CALLER's own checkout — `secrets.GITHUB_TOKEN` reaches it, because it
 #    is the repository running the workflow. The free product it extends is a
-#    separate, PUBLIC repo, which the same token can also clone. No GitHub App,
-#    no installation token, nothing for an org admin to install per product.
+#    SEPARATE repo, and that token does not reach it unless it is public.
+#    ColorMag free is public and clones with no extra secret; Zakra free is
+#    PRIVATE and needs `QA_REPO_TOKEN`. Still no GitHub App and no installation
+#    token — a read-scoped PAT in the calling repo's secrets is enough.
 #
 #    An earlier version minted an App token to check out `pro_repo` — the very
 #    repository the workflow was already running in — while never checking out
@@ -46,9 +48,11 @@ on:
         type: string
       product_repo:
         description: >
-          owner/name of the FREE product repo, e.g. ThemeGrill/colormag. Public,
-          so `GITHUB_TOKEN` clones it. Required because the pro code under test
-          comes from the caller and the free product must come from somewhere.
+          owner/name of the FREE product repo, e.g. ThemeGrill/colormag.
+          Required, because the pro code under test comes from the caller and the
+          free product has to come from somewhere. If it is private — Zakra is,
+          ColorMag is not — the caller must also pass `QA_REPO_TOKEN`;
+          `GITHUB_TOKEN` reaches only the repository this workflow runs in.
         required: true
         type: string
       product_ref:
@@ -165,7 +169,11 @@ on:
 
     secrets:
       QA_REPO_TOKEN:
-        description: "Read access to the private claudegrill repo."
+        description: >
+          A token with `contents: read` on the FREE product repo — needed
+          whenever that repo is private, because `GITHUB_TOKEN` is scoped to the
+          calling repository alone. Also used for the claudegrill checkout, which
+          no longer needs it now that this repo is public.
         required: false
       TGQA_LICENSE_KEY:
         description: >
@@ -308,13 +316,54 @@ jobs:
           fetch-depth: 0
           path: pro
 
-      # The FREE product the pro one extends. Public, so `GITHUB_TOKEN` clones it
-      # with no App and no extra secret.
+      # The FREE product the pro one extends. NOT always public: ColorMag is,
+      # Zakra is not. `secrets.GITHUB_TOKEN` is scoped to the repository running
+      # the workflow and reaches no other private repo, so a private free product
+      # needs `QA_REPO_TOKEN` passed by the caller.
+      #
+      # The failure without it is unhelpful enough to be worth pre-empting, which
+      # is what the step below does. With `ref` empty, checkout first calls
+      # `GET /repos/{owner}/{repo}` to learn the default branch; on a private repo
+      # the token cannot see, that answers 404 and the job dies on
+      # "Not Found — .../repos#get-a-repository" while "retrieving the default
+      # branch name". It reads like the reusable workflow or the pro repo is
+      # missing, and it is neither: it is the FREE repo, and no `permissions:`
+      # block can fix it, because permissions widen a token within its own
+      # repository and never across repositories.
+      - name: Check the free product is reachable
+        env:
+          GH_TOKEN: ${{ secrets.QA_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          FREE_REPO: ${{ inputs.product_repo }}
+          HAVE_QA_TOKEN: ${{ secrets.QA_REPO_TOKEN != '' }}
+        run: |
+          if gh api "repos/$FREE_REPO" --silent 2>/dev/null; then
+            echo "$FREE_REPO is reachable."
+            exit 0
+          fi
+          {
+            echo "### Cannot reach the free product repo"
+            echo ""
+            echo "\`$FREE_REPO\` answered 404 for the token this job is using."
+            if [ "$HAVE_QA_TOKEN" = "true" ]; then
+              echo "\`QA_REPO_TOKEN\` IS set, so either it lacks \`contents: read\`"
+              echo "on that repo, it has expired, or the repo name is wrong."
+            else
+              echo "\`QA_REPO_TOKEN\` is NOT set and the free repo is private:"
+              echo "\`GITHUB_TOKEN\` only ever reaches the repository it runs in."
+              echo "Add a PAT (or App token) with read access to \`$FREE_REPO\` as"
+              echo "\`QA_REPO_TOKEN\` in this repo's secrets, and pass it through"
+              echo "in the caller's \`secrets:\` block."
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       - name: Check out the free product
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.product_repo }}
           ref: ${{ inputs.product_ref || '' }}
+          # Empty for a public free repo; required for a private one.
+          token: ${{ secrets.QA_REPO_TOKEN || secrets.GITHUB_TOKEN }}
           # Harmless when the product has none; free ColorMag has no submodules.
           submodules: recursive
           path: product

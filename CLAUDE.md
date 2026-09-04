@@ -716,6 +716,24 @@ decision in the suite layer.
   is why the comment now carries the explanation itself and the archive is the
   deep dive rather than the destination.
 
+- **The free product repo is not always public, and `pro-suite.yml` assumed it
+  was.** Both zakra-pro jobs (run 33743814030) died in 1m3s at "Retrieving the
+  default branch name" with `Not Found — .../repos#get-a-repository`, read from
+  the run log: the step is the FREE checkout, not the pro one and not the
+  reusable workflow. `themegrill/zakra` is **private** (ColorMag is not), the
+  step passed no `token:`, and `secrets.GITHUB_TOKEN` reaches only the
+  repository it runs in. With `ref` empty, checkout asks the API for the default
+  branch first, so the 404 arrives before any clone and names neither repo.
+
+  GitHub's own suggested fix — a `permissions:` block — is wrong and worth
+  recording as wrong: permissions widen a token **within** its repository and
+  never across repositories. The free checkout now takes
+  `QA_REPO_TOKEN || GITHUB_TOKEN`, and a preflight step ahead of it says which
+  of the two cases it is (token absent vs. token present but insufficient)
+  instead of leaving a 404 that reads like a missing workflow. `QA_REPO_TOKEN`
+  therefore now exists for the *free product* repo; claudegrill being public
+  had made its original purpose moot.
+
 **Not verified**
 
 - **`scope: specs` in a real run.** Every piece is proved locally and the

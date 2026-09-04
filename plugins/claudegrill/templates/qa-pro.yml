@@ -4,11 +4,17 @@
 # THIS repository's own checkout, which is why no GitHub App and no extra token
 # are needed to reach it.
 #
-# ONE secret, and nothing for an org admin to install:
+# Secrets, both per-repo — organisation secrets are not accessible to private
+# repos on GitHub Free. Use `sync-secrets.mjs`, not the web UI.
 #
-#   __LICENSE_SECRET__ — the licence key for this product, set as a secret in
-#   THIS repository. Organisation secrets are not accessible to private repos on
-#   GitHub Free, so it must be per-repo. Use `sync-secrets.mjs`, not the web UI.
+#   __LICENSE_SECRET__ — the licence key for this product.
+#
+#   QA_REPO_TOKEN — only if the FREE product repo is PRIVATE (Zakra is;
+#   ColorMag is not). A token with `contents: read` on it. Without it the run
+#   dies on "Not Found — .../repos#get-a-repository" while checking out the
+#   free product, which reads like a missing workflow and is not one:
+#   `GITHUB_TOKEN` only ever reaches the repository it runs in, and no
+#   `permissions:` block changes that.
 #
 # `pull_request`, never `pull_request_target`. The latter runs with secrets
 # available against fork-supplied code. Forks get no secrets here; the licensed
@@ -42,8 +48,9 @@ jobs:
     with:
       product_slug: __PRODUCT_SLUG__
       product_type: __PRODUCT_TYPE__
-      # The FREE product this one extends. Public, so no token is needed — and
-      # required, because `free-with-pro` has nothing to test without it.
+      # The FREE product this one extends. Required, because `free-with-pro`
+      # has nothing to test without it. Pass QA_REPO_TOKEN below if it is
+      # private.
       product_repo: __FREE_REPO__
       pro_slug: __PRO_SLUG__
       # Keep this on. It is the only job that catches "installing pro broke a
@@ -51,3 +58,6 @@ jobs:
       run_free_with_pro: true
     secrets:
       TGQA_LICENSE_KEY: ${{ secrets.__LICENSE_SECRET__ }}
+      # Harmless when the free repo is public: the secret is simply empty and
+      # the workflow falls back to GITHUB_TOKEN.
+      QA_REPO_TOKEN: ${{ secrets.QA_REPO_TOKEN }}
