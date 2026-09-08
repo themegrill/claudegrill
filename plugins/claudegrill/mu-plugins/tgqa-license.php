@@ -208,7 +208,63 @@ function tgqa_license_apply_themegrill_sdk( $config ) {
 		update_option( $config['option_data'], (object) $response );
 	}
 
+	tgqa_license_clear_sdk_cron( $config );
+
 	return 'valid' === $status ? 'valid' : 'invalid';
+}
+
+/**
+ * Drop the SDK's background licence-check cron.
+ *
+ * `ThemeGrillSDK\Modules\Licenser::load()` schedules `<key>_license_check` with
+ * `wp_schedule_event( time(), 'daily', ... )` — that is due IMMEDIATELY, and
+ * WordPress spawns cron from `init`. `background_check()` then calls
+ * `Licenser::check()`, a blocking `wp_remote_post` to the store with a 15 second
+ * timeout.
+ *
+ * On a sandboxed runner with no outbound network that call cannot succeed, and
+ * it stalls the very next admin page load past the suite's assertion timeouts —
+ * which surfaces as "login failed, #wpadminbar never appeared" and looks like a
+ * broken auth setup. It is not: it is a licensed site trying to phone home from
+ * inside a sealed box.
+ *
+ * Dropping it is correct rather than merely convenient. This function has just
+ * established the licence state directly from a verdict the runner already
+ * obtained; a re-check would at best confirm what was written and at worst hang.
+ *
+ * Runs before `wp_cron()` — the seeding hooks are `plugins_loaded`/99,
+ * `after_setup_theme`/99 and `init`/0, and core spawns cron on `init`/10.
+ *
+ * @param array $config Seeded configuration.
+ * @return void
+ */
+function tgqa_license_clear_sdk_cron( $config ) {
+	if ( empty( $config['option_key'] ) ) {
+		return;
+	}
+
+	// `option_key` is `<product key>_license`; the cron is `<product key>_license_check`.
+	$product_key = preg_replace( '/_license$/', '', (string) $config['option_key'] );
+	if ( '' === $product_key ) {
+		return;
+	}
+
+	$cron_key = $product_key . '_license_check';
+
+	// A loop, not a single call: a site booted repeatedly can hold more than one
+	// scheduled instance, and clearing one leaves the rest due. The guard stops
+	// a malformed cron array turning this into an infinite loop.
+	for ( $i = 0; $i < 20; $i++ ) {
+		$timestamp = wp_next_scheduled( $cron_key );
+		if ( ! $timestamp ) {
+			break;
+		}
+		wp_unschedule_event( $timestamp, $cron_key );
+	}
+
+	// The SDK re-schedules only when nothing is scheduled, so it can add this
+	// back on a later request — but this runs on every request too, and always
+	// before `wp_cron()`, so the event never becomes due.
 }
 
 /**
