@@ -101,6 +101,28 @@ function tgqa_probe_pro_state() {
 		return array( 'checked' => true, 'active' => false !== $plan, 'plan' => $plan, 'expression' => $check );
 	}
 
+	// A stored-status option compared against a literal, e.g. AllCoach Pro's
+	// `get_option('allcoach_pro_license_status') === 'valid'`. Products on the
+	// ThemeGrill SDK expose neither a Freemius instance nor a plan helper — the
+	// option IS the gate (ThemeGrillSDK\Modules\Licenser::is_valid()).
+	if ( preg_match( '/^get_option\(\s*\'([A-Za-z0-9_\-]+)\'\s*\)\s*===\s*\'([^\']*)\'$/', $check, $m ) ) {
+		$stored = get_option( $m[1], null );
+		if ( null === $stored ) {
+			return array(
+				'checked'    => true,
+				'active'     => false,
+				'reason'     => $m[1] . ' is not set',
+				'expression' => $check,
+			);
+		}
+		return array(
+			'checked'    => true,
+			'active'     => (string) $stored === $m[2],
+			'stored'     => (string) $stored,
+			'expression' => $check,
+		);
+	}
+
 	return array( 'checked' => false, 'reason' => 'no recognised pro_check expression' );
 }
 

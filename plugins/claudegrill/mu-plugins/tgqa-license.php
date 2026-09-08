@@ -83,6 +83,12 @@ function tgqa_license_apply( $final = false ) {
 			$state = tgqa_license_apply_edd( $config );
 			break;
 
+		case 'themegrill-sdk':
+			// Also pure option writes, but a different option shape — see the
+			// handler for why it cannot share the EDD one.
+			$state = tgqa_license_apply_themegrill_sdk( $config );
+			break;
+
 		case 'freemius':
 			$fs = tgqa_license_freemius_instance( $config );
 
@@ -163,6 +169,46 @@ function tgqa_license_apply_edd( $config ) {
 	}
 
 	return isset( $config['status'] ) && 'valid' === $config['status'] ? 'valid' : 'invalid';
+}
+
+/**
+ * ThemeGrill SDK: three plain option writes, mirroring
+ * `ThemeGrillSDK\Modules\Licenser::store_status()`.
+ *
+ * Deliberately NOT `tgqa_license_apply_edd()`. That writes the whole decoded
+ * response into `option_status`, which is User Registration's shape; this SDK
+ * stores a status STRING there and puts the object in a separate
+ * `_license_data` option (Licenser.php:269-272). Writing an object into
+ * `_license_status` would make the product's own `isValid()` — a strict
+ * `=== 'valid'` — false for a perfectly good licence.
+ *
+ * @param array $config Seeded configuration.
+ * @return string Resolved state.
+ */
+function tgqa_license_apply_themegrill_sdk( $config ) {
+	$key = isset( $config['key'] ) ? $config['key'] : '';
+
+	if ( '' === $key || empty( $config['option_key'] ) ) {
+		return 'not attempted';
+	}
+
+	update_option( $config['option_key'], $key );
+
+	// The status string the product's gate compares against. Seeded by
+	// themegrill-sdk.mjs from the store's own `license` token.
+	$status = isset( $config['status'] ) ? (string) $config['status'] : 'inactive';
+
+	if ( ! empty( $config['option_status'] ) ) {
+		update_option( $config['option_status'], $status );
+	}
+
+	$response = isset( $config['response'] ) ? $config['response'] : null;
+
+	if ( ! empty( $config['option_data'] ) && null !== $response ) {
+		update_option( $config['option_data'], (object) $response );
+	}
+
+	return 'valid' === $status ? 'valid' : 'invalid';
 }
 
 /**
@@ -263,6 +309,18 @@ function tgqa_license_verify( $config ) {
 		}
 		$plan = call_user_func( $m[1] );
 		return 'pro gate: ' . ( false !== $plan ? 'TRUE (plan ' . wp_json_encode( $plan ) . ')' : 'FALSE' );
+	}
+
+	// A stored-status option compared against a literal, e.g. AllCoach Pro's
+	// `get_option('allcoach_pro_license_status') === 'valid'`. Products on the
+	// ThemeGrill SDK expose neither a Freemius instance nor a plan helper — the
+	// option IS the gate (ThemeGrillSDK\Modules\Licenser::is_valid()).
+	if ( preg_match( '/^get_option\(\s*\'([A-Za-z0-9_\-]+)\'\s*\)\s*===\s*\'([^\']*)\'$/', $check, $m ) ) {
+		$stored = get_option( $m[1], null );
+		if ( null === $stored ) {
+			return 'pro gate: FALSE (' . $m[1] . ' is not set)';
+		}
+		return 'pro gate: ' . ( (string) $stored === $m[2] ? 'TRUE' : 'FALSE (' . $m[1] . ' is ' . wp_json_encode( (string) $stored ) . ')' );
 	}
 
 	return 'pro gate not evaluated';

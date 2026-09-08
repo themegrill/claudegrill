@@ -40,6 +40,7 @@ import { fileURLToPath } from "node:url";
 import { resolveQaHome } from "./lib/qa-home.mjs";
 import * as edd from "./lib/license/edd.mjs";
 import * as freemius from "./lib/license/freemius.mjs";
+import * as themegrillSdk from "./lib/license/themegrill-sdk.mjs";
 import {
   completeness,
   keyFor,
@@ -51,7 +52,7 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const qaHome = resolveQaHome(here);
 
-const ADAPTERS = { edd, freemius };
+const ADAPTERS = { edd, freemius, "themegrill-sdk": themegrillSdk };
 
 // ------------------------------------------------------------------ arguments
 
@@ -320,14 +321,15 @@ if (cmd === "seed") {
 
   let seed;
   let state = "deferred";
-  if (entry.provider === "edd") {
+  const httpAdapter = entry.provider === "edd" ? edd : entry.provider === "themegrill-sdk" ? themegrillSdk : null;
+  if (httpAdapter) {
     // Activate from here so the mu-plugin only has to write options — one HTTP
     // request per boot rather than one per spec.
-    const res = await edd.activate(entry, key, siteUrl);
+    const res = await httpAdapter.activate(entry, key, siteUrl);
     state = res.outcome;
-    seed = edd.seedFor(entry, key, res);
+    seed = httpAdapter.seedFor(entry, key, res);
     say(
-      `${entry.slug}: EDD activation ${res.outcome}${res.reason ? ` — ${res.reason}` : ""} ` +
+      `${entry.slug}: ${entry.provider} activation ${res.outcome}${res.reason ? ` — ${res.reason}` : ""} ` +
         `(key ${redact(key)})`,
     );
   } else {
@@ -352,7 +354,7 @@ if (cmd === "seed") {
   const f = path.join(opt.out, "tgqa-license.json");
   fs.writeFileSync(f, JSON.stringify(cfg, null, 2), { mode: 0o600 });
 
-  const code = entry.provider === "edd" ? (state === "valid" ? 0 : state === "invalid" ? 1 : 2) : 0;
+  const code = httpAdapter ? (state === "valid" ? 0 : state === "invalid" ? 1 : 2) : 0;
   emit(
     {
       ok: code === 0,

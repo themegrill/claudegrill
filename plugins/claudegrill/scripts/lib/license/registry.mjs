@@ -115,6 +115,15 @@ export function completeness(entry) {
   if (entry.provider === "edd") {
     if (!entry.store_url) missing.push("store_url");
     if (!entry.option_key) missing.push("option_key");
+  } else if (entry.provider === "themegrill-sdk") {
+    if (!entry.store_url) missing.push("store_url");
+    if (!entry.option_key) missing.push("option_key");
+    // The product's gate reads this option, so without it there is nothing to
+    // assert against — see themegrill-sdk.mjs seedFor().
+    if (!entry.option_status) missing.push("option_status");
+    // This store resolves the product from item_id, not from the key alone, so
+    // omitting it gets a good key rejected.
+    if (!entry.item_id) missing.push("item_id");
   } else if (entry.provider === "freemius") {
     if (!entry.freemius_id) missing.push("freemius_id");
     if (!entry.freemius_slug) missing.push("freemius_slug");

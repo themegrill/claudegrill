@@ -68,21 +68,34 @@
     "requires_type": "plugin",
     "delivery": "companion-plugin",
     "provider": "edd",
-    "store_url": null,
-    "api_path": null,
+    "store_url": "https://wpeverest.com",
+    "api_path": "/edd-sl-api/",
     "item_id": null,
     "key_env": "TGQA_LICENSE_EVEREST_FORMS_PRO",
     "option_key": "everest-forms-pro_license_key",
-    "option_status": null,
+    "option_status": "everest-forms-pro_license_active",
     "transient_plan": "evf_pro_license_plan",
-    "entry_point": null,
+    "entry_point": "EVF_Plugin_Updater::activate_license() \u2014 includes/class-evf-plugin-updater.php:565, calling EVF_Updater_Key_API::activate() at includes/updater/class-evf-updater-key-api.php:79",
     "pro_check": "false !== evf_get_license_plan()",
-    "incomplete": [
-      "store_url",
-      "api_path",
-      "option_status",
-      "entry_point"
-    ],
-    "notes": "INCOMPLETE ON PURPOSE. everest-forms-pro is not checked out on this machine, and EVF_Updater_Key_API \u2014 which holds the store endpoint \u2014 is defined only in the pro plugin. Everything recorded here is proved from the FREE plugin, which carries the gate itself: evf_get_license_plan() at includes/evf-core-functions.php:1624 reads get_option('everest-forms-pro_license_key') and requires is_plugin_active('everest-forms-pro/everest-forms-pro.php'). The EDD shape is inferred from EVF_Updater_Key_API::check/version call sites mirroring UR's UR_Updater_Key_API exactly (same vendor). The store host is NOT inferred: everestforms.net appears only as marketing and docs URLs in the free plugin. Fill store_url/api_path from the pro repo before this row is usable \u2014 license.mjs refuses to act on it until then."
+    "notes": "Completed 2026-09-08 from the pro plugin checked out at wp-content/plugins/everest-forms-pro (EFP_VERSION 1.9.21), which is what the previous INCOMPLETE note was waiting for. Evidence, all in the pro repo: store_url + api_path come from EVF_Updater_Key_API::$endpoint = 'https://wpeverest.com/edd-sl-api/?' at includes/updater/class-evf-updater-key-api.php:16 \u2014 the same host and path as user-registration-pro, as that row predicted (same vendor). option_status is $this->plugin_slug . '_license_active' at class-evf-plugin-updater.php:579, and plugin_slug is basename(plugin_file, '.php') at :29, i.e. 'everest-forms-pro'. Like UR, it stores the WHOLE decoded activate response object, not a status string \u2014 the licence is valid when its ->success is true and ->license === 'valid'. item_id stays null: activate() sends only license, url and edd_action (class-evf-updater-key-api.php:79-85), so the store resolves the product from the key alone. The pro gate is unchanged and lives in the FREE plugin: evf_get_license_plan() at includes/evf-core-functions.php:1625 reads get_option('everest-forms-pro_license_key') and requires is_plugin_active('everest-forms-pro/everest-forms-pro.php'). Note its first branch: under REST_REQUEST, DOING_CRON or DOING_AJAX it returns get_option('evf_saved_license_plan', 'personal') and never consults the key at all, so an AJAX-context probe can report a plan on an unlicensed site."
+  },
+  "allcoach-pro": {
+    "type": "plugin",
+    "repo": "themegrill/allcoach-pro",
+    "requires": "allcoach",
+    "requires_type": "plugin",
+    "delivery": "replacement-plugin",
+    "provider": "themegrill-sdk",
+    "store_url": "https://api.themegrill.com/",
+    "api_path": "licenses/",
+    "item_id": 58,
+    "key_env": "TGQA_LICENSE_ALLCOACH_PRO",
+    "option_key": "allcoach_pro_license",
+    "option_status": "allcoach_pro_license_status",
+    "option_data": "allcoach_pro_license_data",
+    "entry_point": "AllCoachPro\\Core\\License\\LicenseManager::activate() \u2014 src/Pro/Core/License/LicenseManager.php:39, delegating to ThemeGrillSDK\\Modules\\Licenser::activate() \u2014 vendor/themegrill/themegrill-sdk/src/Modules/Licenser.php:94",
+    "accessor": "new AllCoachPro\\Core\\License\\LicenseManager()",
+    "pro_check": "get_option('allcoach_pro_license_status') === 'valid'",
+    "notes": "Third provider: the ThemeGrill SDK, driven by scripts/lib/license/themegrill-sdk.mjs. Deliberately NOT `edd`: the SDK posts JSON {license_key, item_id, site_url} to store_url+api_path+<action> (https://api.themegrill.com/licenses/activate) with the action in the PATH, whereas edd.mjs form-posts {edd_action, license, url} to {store}/edd-sl-api/ \u2014 the EDD adapter would produce a well-formed request this store does not understand and a false \"licence not active\". activate/deactivate wrap their payload in a `data` key; `check` returns it flat (Licenser.php:255-260). `option_status` holds a status STRING and the response object goes to `option_data` \u2014 the opposite of user-registration-pro, whose option_status holds the whole object. Licensed iff that string is exactly 'valid': the store also returns license=\"active\" with error=\"site_inactive\" for a good key never activated on this site, and that must NOT open the gate. Replacement plugin sharing the text domain `allcoach` with the free plugin, so the DIRECTORY name identifies it; the two must never be active at once (WordPress does not enforce this). Usage tracking is routed under the base slug `allcoach` because api.themegrill.com/tracking/log rejects `allcoach-pro` with a 400 (src/SDK.php:20-32)."
   }
 }
