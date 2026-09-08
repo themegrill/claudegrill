@@ -532,10 +532,18 @@ jobs:
           PHP_VERSION: ${{ inputs.php_version }}
           # The key reaches license.mjs through the environment and nowhere else.
           # Not argv — arguments are visible in the process list.
+          #
+          # ONE ENTRY PER `key_env` IN licenses.json. license.mjs looks the key up
+          # by the row's own `key_env`, so a product missing from this list
+          # resolves to "no key", seeds an `attempted: false` config with NO
+          # pro_check, and the run dies with "no recognised pro_check expression"
+          # — which reads as a probe bug and is really a missing line here.
+          # Adding a row to licenses.json means adding a line to this list.
           TGQA_LICENSE_COLORMAG_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
           TGQA_LICENSE_ZAKRA_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
           TGQA_LICENSE_USER_REGISTRATION_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
           TGQA_LICENSE_EVEREST_FORMS_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
+          TGQA_LICENSE_ALLCOACH_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
         run: |
           set -o pipefail
           # The `unlicensed` mode boots the SAME pro code with no licence. That
