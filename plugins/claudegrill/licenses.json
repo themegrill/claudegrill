@@ -21,7 +21,7 @@
     "freemius_slug": "colormag",
     "freemius_public_key": "pk_414d89e1f7eda2dd7de41050ab418",
     "key_env": "TGQA_LICENSE_COLORMAG_PRO",
-    "entry_point": "FS_ThemeGrill::init() \u2014 functions.php:420, wrapping fs_dynamic_init() at functions.php:372",
+    "entry_point": "FS_ThemeGrill::init() — functions.php:420, wrapping fs_dynamic_init() at functions.php:372",
     "accessor": "FS_ThemeGrill::freemius()",
     "pro_check": "FS_ThemeGrill::freemius()->can_use_premium_code()",
     "notes": "Standalone pro theme, NOT a child theme and NOT a companion plugin. Replaces the free colormag; the two must never be active at once. Freemius slug is `colormag` with premium_slug `colormag-pro`."
@@ -38,10 +38,10 @@
     "freemius_public_key": "pk_7147c17354facd275c90c45a6aa66",
     "freemius_bundle_id": "4562",
     "key_env": "TGQA_LICENSE_ZAKRA_PRO",
-    "entry_point": "FS_ZakraTheme::init() \u2014 inc/class-fs-zakratheme.php:98, wrapping fs_dynamic_init() at :80",
+    "entry_point": "FS_ZakraTheme::init() — inc/class-fs-zakratheme.php:98, wrapping fs_dynamic_init() at :80",
     "accessor": "FS_ZakraTheme::freemius()",
     "pro_check": "FS_ZakraTheme::freemius()->can_use_premium_code()",
-    "notes": "Companion PLUGIN extending the free Zakra THEME \u2014 so the free theme must be mounted and active as well. Belongs to a Freemius bundle (4562); a bundle key is rejected by the product-specific activation path."
+    "notes": "Companion PLUGIN extending the free Zakra THEME — so the free theme must be mounted and active as well. Belongs to a Freemius bundle (4562); a bundle key is rejected by the product-specific activation path."
   },
   "user-registration-pro": {
     "type": "plugin",
@@ -57,9 +57,9 @@
     "option_key": "user-registration_license_key",
     "option_status": "user-registration_license_active",
     "transient_plan": "ur_pro_license_plan",
-    "entry_point": "UR_Plugin_Updater::activate_license() \u2014 includes/class-ur-plugin-updater.php:343, calling UR_Updater_Key_API::activate() at includes/admin/updater/class-ur-plugin-updater-api.php:101",
+    "entry_point": "UR_Plugin_Updater::activate_license() — includes/class-ur-plugin-updater.php:343, calling UR_Updater_Key_API::activate() at includes/admin/updater/class-ur-plugin-updater-api.php:101",
     "pro_check": "false !== ur_get_license_plan()",
-    "notes": "The store resolves the product from the key alone \u2014 no item_id is sent, confirmed at class-ur-plugin-updater-api.php:101-107. `option_status` holds the WHOLE decoded activate response object, not a status string; the licence is valid when its ->license === 'valid'. UR_PRO_ACTIVE is only 'the pro plugin is installed' and says nothing about the licence \u2014 do not use it as a pro gate."
+    "notes": "The store resolves the product from the key alone — no item_id is sent, confirmed at class-ur-plugin-updater-api.php:101-107. `option_status` holds the WHOLE decoded activate response object, not a status string; the licence is valid when its ->license === 'valid'. UR_PRO_ACTIVE is only 'the pro plugin is installed' and says nothing about the licence — do not use it as a pro gate."
   },
   "everest-forms-pro": {
     "type": "plugin",
@@ -75,9 +75,9 @@
     "option_key": "everest-forms-pro_license_key",
     "option_status": "everest-forms-pro_license_active",
     "transient_plan": "evf_pro_license_plan",
-    "entry_point": "EVF_Plugin_Updater::activate_license() \u2014 includes/class-evf-plugin-updater.php:565, calling EVF_Updater_Key_API::activate() at includes/updater/class-evf-updater-key-api.php:79",
+    "entry_point": "EVF_Plugin_Updater::activate_license() — includes/class-evf-plugin-updater.php:565, calling EVF_Updater_Key_API::activate() at includes/updater/class-evf-updater-key-api.php:79",
     "pro_check": "false !== evf_get_license_plan()",
-    "notes": "Completed 2026-09-08 from the pro plugin checked out at wp-content/plugins/everest-forms-pro (EFP_VERSION 1.9.21), which is what the previous INCOMPLETE note was waiting for. Evidence, all in the pro repo: store_url + api_path come from EVF_Updater_Key_API::$endpoint = 'https://wpeverest.com/edd-sl-api/?' at includes/updater/class-evf-updater-key-api.php:16 \u2014 the same host and path as user-registration-pro, as that row predicted (same vendor). option_status is $this->plugin_slug . '_license_active' at class-evf-plugin-updater.php:579, and plugin_slug is basename(plugin_file, '.php') at :29, i.e. 'everest-forms-pro'. Like UR, it stores the WHOLE decoded activate response object, not a status string \u2014 the licence is valid when its ->success is true and ->license === 'valid'. item_id stays null: activate() sends only license, url and edd_action (class-evf-updater-key-api.php:79-85), so the store resolves the product from the key alone. The pro gate is unchanged and lives in the FREE plugin: evf_get_license_plan() at includes/evf-core-functions.php:1625 reads get_option('everest-forms-pro_license_key') and requires is_plugin_active('everest-forms-pro/everest-forms-pro.php'). Note its first branch: under REST_REQUEST, DOING_CRON or DOING_AJAX it returns get_option('evf_saved_license_plan', 'personal') and never consults the key at all, so an AJAX-context probe can report a plan on an unlicensed site."
+    "notes": "Completed 2026-09-08 from the pro plugin checked out at wp-content/plugins/everest-forms-pro (EFP_VERSION 1.9.21), which is what the previous INCOMPLETE note was waiting for. Evidence, all in the pro repo: store_url + api_path come from EVF_Updater_Key_API::$endpoint = 'https://wpeverest.com/edd-sl-api/?' at includes/updater/class-evf-updater-key-api.php:16 — the same host and path as user-registration-pro, as that row predicted (same vendor). option_status is $this->plugin_slug . '_license_active' at class-evf-plugin-updater.php:579, and plugin_slug is basename(plugin_file, '.php') at :29, i.e. 'everest-forms-pro'. Like UR, it stores the WHOLE decoded activate response object, not a status string — the licence is valid when its ->success is true and ->license === 'valid'. item_id stays null: activate() sends only license, url and edd_action (class-evf-updater-key-api.php:79-85), so the store resolves the product from the key alone. The pro gate is unchanged and lives in the FREE plugin: evf_get_license_plan() at includes/evf-core-functions.php:1625 reads get_option('everest-forms-pro_license_key') and requires is_plugin_active('everest-forms-pro/everest-forms-pro.php'). Note its first branch: under REST_REQUEST, DOING_CRON or DOING_AJAX it returns get_option('evf_saved_license_plan', 'personal') and never consults the key at all, so an AJAX-context probe can report a plan on an unlicensed site."
   },
   "allcoach-pro": {
     "type": "plugin",
@@ -93,9 +93,25 @@
     "option_key": "allcoach_pro_license",
     "option_status": "allcoach_pro_license_status",
     "option_data": "allcoach_pro_license_data",
-    "entry_point": "AllCoachPro\\Core\\License\\LicenseManager::activate() \u2014 src/Pro/Core/License/LicenseManager.php:39, delegating to ThemeGrillSDK\\Modules\\Licenser::activate() \u2014 vendor/themegrill/themegrill-sdk/src/Modules/Licenser.php:94",
+    "entry_point": "AllCoachPro\\Core\\License\\LicenseManager::activate() — src/Pro/Core/License/LicenseManager.php:39, delegating to ThemeGrillSDK\\Modules\\Licenser::activate() — vendor/themegrill/themegrill-sdk/src/Modules/Licenser.php:94",
     "accessor": "new AllCoachPro\\Core\\License\\LicenseManager()",
     "pro_check": "get_option('allcoach_pro_license_status') === 'valid'",
-    "notes": "Third provider: the ThemeGrill SDK, driven by scripts/lib/license/themegrill-sdk.mjs. Deliberately NOT `edd`: the SDK posts JSON {license_key, item_id, site_url} to store_url+api_path+<action> (https://api.themegrill.com/licenses/activate) with the action in the PATH, whereas edd.mjs form-posts {edd_action, license, url} to {store}/edd-sl-api/ \u2014 the EDD adapter would produce a well-formed request this store does not understand and a false \"licence not active\". activate/deactivate wrap their payload in a `data` key; `check` returns it flat (Licenser.php:255-260). `option_status` holds a status STRING and the response object goes to `option_data` \u2014 the opposite of user-registration-pro, whose option_status holds the whole object. Licensed iff that string is exactly 'valid': the store also returns license=\"active\" with error=\"site_inactive\" for a good key never activated on this site, and that must NOT open the gate. Replacement plugin sharing the text domain `allcoach` with the free plugin, so the DIRECTORY name identifies it; the two must never be active at once (WordPress does not enforce this). Usage tracking is routed under the base slug `allcoach` because api.themegrill.com/tracking/log rejects `allcoach-pro` with a 400 (src/SDK.php:20-32)."
+    "notes": "Third provider: the ThemeGrill SDK, driven by scripts/lib/license/themegrill-sdk.mjs. Deliberately NOT `edd`: the SDK posts JSON {license_key, item_id, site_url} to store_url+api_path+<action> (https://api.themegrill.com/licenses/activate) with the action in the PATH, whereas edd.mjs form-posts {edd_action, license, url} to {store}/edd-sl-api/ — the EDD adapter would produce a well-formed request this store does not understand and a false \"licence not active\". activate/deactivate wrap their payload in a `data` key; `check` returns it flat (Licenser.php:255-260). `option_status` holds a status STRING and the response object goes to `option_data` — the opposite of user-registration-pro, whose option_status holds the whole object. Licensed iff that string is exactly 'valid': the store also returns license=\"active\" with error=\"site_inactive\" for a good key never activated on this site, and that must NOT open the gate. Replacement plugin sharing the text domain `allcoach` with the free plugin, so the DIRECTORY name identifies it; the two must never be active at once (WordPress does not enforce this). Usage tracking is routed under the base slug `allcoach` because api.themegrill.com/tracking/log rejects `allcoach-pro` with a 400 (src/SDK.php:20-32)."
+  },
+  "magazine-blocks-pro": {
+    "type": "plugin",
+    "repo": "themegrill/magazine-blocks-pro",
+    "requires": "magazine-blocks",
+    "requires_type": "plugin",
+    "delivery": "companion-plugin",
+    "provider": "freemius",
+    "freemius_id": "15516",
+    "freemius_slug": "magazine-blocks-pro",
+    "freemius_public_key": "pk_887f5d98b26b4d26ee2253d83ee8e",
+    "key_env": "TGQA_LICENSE_MAGAZINE_BLOCKS_PRO",
+    "entry_point": "magazine_blocks_pro_freemius() — magazine-blocks-pro.php:132, wrapping fs_dynamic_init() at magazine-blocks-pro.php:142",
+    "accessor": "magazine_blocks_pro_freemius()",
+    "pro_check": "magazine_blocks_pro_freemius()->can_use_premium_code()",
+    "notes": "Add-on PLUGIN extending the free magazine-blocks PLUGIN, so the free plugin must be mounted AND ACTIVE: pro declares `Requires Plugins: magazine-blocks` and WordPress refuses to activate it otherwise (verified 2026-09-09 — a Playground boot with only pro mounted dies on the activation step). It also refuses to load below MAGAZINE_BLOCKS_PRO_RECOMMENDED_CORE_VERSION (1.8.6). Unlike colormag-pro this is an add-on, not a replacement: both plugins run together and the text domains differ (`magazine-blocks-pro` vs `magazine-blocks`), so the directory name and the slug agree. IMPORTANT: this product does NOT enforce its licence at runtime. `is_premium_only` is true, so Freemius treats the whole build as paid-only code and there is no gate to fail — verified on a site where can_use_premium_code(), is_registered() and is_paying() were all false while every pro block, REST route and dashboard screen worked. `pro_check` above is therefore the licence STATE, not a feature gate, and a `@pro` run here proves the key activates rather than that the features are gated behind it."
   }
 }
