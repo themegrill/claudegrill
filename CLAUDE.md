@@ -734,7 +734,62 @@ decision in the suite layer.
   therefore now exists for the *free product* repo; claudegrill being public
   had made its original purpose moot.
 
+- **Magazine Blocks Pro and BlockArt Blocks Pro, and the FOURTH `pro_check`
+  shape they needed.** Both publish their Freemius instance as a plain global
+  function — `magazine_blocks_pro_freemius()`, `blockart_pro_freemius()` — not
+  the `Class::method` accessor ColorMag and Zakra use. Before this, both rows
+  fell through every pattern in the two mu-plugins to "no recognised pro_check
+  expression", the gate reported unevaluable, and `pro-suite.yml` **passes an
+  unevaluable gate with a warning** when the licence resolved. A `@pro` run that
+  never checked its licence looks exactly like one that did — invariant 8b
+  defeated by a config shape nobody had matched.
+
+  Ten cases run against both mu-plugins with a stubbed Freemius: gate TRUE, gate
+  FALSE, accessor returning `false`, accessor returning `null`, undefined
+  function, and the three pre-existing shapes still matching unchanged. The
+  `is_object()` guard was **proved load-bearing by mutation**: removed, an
+  accessor that returns `false` fatals on `false->can_use_premium_code()` inside
+  the probe endpoint — so the probe would 500 and CI would report "the probe did
+  not answer", the least legible failure the pro tier has. Both accessors really
+  can return `false`: each catches `Freemius_Exception` and caches it in a global.
+
+- **`activate_plugin()`'s error is no longer discarded, because these two
+  products are the first that can trigger it.** Both declare `Requires
+  Plugins`, and since WordPress 6.5 activation is refused with a
+  `plugin_missing_dependencies` WP_Error when the named free plugin is inactive.
+  The blueprint step threw that return value away, so the pro plugin was simply
+  absent and the only downstream symptom was a pro gate reading FALSE — which is
+  precisely what a bad licence key looks like, and the same misdirection the
+  Freemius-submodule bug cost two CI rounds to. It is now recorded per mount in
+  `tgqa_pro_activation`, reported by the probe, carried into `boot.json`, and
+  `pro-suite.yml` has a fifth verify branch that names it ahead of both licence
+  diagnoses.
+
+  Verified by lifting the generated PHP out of `boot-wp.mjs` and running it
+  against a stubbed WordPress — the string-building in the file, not a copy of
+  it: refusal recorded, success recorded, no-plugin-header recorded, and the
+  header scan picking `blockart-pro.php` over a headerless `uninstall.php` in a
+  directory named `blockart-blocks-pro`, which is the case that would have
+  silently failed to activate under the old `<slug>/<slug>.php` derivation. The
+  verify step was extracted from the workflow and run against eight synthetic
+  `boot.json` fixtures, including the ordering rule that a gate reporting TRUE
+  still outranks an activation error.
+
+- **The licence fan-out matches the registry exactly.** All seven `key_env`
+  values in `licenses.json` have a line in `pro-suite.yml`, with nothing extra —
+  checked mechanically rather than by eye, since that list is hand-maintained and
+  a missing row presents as a product that cannot licence anything.
+
 **Not verified**
+
+- **Magazine Blocks Pro and BlockArt Blocks Pro have never been booted.** Every
+  claim above is from source reading plus stubbed harnesses; no site has mounted
+  either plugin. Neither can be booted alone — `Requires Plugins` means a
+  free-caller boot dies on activation — so the first real run has to be
+  `pro-suite.yml` with the free plugin checked out alongside. `composer install`
+  in the pro checkout is a hard prerequisite for Magazine Blocks Pro (Freemius
+  arrives via Composer, and `magazine-blocks-pro.php:33` requires
+  `vendor/autoload.php` unconditionally).
 
 - **`scope: specs` in a real run.** Every piece is proved locally and the
   workflows parse, but no CI run has used it: the callers still pin an older

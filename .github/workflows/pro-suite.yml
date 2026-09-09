@@ -19,8 +19,8 @@ name: QA suite — pro (reusable)
 # 2. ORGANISATION SECRETS DO NOT REACH PRIVATE REPOS ON GITHUB FREE. The docs
 #    are explicit about it. So every secret this workflow needs must exist in
 #    EVERY calling repository, which is why `sync-secrets.mjs` exists — doing it
-#    by hand across four products guarantees drift, and the drift presents as a
-#    workflow that suddenly cannot licence anything.
+#    by hand across seven pro products guarantees drift, and the drift presents
+#    as a workflow that suddenly cannot licence anything.
 #
 # 3. `pull_request_target` IS FORBIDDEN HERE, and nothing in this file may be
 #    changed to use it. It runs with secrets available against fork-supplied
@@ -544,6 +544,8 @@ jobs:
           TGQA_LICENSE_USER_REGISTRATION_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
           TGQA_LICENSE_EVEREST_FORMS_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
           TGQA_LICENSE_ALLCOACH_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
+          TGQA_LICENSE_MAGAZINE_BLOCKS_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
+          TGQA_LICENSE_BLOCKART_BLOCKS_PRO: ${{ secrets.TGQA_LICENSE_KEY }}
         run: |
           set -o pipefail
           # The `unlicensed` mode boots the SAME pro code with no licence. That
@@ -586,6 +588,11 @@ jobs:
             const b = JSON.parse(require("fs").readFileSync("boot.json","utf8"));
             const q = (v) => String(v ?? "").replace(/"/g, "");
             const seed = (b.license_seed || []).map((s) => s.reason || s.state).filter(Boolean);
+            // Only the mounts that did NOT activate. "activated" is the normal
+            // case and saying so here would bury the one line that matters.
+            const failed = Object.entries(b.probe?.pro_activation || {})
+              .filter(([, v]) => String(v) !== "activated")
+              .map(([slug, v]) => `${slug}: ${v}`);
             process.stdout.write(
               `STATE="${q(b.licensed ?? "unknown")}"\n` +
               `PRO="${q(b.probe?.pro_active ?? "unknown")}"\n` +
@@ -593,7 +600,8 @@ jobs:
               `CHECK="${q(b.probe?.pro_check)}"\n` +
               `PROBE_ERR="${q(b.probe?.error)}"\n` +
               `REASON="${q(b.probe?.pro_reason)}"\n` +
-              `SEED="${q(seed.join("; "))}"\n`,
+              `SEED="${q(seed.join("; "))}"\n` +
+              `ACTIVATION="${q(failed.join("; "))}"\n`,
             );
           ')"
           echo "licence state: $STATE · product pro gate: $PRO · active theme: $THEME"
@@ -616,6 +624,31 @@ jobs:
           if [ "$PRO" = "true" ]; then
             echo "pro gate TRUE — pro features are genuinely under test"
             exit 0
+          fi
+
+          # The pro plugin is not even active, which makes both diagnoses below
+          # wrong: the gate is unevaluable or false because the code that defines
+          # it never loaded, and nothing about the licence has been tested. Since
+          # WordPress 6.5 `activate_plugin()` refuses a plugin whose `Requires
+          # Plugins` are inactive, and magazine-blocks-pro and blockart-blocks-pro
+          # both declare one — so a free checkout that failed, mounted at the
+          # wrong slug, or was never activated lands here rather than in "licence
+          # not active", which is where it used to land.
+          if [ -n "$ACTIVATION" ]; then
+            {
+              echo "### the pro plugin did not activate"
+              echo ""
+              echo "$ACTIVATION"
+              echo ""
+              echo "So the licence was never tested: \`$CHECK\` cannot resolve when the code"
+              echo "defining it is not running. **This is not a licence problem.**"
+              echo ""
+              echo "\`plugin_missing_dependencies\` means the FREE plugin this one declares in"
+              echo "\`Requires Plugins\` is not active — check the free checkout mounted and"
+              echo "activated, not the secret."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::pro plugin did not activate — $ACTIVATION"
+            exit 1
           fi
 
           # An unevaluable gate is only fatal when the licence ALSO failed to

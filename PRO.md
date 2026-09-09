@@ -4,10 +4,21 @@ Private repos, real licence keys, premium features actually switched on —
 locally and in CI. Read [SUITE.md §2b](SUITE.md) for the tags first; this file is
 the inventory those tags are built on, plus the setup nobody can guess.
 
-Scope: **ColorMag Pro, Zakra Pro, User Registration Pro, Everest Forms Pro.**
-Masteriyo is deliberately out of scope. No Lemon Squeezy product was found in the
-catalogue during the inventory, so there is no Lemon Squeezy adapter — adding one
-would be one file under `plugins/claudegrill/scripts/lib/license/`.
+Scope: **ColorMag Pro, Zakra Pro, User Registration Pro, Everest Forms Pro,
+AllCoach Pro, Magazine Blocks Pro, BlockArt Blocks Pro.** Masteriyo is
+deliberately out of scope. No Lemon Squeezy product was found in the catalogue
+during the inventory, so there is no Lemon Squeezy adapter — adding one would be
+one file under `plugins/claudegrill/scripts/lib/license/`.
+
+**ContentGate Pro is out of scope, and for a reason worth stating rather than
+leaving as an omission: it has no licence layer.** No Freemius, no EDD, no
+ThemeGrill SDK, no key. `contentgate_is_pro()` (`includes/functions.php:17`)
+returns a constant the pro build hardcodes to `true` at `contentgate.php:30` —
+the pro repo is a repo-sync'd superset of the free one, shipped as a single
+plugin. Its `pro_check` would therefore be true by construction, which satisfies
+[invariant 8b](CLAUDE.md) without a licence ever resolving. That is the exact lie
+8b exists to prevent, so ContentGate belongs on the **free** caller
+(`qa-suite.yml`) until it grows a real licence layer.
 
 ---
 
@@ -21,7 +32,10 @@ Where a row is incomplete it says so; nothing here is inferred.
 | **ColorMag Pro** | `themegrill/colormag-pro` | **Freemius** | id `4212`, slug `colormag`, `pk_414d89e1f7eda2dd7de41050ab418` | Freemius `fs_accounts` | Freemius `fs_accounts` | `FS_ThemeGrill::init()` — `functions.php:420`, wrapping `fs_dynamic_init()` at `functions.php:372` |
 | **Zakra Pro** | `themegrill/zakra-pro` | **Freemius** | id `4560`, slug `zakra-pro`, `pk_7147c17354facd275c90c45a6aa66`, bundle `4562` | Freemius `fs_accounts` | Freemius `fs_accounts` | `FS_ZakraTheme::init()` — `inc/class-fs-zakratheme.php:98`, wrapping `fs_dynamic_init()` at `:80` |
 | **User Registration Pro** | `wpeverest/user-registration-pro` | **EDD** | `https://wpeverest.com/edd-sl-api/`, **no item_id** | `user-registration_license_key` | `user-registration_license_active` | `UR_Plugin_Updater::activate_license()` — `includes/class-ur-plugin-updater.php:343` → `UR_Updater_Key_API::activate()` at `includes/admin/updater/class-ur-plugin-updater-api.php:101` |
-| **Everest Forms Pro** | `wpeverest/everest-forms-pro` | EDD *(inferred)* | **UNKNOWN** | `everest-forms-pro_license_key` | UNKNOWN | UNKNOWN |
+| **Everest Forms Pro** | `wpeverest/everest-forms-pro` | **EDD** | `https://wpeverest.com/edd-sl-api/`, **no item_id** | `everest-forms-pro_license_key` | `everest-forms-pro_license_active` | `EVF_Plugin_Updater::activate_license()` — `includes/class-evf-plugin-updater.php:565` → `EVF_Updater_Key_API::activate()` at `includes/updater/class-evf-updater-key-api.php:79` |
+| **AllCoach Pro** | `themegrill/allcoach-pro` | **ThemeGrill SDK** | `https://api.themegrill.com/licenses/`, item_id `58` | `allcoach_pro_license` | `allcoach_pro_license_status` | `LicenseManager::activate()` — `src/Pro/Core/License/LicenseManager.php:39` → `ThemeGrillSDK\Modules\Licenser::activate()` at `vendor/themegrill/themegrill-sdk/src/Modules/Licenser.php:94` |
+| **Magazine Blocks Pro** | `themegrill/magazine-blocks-pro` | **Freemius** | id `15516`, slug `magazine-blocks-pro`, `pk_887f5d98b26b4d26ee2253d83ee8e` | Freemius `fs_accounts` | Freemius `fs_accounts` | `magazine_blocks_pro_freemius()` — `magazine-blocks-pro.php:132`, wrapping `fs_dynamic_init()` at `:142` |
+| **BlockArt Blocks Pro** | `themegrill/blockart-blocks-pro` | **Freemius** | id `15515`, slug `blockart-blocks-pro`, `pk_4acfc44f72d6c0d7bc6abd186ae44` | Freemius `fs_accounts` | Freemius `fs_accounts` | `blockart_pro_freemius()` — `blockart-pro.php:132`, wrapping `fs_dynamic_init()` at `:142` |
 
 ### How each product gates a premium feature
 
@@ -33,6 +47,29 @@ This differs per product and is what a `@pro` spec ultimately asserts against.
 | Zakra Pro | `FS_ZakraTheme::freemius()->can_use_premium_code()` |
 | User Registration Pro | `false !== ur_get_license_plan()` |
 | Everest Forms Pro | `false !== evf_get_license_plan()` |
+| AllCoach Pro | `get_option('allcoach_pro_license_status') === 'valid'` |
+| Magazine Blocks Pro | `magazine_blocks_pro_freemius()->can_use_premium_code()` |
+| BlockArt Blocks Pro | `blockart_pro_freemius()->can_use_premium_code()` |
+
+Those last two are a **fourth expression shape** — a plain global function, not
+the `Class::method` accessor ColorMag and Zakra publish. Both mu-plugins match
+these strings against fixed patterns rather than `eval()`ing them, so a shape
+they do not recognise is not a syntax error but a silent `checked: false`, which
+`pro-suite.yml` passes with a warning. A `@pro` run that never checked its
+licence looks exactly like a `@pro` run that did. The shape is now matched in
+`tgqa-license.php` and `tgqa-probe.php` alike, and the guards there are not
+decorative: both accessors catch `Freemius_Exception` and cache **`false`** in a
+global, so `is_object()` is the difference between a legible "no Freemius
+instance" and a fatal on `false->can_use_premium_code()`.
+
+**What a green `@pro` run proves for the two block plugins, and what it does
+not.** Both are `is_premium_only`, so Freemius treats the whole build as paid-only
+code and the products never consult their own gate to withhold a feature — every
+pro block, REST route and dashboard screen works with no licence at all. The sole
+`can_use_premium_code()` call in each (`includes/ScriptStyle.php:130` and `:128`)
+only decides whether to render the licence-management UI. So `pro_check` reports
+faithfully whether the **licence resolved**, which is what 8b asks of it, and
+says nothing about whether the features are gated behind it.
 
 ### Corrections to what was assumed going in
 
@@ -96,7 +133,7 @@ the exact failure this whole design exists to make impossible.
 
 The keys in use are lifetime keys with unlimited activations, so the usual worry
 (every Playground boot is a fresh site; CI exhausts the licence in a day) does
-not apply. Two of the four products would have been exempt anyway:
+not apply. The four Freemius products would have been exempt anyway:
 
 **Freemius excludes localhost**, transcribed from the vendored SDK rather than
 remembered — `FS_Site::is_localhost_by_address()`,
@@ -104,8 +141,9 @@ remembered — `FS_Site::is_localhost_by_address()`,
 hosts starting `local.`/`dev.`/`test.`/`stage.`/`staging.` or ending
 `.local`/`.test`/`.dev`/`.staging`/`.example`/`.invalid`.
 
-Playground serves on `127.0.0.1`, so **every Playground boot of ColorMag Pro or
-Zakra Pro is a localhost install and consumes nothing.** This is why
+Playground serves on `127.0.0.1`, so **every Playground boot of a Freemius
+product — ColorMag Pro, Zakra Pro, Magazine Blocks Pro, BlockArt Blocks Pro —
+is a localhost install and consumes nothing.** This is why
 `boot-wp.mjs` must not rewrite the site URL to something prettier: a mismatched
 `WP_HOME` breaks every link in the site, and there is nothing to gain.
 

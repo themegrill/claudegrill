@@ -310,9 +310,10 @@ function tgqa_license_apply_freemius( $config, $fs ) {
 /**
  * The product's Freemius instance, via the accessor it publishes.
  *
- * `accessor` is a `Class::method` pair from `licenses.json`, validated against a
- * strict pattern before use. It is configuration read from a file, so it is
- * treated as untrusted input even though we wrote it.
+ * `accessor` is either a `Class::method` pair or a bare global function name,
+ * from `licenses.json`, validated against strict patterns before use. It is
+ * configuration read from a file, so it is treated as untrusted input even
+ * though we wrote it.
  *
  * @param array $config Seeded configuration.
  * @return object|null
@@ -321,24 +322,38 @@ function tgqa_license_freemius_instance( $config ) {
 	$accessor = isset( $config['accessor'] ) ? (string) $config['accessor'] : '';
 	$accessor = rtrim( trim( $accessor ), '()' );
 
-	if ( ! preg_match( '/^([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)$/', $accessor, $m ) ) {
-		return null;
+	if ( preg_match( '/^([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)$/', $accessor, $m ) ) {
+		if ( ! class_exists( $m[1] ) || ! method_exists( $m[1], $m[2] ) ) {
+			return null;
+		}
+
+		$fs = call_user_func( array( $m[1], $m[2] ) );
+
+		return is_object( $fs ) ? $fs : null;
 	}
 
-	if ( ! class_exists( $m[1] ) || ! method_exists( $m[1], $m[2] ) ) {
-		return null;
+	// A plain global function, which is how the WPBlockArt-authored plugins
+	// publish theirs: `magazine_blocks_pro_freemius()`, `blockart_pro_freemius()`.
+	// Both catch `Freemius_Exception` and cache FALSE in a global, so a non-object
+	// return is a real and expected outcome rather than a defensive afterthought.
+	if ( preg_match( '/^([a-z_][a-z0-9_]*)$/', $accessor, $m ) ) {
+		if ( ! function_exists( $m[1] ) ) {
+			return null;
+		}
+
+		$fs = call_user_func( $m[1] );
+
+		return is_object( $fs ) ? $fs : null;
 	}
 
-	$fs = call_user_func( array( $m[1], $m[2] ) );
-
-	return is_object( $fs ) ? $fs : null;
+	return null;
 }
 
 /**
  * Evaluate the product's own pro gate, so the log line reports what the PRODUCT
  * believes rather than what we hope we achieved.
  *
- * Only the two shapes the registry actually contains are honoured, matched
+ * Only the four shapes the registry actually contains are honoured, matched
  * against fixed patterns. A general `eval()` of a string from a config file is
  * exactly the hole a QA tool should not open, even in a disposable site.
  *
@@ -353,6 +368,20 @@ function tgqa_license_verify( $config ) {
 			return 'pro gate unavailable: ' . $m[1] . ' not loaded';
 		}
 		$fs = call_user_func( array( $m[1], $m[2] ) );
+		if ( ! is_object( $fs ) || ! method_exists( $fs, 'can_use_premium_code' ) ) {
+			return 'pro gate unavailable: no Freemius instance';
+		}
+		return 'pro gate: ' . ( $fs->can_use_premium_code() ? 'TRUE' : 'FALSE' );
+	}
+
+	// The same question through a global function accessor. See the matching
+	// branch in tgqa-probe.php; the two must stay in step, because this one
+	// writes the log line and that one writes the value CI acts on.
+	if ( preg_match( '/^([a-z_][a-z0-9_]*)\(\)->can_use_premium_code\(\)$/', $check, $m ) ) {
+		if ( ! function_exists( $m[1] ) ) {
+			return 'pro gate unavailable: ' . $m[1] . '() not defined';
+		}
+		$fs = call_user_func( $m[1] );
 		if ( ! is_object( $fs ) || ! method_exists( $fs, 'can_use_premium_code' ) ) {
 			return 'pro gate unavailable: no Freemius instance';
 		}

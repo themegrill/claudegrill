@@ -5,9 +5,11 @@
  * This script exists because of one GitHub Free constraint: **organisation-level
  * secrets are not accessible to private repositories on GitHub Free.** The pro
  * repos are private, so an org secret does not reach them, and every secret has
- * to exist in every repository separately. Across four pro products that is a
- * dozen settings maintained by hand, which means it will drift, which means a
- * workflow will one day fail because one repo missed one secret.
+ * to exist in every repository separately. Across the pro catalogue that is a
+ * couple of dozen settings maintained by hand, which means it will drift, which
+ * means a workflow will one day fail because one repo missed one secret. The
+ * list is read from `licenses.json`, so a new row here needs nothing but the
+ * key in `.env.ci`.
  *
  * So: one gitignored `.env.ci`, and a script that pushes it.
  *

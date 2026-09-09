@@ -9,7 +9,7 @@
 #   TGQA_LICENSE_KEY — the licence key for THIS product, set as a secret in THIS
 #   repository. Organisation secrets are not accessible to private repositories
 #   on GitHub Free, so it must be per-repo — use `sync-secrets.mjs`, not the web
-#   UI, or it will drift across the four pro products.
+#   UI, or it will drift across the seven pro products.
 #
 # Everything else resolves on its own. `GITHUB_TOKEN` checks out this repo (it
 # is the one running the workflow) and the public free repo, and claudegrill

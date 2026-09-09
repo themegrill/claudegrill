@@ -375,7 +375,7 @@ if (opt.baseUrl || process.env.TGQA_BASE_URL || envLocalUrl) {
  * had it for free — `boot-wp.mjs` stages the mu-plugin and prints `probe_url`
  * itself — and only the local existing-site path made anyone do it by hand.
  * That asymmetry, not the gate, is what made the pro tier expensive to adopt,
- * and it multiplied by four products.
+ * and it multiplied by every pro product in the registry.
  *
  * Everything needed is derivable: a developer works on a product from inside a
  * WordPress install, so `wp-content/mu-plugins` is an ancestor walk away, and

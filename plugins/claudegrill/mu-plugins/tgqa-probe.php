@@ -57,6 +57,13 @@ function tgqa_probe_maybe_respond() {
 			'active_template'  => get_template(),
 			'active_plugins'   => array_values( (array) get_option( 'active_plugins', array() ) ),
 			'license'          => $license,
+			// Written by the blueprint's own activation step, one entry per pro
+			// mount: "activated", or the WP_Error that stopped it. Both block
+			// plugins declare `Requires Plugins`, so WordPress refuses to
+			// activate them without the free plugin — and an inactive pro plugin
+			// presents downstream as a pro gate reporting FALSE, which is what a
+			// bad licence key looks like too.
+			'pro_activation'   => get_option( 'tgqa_pro_activation', null ),
 			'pro'              => tgqa_probe_pro_state(),
 		)
 	);
@@ -87,6 +94,23 @@ function tgqa_probe_pro_state() {
 			return array( 'checked' => false, 'reason' => $m[1] . ' not loaded', 'expression' => $check );
 		}
 		$fs = call_user_func( array( $m[1], $m[2] ) );
+		if ( ! is_object( $fs ) || ! method_exists( $fs, 'can_use_premium_code' ) ) {
+			return array( 'checked' => false, 'reason' => 'no Freemius instance', 'expression' => $check );
+		}
+		return array( 'checked' => true, 'active' => (bool) $fs->can_use_premium_code(), 'expression' => $check );
+	}
+
+	// The same Freemius question asked through a plain global FUNCTION rather
+	// than a static accessor — `magazine_blocks_pro_freemius()`, and BlockArt
+	// Pro's twin. Worth its own branch rather than a looser pattern on the one
+	// above: these accessors return FALSE when `fs_dynamic_init()` threw, and
+	// the shapes differ enough that widening the first regex would have to drop
+	// the `class_exists` guard that makes it safe.
+	if ( preg_match( '/^([a-z_][a-z0-9_]*)\(\)->can_use_premium_code\(\)$/', $check, $m ) ) {
+		if ( ! function_exists( $m[1] ) ) {
+			return array( 'checked' => false, 'reason' => $m[1] . '() not defined', 'expression' => $check );
+		}
+		$fs = call_user_func( $m[1] );
 		if ( ! is_object( $fs ) || ! method_exists( $fs, 'can_use_premium_code' ) ) {
 			return array( 'checked' => false, 'reason' => 'no Freemius instance', 'expression' => $check );
 		}

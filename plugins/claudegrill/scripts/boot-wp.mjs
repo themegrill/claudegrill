@@ -252,7 +252,7 @@ try {
  * Resolve `--with-pro <slug>[=<path>]` against the registry.
  *
  * The registry, not a guess, decides where a pro product mounts. That matters
- * because the four pro products are delivered three different ways and no rule
+ * because the pro products are delivered several different ways and no rule
  * covers them all:
  *
  *   colormag-pro          a STANDALONE THEME that replaces the free theme — not
@@ -262,6 +262,14 @@ try {
  *                         the free theme stays active and the plugin is added.
  *   user-registration-pro a plugin that replaces the free plugin.
  *   everest-forms-pro     a companion plugin alongside the free one.
+ *   allcoach-pro          a plugin replacing the free one, sharing its text
+ *                         domain — the DIRECTORY name is what tells them apart.
+ *   magazine-blocks-pro   a companion plugin that WordPress will not activate
+ *   blockart-blocks-pro   without the free plugin present: both declare
+ *                         `Requires Plugins`, so a free-caller boot of either
+ *                         alone dies on the activation step. They reach a site
+ *                         only through pro-suite.yml, which checks the free
+ *                         plugin out alongside.
  *
  * Assuming any one of those shapes for the others produces a site that boots and
  * tests nothing.
@@ -467,8 +475,20 @@ function withProSteps(steps, token) {
   for (const m of proMounts.filter((x) => x.entry.type === "plugin")) {
     // `activatePlugin` wants the plugin's entry file, and the pro products do
     // not agree on it: user-registration-pro's entry is `user-registration.php`,
-    // not `user-registration-pro.php`. Discover it rather than deriving it from
-    // the slug, which is the assumption that would silently fail to activate.
+    // not `user-registration-pro.php`, and blockart-blocks-pro's is
+    // `blockart-pro.php` — nothing in that product is named after its own
+    // directory. Discover it rather than deriving it from the slug, which is
+    // the assumption that would silently fail to activate.
+    //
+    // The RESULT is recorded, not discarded. `activate_plugin()` answers with a
+    // WP_Error rather than throwing, and since WordPress 6.5 it refuses a plugin
+    // whose `Requires Plugins` are not active — which both block plugins declare
+    // (`magazine-blocks`, `blockart-blocks`). Dropping that error leaves a boot
+    // where the pro plugin is simply absent, and the only downstream symptom is
+    // a pro gate reporting FALSE: indistinguishable from a licence that did not
+    // resolve, which is the exact misdiagnosis that cost two CI round trips over
+    // the missing Freemius submodule. `tgqa_pro_activation` is where the probe
+    // reads it back from.
     out.push({
       step: "runPHP",
       code:
@@ -480,8 +500,20 @@ function withProSteps(steps, token) {
         "  $head = get_plugin_data( $f, false, false ); " +
         "  if ( ! empty( $head['Name'] ) ) { $entry = basename( $dir ) . '/' . basename( $f ); break; } " +
         "} " +
-        "if ( $entry ) { activate_plugin( $entry ); } " +
-        `else { error_log( 'TGQA: no plugin header found in ${m.slug}' ); }`,
+        "$state = (array) get_option( 'tgqa_pro_activation', array() ); " +
+        "if ( ! $entry ) { " +
+        `  $state['${m.slug}'] = 'no plugin header found'; ` +
+        `  error_log( 'TGQA: no plugin header found in ${m.slug}' ); ` +
+        "} else { " +
+        "  $res = activate_plugin( $entry ); " +
+        "  if ( is_wp_error( $res ) ) { " +
+        `    $state['${m.slug}'] = $res->get_error_code() . ': ' . $res->get_error_message(); ` +
+        `    error_log( 'TGQA: could not activate ${m.slug} — ' . $res->get_error_message() ); ` +
+        "  } else { " +
+        `    $state['${m.slug}'] = 'activated'; ` +
+        "  } " +
+        "} " +
+        "update_option( 'tgqa_pro_activation', $state, false );",
     });
   }
 
@@ -719,6 +751,9 @@ if (opt.engine === "playground") {
             // Freemius submodule ("no Freemius instance") indistinguishable
             // from a licence failure, which cost two CI round trips.
             pro_reason: probe.pro?.reason ?? null,
+            // Per pro mount: "activated", or the WP_Error that stopped it. A
+            // `Requires Plugins` refusal reads as a licence failure otherwise.
+            pro_activation: probe.pro_activation ?? null,
             license: probe.license ?? null,
           }
         : { error: "probe did not answer" },
