@@ -28,7 +28,10 @@ plugins/claudegrill/   the installable plugin — everything the skills need
     full-test/           manual: whole-product sweep, fans out to CI
     regression-sweep/    the sweep body, invoked per shard
     knowledge-init/      draft a product's knowledge file
-    write-spec/          verified finding -> committed regression spec
+    write-spec/          verified finding -> a scenario in the FEATURE's spec
+    rewrite-spec/        migrate old bug-centric specs into feature specs
+  standards/
+    wp-coding-standards.md  the house PHP standard; a DOCUMENT, read by write-fix
   scripts/               the deterministic layer — Node, zero dependencies
     setup-product.mjs    the deterministic half of `setup`: status + idempotent writes
     detect-product.mjs   identify the product from source -> JSON
@@ -39,6 +42,7 @@ plugins/claudegrill/   the installable plugin — everything the skills need
     boot-wp.mjs          disposable WordPress, product mounted live
     run-suite.mjs        run the product's own Playwright suite -> JSON
     suite-index.mjs      what the suite covers, and what it does NOT
+    spec-equivalence.mjs did a migration lose a guard, a scenario or a tier?
     report-suite.mjs     a run -> PR comment, step summary, self-contained HTML
     ingest-docs.mjs      docs site -> intent layer + area list (REST or sitemap)
     ingest-testsuite.mjs an existing Selenium/Robot suite -> specification
@@ -75,8 +79,11 @@ around unlimited lifetime keys. Read it before touching anything under
 `scripts/lib/license/`.
 
 **[CONVENTIONS.md](CONVENTIONS.md) governs every spec.** Read it before writing
-one. Nine rules, drawn from a WordPress plugin suite that had already settled
+one. Eleven rules, drawn from a WordPress plugin suite that had already settled
 them in practice, adapted for a catalogue that is part themes and part plugins.
+Rule 11 is the newest and the one that decides where coverage goes: **a spec file
+is a feature, and a Jira key is metadata on a scenario, never the identity of a
+file.**
 
 ## Invariants — do not break these
 
@@ -154,6 +161,17 @@ These are load-bearing. Changing one is a design decision, not a refactor.
      renders is WooCommerce or block output we cannot annotate. Reserve owned
      data attributes for theme-specific chrome: header layouts, footer columns,
      customizer-driven regions.
+
+10. **A spec file is a feature; a Jira key is metadata.** Coverage is organised by
+   what the product does, not by what has broken — `CONVENTIONS.md` rule 11. A
+   verified finding does NOT imply a new spec file, and does not even imply a new
+   test: `write-spec` identifies the feature, reads the scenarios already in its
+   spec, and may legitimately answer `reused`. Two findings describing one
+   user-visible behaviour get one scenario carrying both keys in `@guards`. This
+   is load-bearing rather than tidiness: `areas_uncovered` decides where agent
+   budget goes, and it means nothing unless the axis it counts describes features.
+   ColorMag shows the drift it guards against — 18 spec files, 23 tests, 17 files
+   holding a single test, several named after tickets.
 
 ## Releasing the plugin — and one warning you must not "fix"
 
@@ -880,6 +898,62 @@ decision in the suite layer.
   check until this is resolved** — a required check that is red on arrival is one
   nobody ever turns green.
 
+- **The feature layer — `suite-index.mjs`'s `features`, `features_by_area` and
+  `feature_hygiene`, plus rule 11 and the `write-spec` rewrite around them.**
+  Checked against ColorMag's REAL 18-file suite rather than a fixture: all 19
+  pre-existing payload fields byte-identical to the previous version, stderr
+  identical, and the scenario count summing exactly to `tests` (23). The four
+  `write-spec` decision branches were walked on that real data — REUSE found the
+  Escape-key scenario by behaviour and the `guards` map agreed; ADD identified the
+  padding spec as the owner with no viewport scenario in it; NEW FILE fell out of
+  `features_by_area.widgets` being empty on a declared, uncovered area; NONE has no
+  target by construction.
+
+  Eleven assertions against a purpose-built fixture theme, including the cases
+  that would have been silent: a **mangled** spec file and a **zero-byte** one both
+  still appear as features with empty `scenarios` (answering "which spec owns
+  this?" with "none" because a file failed to parse is exactly when an agent
+  writes a duplicate), `fresh` per feature excluding `fixme` and `@demo`, one
+  scenario carrying two keys, and an issue-named file flagged while a
+  behaviour-named one is not.
+
+  The index also reported the drift the rule exists for, unprompted: **17 of
+  ColorMag's 18 spec files hold a single scenario**, and `header-logo-sizing-regression`
+  is flagged as issue-named. ColorMag's only `@footer` spec is `@demo`, so that
+  area has no CI coverage at all — consistent with `fresh_by_area`, which omits it.
+
+- **`spec-equivalence.mjs`, the gate `rewrite-spec` depends on.** Seven cases in a
+  throwaway fixture, each a way a migration loses coverage while the suite stays
+  green: a `@guards` key dropped during a merge, a scenario left behind, a
+  scenario demoted out of `@fresh`, a scenario turned `fixme`, an area left with
+  no runnable coverage, plus the clean migration (3 files -> 2, nothing lost) and
+  a declared merge. All three error exits (no suite, missing baseline, bad flag)
+  and `--json` at **zero bytes of stderr**.
+
+  `--merged` exists because of a failure the first version had: a legitimate merge
+  could never go green, which trains a reader to ignore the gate. It now passes
+  only when the migration NAMES the title it folded away — and a `--merged` flag
+  naming a title that did not disappear is reported rather than accepted, since a
+  flag copied from a previous run is how a real loss gets waved past. Verified
+  that a declared merge still fails if a key went with it.
+
+- **`rewrite-spec`, and what the plugin's skill list costs.** The surface was cut
+  to four skills and then restored at the team's instruction, so the net change is
+  one addition: `rewrite-spec`, the migration entry point. Worth keeping from the
+  exercise, because it is measured rather than guessed —
+  `claude plugin details claudegrill@themegrill` prints a component inventory and a
+  token projection, and on the installed 1.5.0 copy nine skills cost **~695
+  always-on tokens in every session**, of which `wp-coding-standards` alone is
+  **~320**: it carries the longest description in the plugin, which is what makes
+  it a good trigger and an expensive thing to keep loaded. If that always-on cost
+  ever needs cutting, that single skill is where nearly half of it is, and the
+  cheapest version is to make it a document `write-fix` reads rather than a skill —
+  but note `write-fix` Step 0 invokes it **by name**, so moving the file without
+  repointing Step 0 breaks the one skill that writes product source.
+
+  The same command is how to check what is actually loaded after an auto-update:
+  it should now report `Skills (10)`.
+
 - **`run-suite.mjs --boot` and `--install`.** The script is now proved against
   ColorMag's real suite, but only against an already-running Local site. `--boot`
   handing off from `boot-wp.mjs` is still untested and blocked behind task 1;
@@ -895,7 +969,24 @@ decision in the suite layer.
   `claude --debug` and the mechanism that actually reaches a human is the
   committed queue file plus the PR-comment nudge.
 - **The `write-spec` proof gate end to end.** No spec has been generated,
-  stashed against broken code, and committed by it yet.
+  stashed against broken code, and committed by it yet. This is now the gate for
+  **two** mechanisms rather than one: the rewritten skill's REUSE and EXTEND paths
+  both lean on it (a reused scenario must be shown to fail on the broken code, or
+  the finding is credited as guarded when it is not), and neither has run.
+- **Any real run of `rewrite-spec`.** Its gate is proved against fixtures and its
+  plan is mechanical, but no spec file has actually been moved by it. ColorMag is
+  the obvious first target — 17 of 18 files hold a single scenario — and the first
+  run should take ONE feature, almost certainly the header: five `@header` specs
+  spread across `accessibility/`, `customizer/` and `demo-importer/`, which is
+  exactly the shape the skill exists for. Needs a running site, since Step 2 and
+  Step 5 both run the suite.
+- **Any real run of the rewritten `write-spec`.** The lookup it depends on is
+  proved against real data and the decision table was walked by hand, but no
+  finding has gone through the skill end to end — the deciding step is agent
+  judgement, which is invariant 1 working as intended and also the part a fixture
+  cannot check. The developer's Local site was stopped during this work (502 from
+  Local's router) and Playground would confound the result, since ColorMag's
+  `@fresh` tier is 11/20 there.
 - `ingest-docs.mjs` against the real docs sites.
 - Jira filing end to end (needs Rovo API-token auth enabled).
 - Every `TODO` in `knowledge/colormag.md` and `knowledge/zakra.md` — those are
@@ -917,32 +1008,45 @@ decision in the suite layer.
 3. **First real `suite.yml` run** on an existing ColorMag PR. It needs no API
    key and can fail for free, so it is the right first CI target. Push the
    caller change that adds `QA_REPO_TOKEN` and that push is the trigger.
-4. **Prove the `write-spec` gate once, by hand.** CMAG-741 is the obvious
-   candidate: the fix is on `fix/cmag-741-related-posts-random-offset` and
-   nothing guards it. Confirm the spec fails against the stashed code with an
-   *assertion* failure rather than a timeout. If that gate does not hold, every
-   spec this platform generates is decorative.
-5. **Run `/verify-fix` on 3+ already-hand-verified ColorMag fixes** and compare
+4. **Prove the `write-spec` gate once, by hand — and make it the first run of the
+   rewritten skill.** CMAG-741 is the obvious candidate: the fix is on
+   `fix/cmag-741-related-posts-random-offset` and nothing guards it. Confirm the
+   spec fails against the stashed code with an *assertion* failure rather than a
+   timeout. If that gate does not hold, every spec this platform generates is
+   decorative.
+
+   Needs the developer's Local site running; it was stopped while the feature
+   layer was built, which is why this is still open. CMAG-741 is a `content`-area
+   finding, so the run also exercises the lookup on an area that has four feature
+   specs — it should land as ADD or EXTEND, not as a new file, and if it insists
+   on a new file that is the first thing to read the report for.
+5. **Migrate one ColorMag feature with `/claudegrill:rewrite-spec`** — the header
+   is the candidate: five `@header` scenarios in three unrelated directories, one
+   of them flagged issue-named. It needs a running site and it is the cheapest
+   test of whether the equivalence gate is usable in practice rather than only
+   correct. Do it before filling the ten uncovered areas, so the new specs land
+   beside a migrated example rather than the old shape.
+6. **Run `/verify-fix` on 3+ already-hand-verified ColorMag fixes** and compare
    verdicts. Still the cheapest test of whether the approach works, and it now
    exercises the diff-scoped Step 3.5 and the `write-spec` handoff.
-6. **Resolve the knowledge-file TODOs** for ColorMag with a maintainer. These
+7. **Resolve the knowledge-file TODOs** for ColorMag with a maintainer. These
    matter more than they did: `suite-index.mjs` derives `areas_uncovered` from
    the knowledge file's critical-flows list, and it currently reports **10 of 16
    areas with no `@fresh` coverage at all** — customization, demo-import, faq,
    footer, get-started, how-to, rtl, upgrade, widgets, woocommerce. A wrong area
    list sends the whole budget to the wrong place.
-7. **Fill those ten uncovered areas.** Under the no-AI-on-PR model the suite is
+8. **Fill those ten uncovered areas.** Under the no-AI-on-PR model the suite is
    the only automated safety net, so an area with no specs is an area where a
    regression ships unnoticed. This is now the main body of work, and it is the
    thing the cost projection assumes is happening.
-8. **Port the existing spec harness, do not invent one.**
+9. **Port the existing spec harness, do not invent one.**
    `wpmake22/post-purchase-hub` already has a working Playwright suite with
    settled conventions: wp-env, two projects (desktop 1440×900, mobile 375×812),
    per-theme visual snapshots, owned-selector rule, and a full unit /
    integration / e2e pyramid. Extract `tests/e2e/utils/` into `packages/core`
    and adopt its conventions rather than designing new ones. Transpose the
    matrix for themes — one theme × N plugins, not one plugin × N themes.
-9. **Snapshot diff triage** — the agent's best-fitting job in the whole system,
+10. **Snapshot diff triage** — the agent's best-fitting job in the whole system,
    and one of the few left under the no-AI-on-PR model. Six themes × two
    viewports × N specs is a large snapshot set, and `--update-snapshots` makes
    rubber-stamping a real regression as easy as accepting an intended restyle.

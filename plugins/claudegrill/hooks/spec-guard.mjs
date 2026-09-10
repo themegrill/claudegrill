@@ -110,7 +110,12 @@ async function main() {
   const sourceChanged = changed.filter((f) => SOURCE_EXT.test(f) && !isTest(f));
   if (sourceChanged.length === 0) quit();
 
-  // --- 3. Was a spec written alongside it? ---------------------------------
+  // --- 3. Was coverage written alongside it? -------------------------------
+  //
+  // A MODIFIED spec file counts, not only a new one. Coverage belongs to the
+  // feature's existing spec (CONVENTIONS.md rule 11), so the common shape is a
+  // scenario added to a file that is already tracked — `git status --porcelain`
+  // reports that as ` M`, which this sees.
   const specChanged = changed.some(
     (f) => f.startsWith(`${specDir}/`) || /\.spec\.[cm]?[jt]sx?$/.test(f),
   );
@@ -169,7 +174,7 @@ async function main() {
   }
 
   process.stderr.write(
-    "claudegrill: source changed with no new spec — run /write-spec (queued 1 item)\n",
+    "claudegrill: source changed with no spec coverage — run /write-spec (queued 1 item)\n",
   );
   quit();
 }

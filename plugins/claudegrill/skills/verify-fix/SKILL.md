@@ -170,6 +170,11 @@ Three rules for choosing:
   whatever area they are in — `suite-index.mjs`'s `guards` map has the file and
   line. A fix for CMAG-1234 that breaks the spec guarding CMAG-1234 is the single
   most important thing this step can catch.
+- **Read `features_by_area` for the areas you are about to run**, and the
+  `scenarios` titles under them. It costs nothing here — you are already reading
+  this JSON — and it is the same lookup Step 6 needs. Knowing which feature spec
+  owns the behaviour *before* you verify also tells you which existing scenario
+  should have caught this bug and did not, which is itself worth reporting.
 - **If you genuinely cannot map the diff to any area** — a build-config change, a
   broad refactor, `functions.php` — run the whole `@fresh` tier and say why. It
   is ~47s on ColorMag. Guessing narrowly on a diff you do not understand is worse
@@ -269,7 +274,8 @@ Claim:   <what it was supposed to do>
 
 Site       <url> — existing site | fresh Playground | wp-env
 Suite      <n> passed, <n> failed, <n> skipped (tier: fresh only) — or "no suite"
-Spec added <path>, branch <name> — or why not
+Coverage   <feature> / <scenario title> — added | updated | reused | new file | none
+           <path>, branch <name>; if none, why not
 
 Evidence
   Before fix: <what you observed, + screenshot path>
@@ -288,22 +294,52 @@ Not checked
 That last section is mandatory. An honest list of gaps is more useful than an
 implied claim of total coverage.
 
-## Step 6 — Graduate the finding
+## Step 6 — Graduate the finding into the suite
 
-A verdict that does not become a spec is a verdict you will pay to reach again.
+A verdict that does not become coverage is a verdict you will pay to reach again.
 
-- On **VERIFIED** — invoke the `write-spec` skill to add a `@fresh` regression
-  spec guarding what you just confirmed.
-- On **REGRESSION** or **INCOMPLETE** — write a `test.fixme()` spec naming the
-  open key, so it flips green the day it is fixed.
-- On **CANNOT VERIFY** — write nothing.
+Invoke the `write-spec` skill and hand it the verdict. **Do not hand it a
+filename, and do not assume it will create one.** Coverage in this suite belongs
+to the *feature*, not to the Jira key — `CONVENTIONS.md` rule 11 — so what
+`write-spec` does with your finding is decided by a lookup it performs itself:
 
-Report the branch name and the proof-gate result (3/3 against the fixed code,
-fails against the broken code) in the verdict block. If `write-spec` declined to
-write one, say which row of its mapping table applied.
+```
+VERIFIED
+   ↓
+identify the feature            (the behaviour, the area, the knowledge file)
+   ↓
+find the feature's spec         (suite-index.mjs: features_by_area)
+   ↓
+search its scenarios            (by behaviour, not only by Jira key)
+   ↓
+reuse · extend · add · new file  (per its Step 3 decision table)
+   ↓
+prove against broken + fixed code
+   ↓
+record the key in @guards
+```
+
+- On **VERIFIED** — invoke `write-spec`. The outcome may legitimately be
+  **`no change`**: a scenario already guarding this behaviour, re-proved against
+  the broken code, is the cheapest possible result and counts as graduated.
+- On **REGRESSION** or **INCOMPLETE** — a `test.fixme()` scenario naming the open
+  key, in the feature's existing spec, so it flips green the day it is fixed.
+- On **CANNOT VERIFY** — nothing.
+
+You already did most of the feature identification in Step 2 ("blast radius") and
+Step 3.5 (mapping the diff to areas). Pass that along — the area you ran, the
+specs you saw pass or fail, and the behaviour in the customer's words — so the
+lookup starts from what you learned rather than repeating it.
+
+Report the **feature, the scenario and the action** (`added` / `updated` /
+`reused` / `new file` / `none`), the branch name, and the proof-gate result (3/3
+against the fixed code, fails against the broken code) in the verdict block. If
+`write-spec` wrote nothing, say which row of its mapping table applied — and if
+the reason was existing coverage, name the scenario that covers it.
 
 If a record in `.themegrill-qa/spec-queue.jsonl` covers this branch, mark it
-`done` by appending an updated record.
+`done` by appending an updated record. A `reused` outcome marks it `done` too:
+the queue tracks whether a finding is guarded, not whether a file was added.
 
 ## Rules
 

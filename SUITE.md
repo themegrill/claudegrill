@@ -215,11 +215,30 @@ test('centered header keeps the tagline @fresh @header', async ({ page }) => {
 | `@why` | **yes** | Why this spec exists. `CONVENTIONS.md` rule 6 already requires it; this makes it machine-readable. |
 | `@area` | recommended | Matches the title's `@area` tag. Redundancy is deliberate: the title drives `--grep`, the docblock drives the index, and a mismatch between them is a reportable hygiene error. |
 | `@tier` | recommended | Same. |
-| `@guards` | when applicable | The Jira key or bug identifier this spec exists to prevent recurring. Comma-separated for several. |
+| `@guards` | when applicable | The Jira key or bug identifier this scenario exists to prevent recurring. Comma-separated for several — one scenario guarding two keys is correct and preferred over two scenarios. **Metadata, never identity**: it explains why the scenario is there, and it never names the file or scopes it. See `CONVENTIONS.md` rule 11. |
 | `@source` | when written by the platform | Which skill wrote it and when — `verify-fix 2026-08-24`, `regression-sweep 2026-08-24`, or `human`. |
 
 A missing field is `null`, never a crash. The count of tests with an incomplete
 docblock is reported, so the suite's own hygiene is visible.
+
+### The file is the feature
+
+There is no `@feature` tag and there must not be one. **A spec file is a feature**
+and its name is derived from the filename, which keeps the taxonomy down to one
+thing that can go stale instead of two. Inside the file, each `test()` is one
+scenario of that feature, and `@guards` records which findings caused a scenario
+to exist.
+
+```text
+spec file   = feature         tests/e2e/specs/header/logo-sizing.spec.ts
+test()      = scenario        'a lone logo keeps full header column width @fresh @header'
+@guards     = why it exists   CMAG-650, CMAG-702
+@area       = the coarse axis header  (CI scoping, --area, areas_uncovered)
+```
+
+`@area` stays the dimension CI and the index count on; a feature is finer than an
+area. One area holds several feature specs. `CONVENTIONS.md` rule 11 has the
+decision rules, and §6 below has the lookup.
 
 ---
 
@@ -439,7 +458,26 @@ string has neither.
   "fixme": [{ "title": "...", "file": "...", "guards": ["CMAG-733"], "why": "..." }],
   "areas_covered": ["header", "content", "customizer"],
   "areas_uncovered": ["footer", "widgets", "front-page", "activation"],
-  "thinnest_areas": ["footer", "widgets"]
+  "thinnest_areas": ["footer", "widgets"],
+  "features": {
+    "tests/e2e/specs/header/logo-sizing.spec.ts": {
+      "feature": "logo-sizing",
+      "areas": ["header"],
+      "tests": 3,
+      "fresh": 3,
+      "guards": ["CMAG-650"],
+      "scenarios": [
+        { "title": "a lone logo keeps full header column width @fresh @header",
+          "line": 44, "tier": "fresh", "area": "header",
+          "guards": ["CMAG-650"], "pro": false, "fixme": false, "skip": false }
+      ]
+    }
+  },
+  "features_by_area": { "header": ["tests/e2e/specs/header/logo-sizing.spec.ts"] },
+  "feature_hygiene": {
+    "issue_named_specs": ["tests/e2e/specs/demo-importer/header-logo-sizing-regression.spec.ts"],
+    "single_scenario_specs": ["tests/e2e/specs/front-page/hide-blog-static-page-toggle.spec.ts"]
+  }
 }
 ```
 
@@ -451,6 +489,44 @@ shard; an area with none does.
 
 `thinnest_areas` ranks covered-but-barely areas — fewer than three `@fresh` tests
 — so a sweep can top them up rather than treating one smoke test as coverage.
+
+### The feature layer
+
+`features`, `features_by_area` and `feature_hygiene` are the lookup
+`CONVENTIONS.md` rule 11 runs on, and they exist to answer four questions before
+anything writes a spec:
+
+| Question | Field |
+|---|---|
+| Which spec owns this feature? | `features_by_area[<area>]` |
+| Which scenarios belong to it? | `features[<path>].scenarios` |
+| Which findings does it guard? | `features[<path>].guards`, and `guards` by key |
+| Does this behaviour already have coverage? | the scenario **titles**, read — not the key |
+
+`features` is keyed by spec file because **the file is the feature's identity**
+(§3). Its name is derived from the basename, so a file called `cmag-650-fix`
+reports itself in `feature_hygiene.issue_named_specs` rather than hiding behind a
+tidy tag. It is deliberately the only part of this payload that lists tests
+individually — everything else is a count, and it is the one question a count
+cannot answer: *is THIS behaviour covered?* The `guards` map cannot answer it
+either, since it is keyed by Jira key and therefore only finds a duplicate after
+the same behaviour has been filed under a second key.
+
+A file that parsed to zero tests still appears in `features`, with an empty
+`scenarios` list. "Which spec owns this?" must not answer "none" because a spec
+was mangled — that is exactly when an agent is about to write a duplicate.
+
+`spec-equivalence.mjs` is the second consumer of this contract: it snapshots the
+payload, and after a migration fails on anything the suite LOST — a `@guards` key
+absent from the whole suite, a scenario gone, a scenario out of the `@fresh` tier
+or newly `fixme`, an area with no runnable coverage left. That is why `features`
+carries titles and tiers per scenario rather than counts: a count cannot tell a
+moved test from a deleted one.
+
+`feature_hygiene` is a backlog, not a defect list, and nothing enforces it. A
+feature can legitimately hold one scenario, and a file named after a ticket still
+runs; both lists simply mark where the suite describes bug history rather than the
+product, and where a new scenario should fold in rather than sit beside.
 
 ---
 

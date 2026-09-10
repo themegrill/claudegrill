@@ -4,9 +4,10 @@ Every spec in every ThemeGrill product repo follows these. They are lifted from 
 working WordPress plugin suite that had already settled them in practice, adapted
 for a catalogue that is part themes and part plugins.
 
-Ten rules. The first four are about not writing brittle tests; the next five are
-about tests that still mean something in a year; the tenth is about a test being
-runnable at all in the place it is meant to run.
+Eleven rules. The first four are about not writing brittle tests; the next five
+are about tests that still mean something in a year; the tenth is about a test
+being runnable at all in the place it is meant to run; the eleventh is about the
+suite as a whole describing the product rather than its bug history.
 
 ---
 
@@ -237,6 +238,137 @@ only the person who added it ever runs it.
 
 The examples throughout this document are JavaScript for readability. They are
 illustrations of a rule, not a statement about which language to write in.
+
+## 11. Specs are feature-centric; Jira keys are metadata
+
+**A spec file represents a feature. A Jira issue is a reason a scenario exists,
+never the thing a file is named after or filed under.**
+
+```text
+Feature                       one spec file
+  └── scenario                one test()
+       └── @guards KEY        why that scenario was added
+```
+
+Not this:
+
+```text
+Jira issue  →  its own spec file
+```
+
+The test the suite is supposed to answer is *"what does this product do, and
+which of it do we protect?"* A suite filed by ticket answers a different
+question — *"what have we fixed?"* — and that one cannot tell you where the holes
+are. It also cannot stop duplication: two tickets describing one broken behaviour
+produce two specs asserting the same thing, every future change to that behaviour
+produces two failures, and the second teaches whoever reads it that failures come
+in redundant pairs.
+
+This is a house rule, not a preference, because the platform's own cost model
+depends on it. `suite-index.mjs`'s `areas_uncovered` is what decides where agent
+budget goes, and it is only meaningful if the axis it counts on describes
+features. ColorMag shows the drift it guards against: 18 spec files, 23 tests,
+17 files holding a single test, with names like
+`header-logo-sizing-regression.spec.ts` and `css-custom-property-corruption.spec.ts`.
+
+### How to identify the feature
+
+In order of authority:
+
+1. **The user-facing behaviour** — what a customer would say broke. "The logo is
+   squeezed when it is alone in the header column," not "`flex-basis` is applied
+   unconditionally."
+2. **The area** — map the changed files through the manifest's `area_paths`, and
+   check the knowledge file's critical-flows list.
+3. **The feature names the suite already uses** for that area, from
+   `suite-index.mjs`'s `features` and `features_by_area`.
+
+**Never invent a name while an existing one fits.** An existing feature keeps the
+name its spec already has, even a name you would have chosen better: `area_paths`,
+CI spec-level scoping and `@guards` history all reference those paths, and
+renaming is a reviewed human change.
+
+If the feature cannot be named confidently, stop and say which candidates you
+considered. A spec filed where nobody will look for it costs as much as no spec
+and adds maintenance.
+
+### Area and feature are different sizes
+
+`@area` is the **coarse** dimension. It is what CI scoping, `--area` filtering and
+`areas_uncovered` run on, and it maps to the knowledge file's critical flows —
+`header`, `content`, `global`, `footer`. A feature is **finer**: one spec file
+inside an area. An area holds several features; a feature belongs to one area.
+
+So "feature-centric" does **not** mean one file per area. `customizer.spec.ts`
+holding a dozen unrelated Customizer scenarios is worse than what most products
+have today, and on the pro tier it is a file that cannot fit a CI time ceiling.
+
+Two consequences worth stating, because the suite already contradicts both:
+
+- **The `@area` tag is authoritative, not the directory.** ColorMag has
+  `specs/demo-importer/header-logo-sizing-regression.spec.ts` tagged `@header`.
+  The tag is what the index, `--area` and CI scoping read; the directory is
+  filing. Where they disagree, fix the tag or the directory deliberately — do not
+  infer the area from the path.
+- **An area name is not automatically a feature name.** Some declared areas are
+  docs-site categories (`faq`, `how-to`, `get-started`) or Customizer panel names
+  (`additional`, `global`). They are legitimate areas and poor feature names.
+
+### Finding the feature's spec before writing anything
+
+```bash
+node "$QA/scripts/suite-index.mjs" --pretty
+```
+
+- `features_by_area[<area>]` — which spec files already cover the area
+- `features[<path>].scenarios` — every scenario title in a file, with its tier
+  and its `@guards`
+- `guards[<KEY>]` — the by-key lookup; the cheap check, and the weak one
+- `feature_hygiene` — specs named after a ticket, and specs holding one scenario
+
+Search **by behaviour**, not only by key: the setting name, the theme mod, the
+control id, the selector. A scenario can cover a behaviour without using the word
+the ticket uses for it.
+
+### When to add, when to update, when a new file is justified
+
+| Situation | Do |
+|---|---|
+| A scenario already asserts this behaviour and would have failed on the broken code | Nothing. Add the key to its `@guards`. Re-prove it. |
+| A scenario is about this behaviour but would have passed on the broken code | Extend it **additively** — every existing assertion and `@guards` key stays. |
+| The feature has a spec, this behaviour has no scenario | Add a scenario to that file. |
+| No spec covers this feature at all | One new file, named for the feature. |
+| Two tickets, one user-visible behaviour | One scenario, both keys in `@guards`. Never one scenario per key. |
+| The behaviour is not mechanically observable | No spec. Knowledge file's Known-fragile section. |
+
+Prefer adding a sibling scenario over editing a passing one. The code an existing
+scenario was proved against is usually long merged, so an edit cannot be
+re-proved against what it originally guarded — and a wrong edit reports the
+product as broken when it is not. `header-logo-sizing-regression.spec.ts` records
+that exact failure in its own docblock.
+
+### Naming
+
+The title describes the behaviour. `@guards` carries the history.
+
+```js
+// Yes — a reader who has never seen the ticket knows what broke.
+test('a lone logo keeps full header column width @fresh @header', …)
+
+// No.
+test('CMAG-650', …)
+test('regression test', …)
+test('fix works', …)
+```
+
+### Migration: when it is touched, not on a schedule
+
+Existing specs keep working. `@area`, `@guards`, `@fresh` and every tier rule are
+unchanged, and nothing here requires renaming a file that CI already references.
+Fold a bug-named spec into its feature **when you are already working in it** —
+and when you do, say so in the PR, because a moved spec is a moved CI path.
+
+New and updated coverage follows this rule from now on.
 
 ---
 

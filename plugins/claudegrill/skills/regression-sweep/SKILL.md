@@ -223,10 +223,10 @@ Exercised: <list>
 Not exercised: <list, with reason>
 ```
 
-## Step 4b — Every verified finding becomes a spec
+## Step 4b — Every verified finding becomes coverage
 
 A ticket records a bug. A spec prevents it coming back. File the first, always
-write the second.
+secure the second.
 
 For each finding that cleared all six parts of the gate, invoke the `write-spec`
 skill. Its proof gate applies unchanged — 3/3 against the fixed code, a real
@@ -234,13 +234,24 @@ assertion failure against the broken code — and a finding that cannot clear it
 reported as not mechanically observable rather than committed as a spec that
 proves nothing.
 
-The sweep's output then carries **two** lists: the ticket list and a **spec-PR
-list**, one branch per finding.
+**"Coverage" is not the same as "a new spec file."** `write-spec` identifies the
+feature first and may legitimately answer `reused` (a scenario already guards this
+behaviour, re-proved) or `updated` (the feature's existing scenario extended) —
+see `CONVENTIONS.md` rule 11. On a sweep this is the *likely* answer, not the
+exceptional one: a sweep revisits areas the suite already covers, so several
+findings in one area often belong to one feature and sometimes to one scenario.
+Two findings describing one user-visible behaviour get one scenario carrying both
+keys, never one scenario each.
+
+The sweep's output then carries **two** lists: the ticket list and a **coverage
+list** — one branch per finding that needed a code change, and a line naming the
+existing scenario for each one that did not.
 
 **Maximum 5 spec PRs per sweep**, for the same reason as the ticket cap: a flood
 of generated PRs is ignored, and an ignored PR queue defeats the point of
 generating them. If you verified more than five, write specs for the five most
-severe and list the rest in the report as unguarded.
+severe and list the rest in the report as unguarded. A `reused` outcome does not
+count against the cap — it opens no PR.
 
 **If and only if `--file-tickets` was passed**, create a Jira issue per verified
 finding via the Atlassian MCP:

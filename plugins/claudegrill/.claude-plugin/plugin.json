@@ -1,7 +1,7 @@
 {
   "name": "claudegrill",
   "displayName": "Claudegrill",
-  "description": "ThemeGrill's shared Claude Code toolkit: set a product up, write a fix to house standards, verify it, and turn it into a committed regression spec.",
+  "description": "ThemeGrill's shared Claude Code toolkit: set a product up, write a fix to house standards, verify it, turn it into a feature-centric regression spec, and migrate specs written the old way.",
   "author": {
     "name": "ThemeGrill Engineering",
     "url": "https://themegrill.com"

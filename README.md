@@ -22,15 +22,26 @@ alongside the fix. CI then runs that spec on every future PR, deterministically.
 |---|---|---|---|
 | 0 | `/claudegrill:setup` | Once per product | Everything below, configured and proved |
 | 1 | `/claudegrill:write-fix` | You, on a bug or a feature | The change, to house standards, PHPCS-clean, verified |
-| 2 | `/claudegrill:verify-fix` | You, locally, on a fix | A verdict, and a spec on your branch |
-| 3 | `/claudegrill:write-spec` | A verified finding, or the spec queue | A `@fresh` spec, proved against broken and fixed code |
-| 4 | **QA suite** (CI) | Every PR | A pass/fail check and one PR comment |
-| 5 | **QA suite — pro** (CI) | Every PR on a pro repo | The same, plus `@pro` and `@unlicensed` |
-| 6 | `/claudegrill:regression-sweep` | Manual, on a release | A report; Jira tickets only when asked |
+| 2 | `/claudegrill:verify-fix` | You, locally, on a fix | A verdict, and coverage on your branch |
+| 3 | `/claudegrill:write-spec` | A verified finding, or the spec queue | A `@fresh` scenario in the **feature's** spec — added, extended, or an existing one re-proved — against broken and fixed code |
+| 4 | `/claudegrill:rewrite-spec` | You, on a suite written before rule 11 | One feature's specs regrouped by feature, nothing lost, proved by the equivalence gate |
+| 5 | **QA suite** (CI) | Every PR | A pass/fail check and one PR comment |
+| 6 | **QA suite — pro** (CI) | Every PR on a pro repo | The same, plus `@pro` and `@unlicensed` |
+| 7 | `/claudegrill:regression-sweep` | Manual, on a release | A report; Jira tickets only when asked |
+| 8 | `/claudegrill:full-test` | Manual, when a product ships | The sweep above, fanned out across CI shards |
 
-`wp-coding-standards` is the odd one out: a reference, not an entry point.
-`write-fix` loads it before writing a line, and it governs every PHP change in
-every ThemeGrill product.
+`knowledge-init` drafts a product's knowledge file for a human to correct, and
+`pr-qa-review` is the CI-side reviewer. `wp-coding-standards` is the odd one out:
+a reference, not an entry point. `write-fix` loads it before writing a line, and
+it governs every PHP change in every ThemeGrill product.
+
+Two of these cannot run yet, and it is worth knowing which before you reach for
+them. `full-test` does nothing but dispatch `sweep.yml` in the product repo, which
+needs the cross-repo checkout of this repo (still blocked), an `ANTHROPIC_API_KEY`
+secret, and a caller workflow no product has installed — see
+`.github/workflows/examples/caller-sweep.yml`. `regression-sweep` runs standalone
+today and boots its own site, but it files nothing to Jira unless
+`--file-tickets` is passed, and Jira filing end to end is unproven.
 
 Skills are namespaced because they ship as a plugin: `/claudegrill:verify-fix`,
 not `/verify-fix`.

@@ -241,8 +241,10 @@ product knowledge file can be corrected.</sub>
   not cause is the fastest way to get the whole check ignored.
 - **Read `.themegrill-qa/spec-queue.jsonl`.** If this PR's diff touches product
   source and the queue has pending records for its branch, add one line to the
-  comment: *"This change has no regression spec; comment `@claudegrill specs`
-  and one will be written."* A nudge, never a block.
+  comment: *"This change has no spec coverage; comment `@claudegrill specs` and
+  it will be written."* A nudge, never a block. Say *coverage*, not *a new spec*:
+  the answer may be a scenario added to the feature's existing spec, or an
+  existing scenario re-proved (`CONVENTIONS.md` rule 11).
 - If the environment will not boot, post that as the comment and exit non-zero.
   A silent pass is worse than a visible failure.
 - Keep the comment short enough to read on a phone. Detail goes in the workflow

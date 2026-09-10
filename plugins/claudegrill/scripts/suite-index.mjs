@@ -97,8 +97,52 @@ function specFiles(dir) {
   return out.sort();
 }
 
+/**
+ * The feature a spec file represents.
+ *
+ * A feature IS a spec file — there is no `@feature` tag and there must not be
+ * one. The suite already carries two taxonomies that disagree (the directory a
+ * spec sits in, and its `@area` tag: ColorMag has
+ * `specs/demo-importer/header-logo-sizing-regression.spec.ts` tagged `@header`),
+ * and a third hand-maintained one would be a third thing to get out of sync.
+ *
+ * So the file is the identity and the name is derived from its basename. That
+ * makes the name only as good as the filename — which is the point: a file
+ * called `cmag-650-fix` reports itself as a badly named feature in
+ * `feature_hygiene.issue_named_specs` instead of hiding behind a tidy tag.
+ *
+ * Contract: SUITE.md §6, CONVENTIONS.md rule 11.
+ */
+function featureOf(relPath) {
+  const base = relPath
+    .split("/")
+    .pop()
+    .replace(/\.spec\.[cm]?[jt]sx?$/, "");
+  return slugifyArea(base);
+}
+
+/**
+ * Does this filename name an issue rather than a behaviour?
+ *
+ * A Jira key in the name, or a `-regression` / `-fix` / `-bug` suffix. Both say
+ * the file was created by a ticket rather than by a feature, which is the drift
+ * CONVENTIONS.md rule 11 exists to stop. Reported, never enforced: renaming a
+ * file that CI and `area_paths` already reference is a human decision.
+ */
+function looksIssueNamed(feature) {
+  return (
+    /(^|-)[a-z]{2,}-\d+(-|$)/.test(feature) ||
+    /-(regression|regressions|fix|fixes|bug|bugs|issue)$/.test(feature)
+  );
+}
+
 const files = specFiles(path.join(root, m.spec_dir));
 const tests = [];
+
+// Read separately from `files` so a file that parsed to zero tests still counts
+// as a feature. "Which spec owns this?" must not answer "none" because a spec
+// was mangled — that is exactly when the agent is about to write a duplicate.
+const readFiles = [];
 
 for (const abs of files) {
   const rel = path.relative(root, abs).split(path.sep).join("/");
@@ -109,6 +153,7 @@ for (const abs of files) {
     say(`could not read ${rel} — skipped`);
     continue;
   }
+  readFiles.push(rel);
   tests.push(...parseSpecFile(text, rel, m.tiers));
 }
 
@@ -199,6 +244,103 @@ const areasUndeclared = areasCovered.filter(
   (a) => declared.length > 0 && !declared.includes(a),
 );
 
+// ------------------------------------------------------------------ features
+
+/**
+ * Feature -> the scenarios inside it. The lookup `write-spec` runs before it
+ * writes anything.
+ *
+ * Every other rollup here is a count, which answers "how much is covered". This
+ * one carries the individual test titles, which is the only thing that answers
+ * "is THIS behaviour covered" — and that question is what stops a second spec
+ * being written for a bug the suite already guards. The `guards` map above
+ * cannot answer it: it is keyed by Jira key, so it only ever finds the
+ * duplicate AFTER somebody has filed the same behaviour under a second key.
+ *
+ * Keyed by spec file, because the file is the feature's identity (see
+ * `featureOf`). Deliberately the only place in this payload that lists tests
+ * individually; everything else stays a count so the JSON does not grow with
+ * the suite without reason.
+ */
+const features = {};
+
+for (const rel of readFiles) {
+  features[rel] = {
+    feature: featureOf(rel),
+    areas: [],
+    tests: 0,
+    fresh: 0,
+    guards: [],
+    scenarios: [],
+  };
+}
+
+for (const t of tests) {
+  // A test in a file that could not be read cannot happen, but a caller passing
+  // a hand-built list could; seed rather than throw.
+  const f = (features[t.file] ??= {
+    feature: featureOf(t.file),
+    areas: [],
+    tests: 0,
+    fresh: 0,
+    guards: [],
+    scenarios: [],
+  });
+
+  f.tests += 1;
+  if (t.tier === "fresh" && !t.fixme && !t.skip) f.fresh += 1;
+
+  for (const a of t.area_tags ?? []) {
+    const area = slugifyArea(a);
+    if (area && !f.areas.includes(area)) f.areas.push(area);
+  }
+  for (const g of t.guards) if (!f.guards.includes(g)) f.guards.push(g);
+
+  f.scenarios.push({
+    title: t.title,
+    line: t.line,
+    tier: t.tier,
+    area: t.area ? slugifyArea(t.area) : null,
+    guards: t.guards,
+    pro: isProTest(t.tags ?? []),
+    fixme: t.fixme,
+    skip: t.skip,
+  });
+}
+
+for (const f of Object.values(features)) {
+  f.areas.sort();
+  f.guards.sort();
+}
+
+// Area -> the spec files covering it. "Which spec owns this feature?" asked from
+// the other direction, which is the direction a finding arrives from: you know
+// the area the diff touched, not the filename.
+const featuresByArea = {};
+for (const [rel, f] of Object.entries(features)) {
+  for (const area of f.areas) (featuresByArea[area] ??= []).push(rel);
+}
+for (const list of Object.values(featuresByArea)) list.sort();
+
+/**
+ * The rule-11 migration backlog, reported the way `areas_uncovered` is.
+ *
+ * Neither list is a defect on its own — a feature can legitimately hold one
+ * scenario, and a file named after a ticket still runs. They are where the suite
+ * stops describing the product and starts describing its bug history, and they
+ * are what a spec touching that area should fold itself into rather than sit
+ * beside.
+ */
+const issueNamedSpecs = Object.entries(features)
+  .filter(([, f]) => looksIssueNamed(f.feature))
+  .map(([rel]) => rel)
+  .sort();
+
+const singleScenarioSpecs = Object.entries(features)
+  .filter(([, f]) => f.tests === 1)
+  .map(([rel]) => rel)
+  .sort();
+
 emit({
   suite: true,
   product: info.slug,
@@ -217,6 +359,14 @@ emit({
   areas_undeclared: areasUndeclared,
   areas_declared: declared,
   thinnest_areas: thinnestAreas,
+  // The feature layer — CONVENTIONS.md rule 11. Read `features` before writing a
+  // spec: it is what tells you whether the behaviour already has a scenario.
+  features,
+  features_by_area: featuresByArea,
+  feature_hygiene: {
+    issue_named_specs: issueNamedSpecs,
+    single_scenario_specs: singleScenarioSpecs,
+  },
   // Hygiene. A suite that cannot say why its tests exist is one refactor away
   // from nobody being able to tell a real failure from a stale one.
   hygiene: {
