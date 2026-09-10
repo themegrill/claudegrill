@@ -9,7 +9,7 @@ maintainer before the agents rely on it.
 - **Type:** theme
 - **Repo:** TODO
 - **Pro companion:** Zakra Pro — TODO repo
-- **Jira project key:** TODO
+- **Issues:** themegrill/zakra — GitHub Issues
 - **Supported:** WP TODO+ · PHP TODO+
 - **Companion plugins:** ThemeGrill Demo Importer (starter sites)
 

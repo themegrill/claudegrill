@@ -239,10 +239,15 @@ only the person who added it ever runs it.
 The examples throughout this document are JavaScript for readability. They are
 illustrations of a rule, not a statement about which language to write in.
 
-## 11. Specs are feature-centric; Jira keys are metadata
+## 11. Specs are feature-centric; issue keys are metadata
 
-**A spec file represents a feature. A Jira issue is a reason a scenario exists,
+**A spec file represents a feature. An issue is a reason a scenario exists,
 never the thing a file is named after or filed under.**
+
+ThemeGrill tracks work in GitHub Issues, so `@guards` names `#123`. Scenarios
+written before that move name a Jira key (`CMAG-741`); those stay exactly as
+they are, because the key is the honest record of why the scenario exists and
+rewriting it would destroy the only link back to the original report.
 
 ```text
 Feature                       one spec file
@@ -253,13 +258,13 @@ Feature                       one spec file
 Not this:
 
 ```text
-Jira issue  →  its own spec file
+Issue  →  its own spec file
 ```
 
 The test the suite is supposed to answer is *"what does this product do, and
 which of it do we protect?"* A suite filed by ticket answers a different
 question — *"what have we fixed?"* — and that one cannot tell you where the holes
-are. It also cannot stop duplication: two tickets describing one broken behaviour
+are. It also cannot stop duplication: two issues describing one broken behaviour
 produce two specs asserting the same thing, every future change to that behaviour
 produces two failures, and the second teaches whoever reads it that failures come
 in redundant pairs.

@@ -1,8 +1,8 @@
 ---
 name: verify-fix
 description: Verify the current fix on your existing site (or a disposable WordPress), running the product's suite first
-argument-hint: "[optional: what to check, or a Jira key]"
-allowed-tools: Bash, Read, Grep, Glob, Skill, mcp__playwright__*, mcp__atlassian__*
+argument-hint: "[optional: what to check, or an issue number]"
+allowed-tools: Bash, Read, Grep, Glob, Skill, mcp__playwright__*
 pass-arguments: true
 ---
 
@@ -32,7 +32,7 @@ plugin. Assume you were given **no context**. Derive it. Do not ask the user
 what product this is, what changed, or how to reproduce — find out.
 
 `$ARGUMENTS` may be empty. If present it is either a hint about what to check
-("check the mobile menu") or a Jira key (`CM-1234`). Use it to narrow focus, but
+("check the mobile menu") or an issue number (`#1234`). Use it to narrow focus, but
 still run the derivation below.
 
 ## Step 1 — Work out what you are looking at
@@ -42,7 +42,7 @@ node "$QA/scripts/detect-product.mjs"
 ```
 
 That gives you type (theme/plugin), slug, name, version, repo root, the branch,
-any Jira key embedded in the branch name, and the path to the product knowledge
+any tracker key embedded in the branch name, and the path to the product knowledge
 file. Then:
 
 ```bash
@@ -62,9 +62,19 @@ integration points. It exists so you do not have to rediscover the product.
 
 Build a hypothesis before you touch a browser. Sources, in order of authority:
 
-1. **A Jira key** — from `$ARGUMENTS` or the branch name. Fetch the issue via
-   the Atlassian MCP. The reported reproduction steps and expected behaviour are
-   your test case; use them verbatim rather than inventing your own.
+1. **The issue** — from `$ARGUMENTS` or the branch name. ThemeGrill tracks work
+   in GitHub Issues, so fetch it from there:
+
+   ```bash
+   node "$QA/scripts/file-issue.mjs" view <number>
+   ```
+
+   The reported reproduction steps and expected behaviour are your test case; use
+   them verbatim rather than inventing your own.
+
+   A branch named for an **old Jira key** (`fix/CMAG-741-...`) predates the move
+   to GitHub. There is nothing to fetch — fall through to the diff and say that
+   the intent came from the diff rather than from a ticket.
 2. **The diff itself** — which functions, templates, hooks, controls or asset
    files changed. Map them to user-visible surfaces.
 3. **Commit messages and any changelog entry** in the diff.
@@ -166,7 +176,8 @@ Three rules for choosing:
 - **Be generous, not minimal.** Specs are seconds each. If you are unsure whether
   the customizer area is affected, include it. The failure mode you are avoiding
   is a missed regression, not a slow run.
-- **If the branch names a Jira key, always include the specs that `@guards` it**,
+- **If the branch names an issue or an old Jira key, always include the specs
+  that `@guards` it**,
   whatever area they are in — `suite-index.mjs`'s `guards` map has the file and
   line. A fix for CMAG-1234 that breaks the spec guarding CMAG-1234 is the single
   most important thing this step can catch.
@@ -212,7 +223,7 @@ not full coverage and your report must not imply it is.
   **Cross-check against the base branch before blaming this diff** — `git stash`,
   re-run that spec with `--grep "<title>"`, `git stash pop`. A failure that also
   fails on base is pre-existing.
-- Read `failures[].guards` — a failing spec naming a Jira key tells you which
+- Read `failures[].guards` — a failing spec naming a tracker key tells you which
   regression has come back.
 - `flaky > 0` — say so. A flaky suite erodes trust faster than a failing one.
 
@@ -300,7 +311,7 @@ A verdict that does not become coverage is a verdict you will pay to reach again
 
 Invoke the `write-spec` skill and hand it the verdict. **Do not hand it a
 filename, and do not assume it will create one.** Coverage in this suite belongs
-to the *feature*, not to the Jira key — `CONVENTIONS.md` rule 11 — so what
+to the *feature*, not to the issue number — `CONVENTIONS.md` rule 11 — so what
 `write-spec` does with your finding is decided by a lookup it performs itself:
 
 ```
@@ -310,7 +321,7 @@ identify the feature            (the behaviour, the area, the knowledge file)
    ↓
 find the feature's spec         (suite-index.mjs: features_by_area)
    ↓
-search its scenarios            (by behaviour, not only by Jira key)
+search its scenarios            (by behaviour, not only by tracker key)
    ↓
 reuse · extend · add · new file  (per its Step 3 decision table)
    ↓

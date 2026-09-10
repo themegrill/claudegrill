@@ -1,8 +1,8 @@
 ---
 name: write-spec
 description: Graduate a verified finding into the product's feature-centric suite — a new scenario in the feature's own spec, an update to the scenario that already guards it, or nothing — proved against both the broken and the fixed code
-argument-hint: "[what to guard, or a Jira key — empty drains the spec queue]"
-allowed-tools: Bash, Read, Grep, Glob, Edit, Write, mcp__playwright__*, mcp__atlassian__*
+argument-hint: "[what to guard, or an issue number — empty drains the spec queue]"
+allowed-tools: Bash, Read, Grep, Glob, Edit, Write, mcp__playwright__*
 pass-arguments: true
 ---
 
@@ -42,7 +42,7 @@ So a verified finding that does not become coverage is a finding you will pay to
 rediscover. Your job is to stop that happening — **once**, correctly, with proof.
 
 **But the unit of this suite is a feature, not a bug.** That is
-`CONVENTIONS.md` rule 11 and it governs everything below. A Jira key is the
+`CONVENTIONS.md` rule 11 and it governs everything below. A tracker key is the
 *reason* coverage was added; it is never the thing the coverage is named after,
 filed under, or scoped to. Read rule 11 before you decide anything, because the
 most likely wrong outcome of this skill is not a bad assertion — it is a correct
@@ -58,7 +58,7 @@ One of three, in this order:
 
 1. **A finding handed over** by `verify-fix`, `pr-qa-review` or
    `regression-sweep`, with its verdict. This is the normal case.
-2. **`$ARGUMENTS`** describing what to guard, or a Jira key.
+2. **`$ARGUMENTS`** describing what to guard, or an issue number.
 3. **Nothing** — then read the working tree diff plus the spec queue at
    `.themegrill-qa/spec-queue.jsonl`, take the **oldest `pending` record**, and
    work from that. Say which record you took.
@@ -110,7 +110,7 @@ for it will find it, which is the same cost as no spec plus a maintenance burden
 Two lookups, and you must do both. They fail differently.
 
 **By key** — `guards` in the index. This finds a spec already filed against this
-Jira key. It is the cheap check and the weak one: it only ever catches a
+tracker key. It is the cheap check and the weak one: it only ever catches a
 duplicate after the same behaviour has been filed under a second key, which is
 exactly the case that produces two specs asserting one thing.
 
@@ -153,7 +153,7 @@ nothing" without saying what you searched is not a finding, it is a shrug.
 
 | Action | When | What you do |
 |---|---|---|
-| **REUSE** | State 1 | Write no test. Add the Jira key to that scenario's `@guards` if it is not there. Re-run the proof gate against the *existing* scenario to confirm it really does fail on the broken code. Report `no change`. |
+| **REUSE** | State 1 | Write no test. Add the issue key to that scenario's `@guards` if it is not there. Re-run the proof gate against the *existing* scenario to confirm it really does fail on the broken code. Report `no change`. |
 | **EXTEND** | State 2 | Strengthen or extend the existing scenario **additively** — add the assertion the broken code violates, keep every assertion and every `@guards` key already there. Append your key to `@guards`. |
 | **ADD** | State 3 | Add a new `test()` to the feature's existing spec file. One new scenario, named for the behaviour. |
 | **NEW FILE** | State 3, **and** no spec file covers this feature at all | Create one spec file for the feature, named for the feature. |
@@ -161,7 +161,7 @@ nothing" without saying what you searched is not a finding, it is a shrug.
 
 ### The decision rules, stated so they are not re-litigated
 
-1. **A new Jira issue does not imply a new spec file.** It implies a question:
+1. **A new issue does not imply a new spec file.** It implies a question:
    is this behaviour covered?
 2. **A verified bug does not imply a new test.** Step 2 decides that, not the
    verdict.
@@ -404,7 +404,7 @@ decides *where it goes*. Both, in that order — do not improvise around either.
 | Verdict from the calling skill | What is owed |
 |---|---|
 | **VERIFIED** (bug reproduced broken, gone when fixed) | Active `@fresh` coverage asserting the fixed behaviour: REUSE, EXTEND, ADD or NEW FILE per Step 3. This is the main case. |
-| **REGRESSION** or **INCOMPLETE** | A `test.fixme()` scenario naming the open Jira key, so it flips green the day it is fixed — in the feature's existing spec file, same as any other scenario. Report the finding as well. |
+| **REGRESSION** or **INCOMPLETE** | A `test.fixme()` scenario naming the open issue, so it flips green the day it is fixed — in the feature's existing spec file, same as any other scenario. Report the finding as well. |
 | **CANNOT VERIFY** | Nothing. |
 | A finding with **no mechanical assertion** (subjective visual, timing-dependent) | Nothing — add a line to the knowledge file's Known-fragile section instead. |
 

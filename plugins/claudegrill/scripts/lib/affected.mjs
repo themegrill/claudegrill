@@ -208,14 +208,38 @@ export function affectedAreas(files, manifest, specIndex = []) {
 }
 
 /**
- * Specs that name a Jira key, so a fix for CMAG-1234 always runs the spec
- * guarding CMAG-1234 whatever area it happens to live in.
+ * A `@guards` value reduced to something two spellings of one issue compare
+ * equal under.
+ *
+ * ThemeGrill moved from Jira to GitHub Issues, so a suite contains both: older
+ * scenarios guard `CMAG-741`, newer ones guard `#123`. GitHub references also
+ * arrive in three shapes for the same issue — `123`, `#123` and
+ * `themegrill/colormag#123` — and a scenario that guards the cross-repo form
+ * must still be found by a branch that only knows the number. Jira keys are
+ * left alone beyond case folding; they have exactly one spelling.
  */
-export function areasGuarding(ticket, specIndex) {
-  if (!ticket) return [];
+function normaliseKey(k) {
+  const s = String(k).trim();
+  const gh = s.match(/^(?:[\w.-]+\/[\w.-]+)?#?(\d+)$/);
+  return gh ? `#${gh[1]}` : s.toUpperCase();
+}
+
+/**
+ * Specs that name this branch's issue, so a fix for #123 always runs the spec
+ * guarding #123 whatever area it happens to live in.
+ *
+ * Takes one key or several, because a branch can carry both an old Jira key and
+ * a new issue number and the spec guarding the behaviour may name either.
+ */
+export function areasGuarding(keys, specIndex) {
+  const wanted = new Set(
+    (Array.isArray(keys) ? keys : [keys]).filter(Boolean).map(normaliseKey),
+  );
+  if (!wanted.size) return [];
+
   const out = new Set();
   for (const t of specIndex) {
-    if ((t.guards ?? []).some((g) => g.toUpperCase() === ticket.toUpperCase())) {
+    if ((t.guards ?? []).some((g) => wanted.has(normaliseKey(g)))) {
       if (t.area) out.add(String(t.area).replace(/^@/, ""));
     }
   }

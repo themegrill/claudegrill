@@ -170,7 +170,7 @@ toward broad patterns. Narrowing on a diff nobody mapped is how a change ships
 with no coverage and a green tick over it.
 
 Two things are always included regardless of the mapping: the specs whose
-`@guards` names the branch's Jira key, and the areas of any spec file the branch
+`@guards` names the branch's issue, and the areas of any spec file the branch
 itself changed.
 
 **Scoping trades total coverage per PR for speed, so something else has to run
@@ -215,7 +215,7 @@ test('centered header keeps the tagline @fresh @header', async ({ page }) => {
 | `@why` | **yes** | Why this spec exists. `CONVENTIONS.md` rule 6 already requires it; this makes it machine-readable. |
 | `@area` | recommended | Matches the title's `@area` tag. Redundancy is deliberate: the title drives `--grep`, the docblock drives the index, and a mismatch between them is a reportable hygiene error. |
 | `@tier` | recommended | Same. |
-| `@guards` | when applicable | The Jira key or bug identifier this scenario exists to prevent recurring. Comma-separated for several — one scenario guarding two keys is correct and preferred over two scenarios. **Metadata, never identity**: it explains why the scenario is there, and it never names the file or scopes it. See `CONVENTIONS.md` rule 11. |
+| `@guards` | when applicable | The issue this scenario exists to prevent recurring. ThemeGrill tracks work in GitHub Issues, so write `#123` — or `owner/repo#123` when the issue lives in another repo. Comma-separated for several — one scenario guarding two keys is correct and preferred over two scenarios. **Pre-GitHub Jira keys such as `CMAG-741` remain valid and must not be rewritten**: they are the real reason those scenarios exist, and `areasGuarding()` matches both forms. **Metadata, never identity**: it explains why the scenario is there, and it never names the file or scopes it. See `CONVENTIONS.md` rule 11. |
 | `@source` | when written by the platform | Which skill wrote it and when — `verify-fix 2026-08-24`, `regression-sweep 2026-08-24`, or `human`. |
 
 A missing field is `null`, never a crash. The count of tests with an incomplete
@@ -509,7 +509,7 @@ reports itself in `feature_hygiene.issue_named_specs` rather than hiding behind 
 tidy tag. It is deliberately the only part of this payload that lists tests
 individually — everything else is a count, and it is the one question a count
 cannot answer: *is THIS behaviour covered?* The `guards` map cannot answer it
-either, since it is keyed by Jira key and therefore only finds a duplicate after
+either, since it is keyed by issue and therefore only finds a duplicate after
 the same behaviour has been filed under a second key.
 
 A file that parsed to zero tests still appears in `features`, with an empty
@@ -551,7 +551,7 @@ repo is added to the product; the workflows check this repo out at run time.
 rewritten, and **committed**:
 
 ```json
-{"ts":"2026-08-25T09:12:00Z","branch":"fix/CMAG-1234-header","jira":"CMAG-1234","files":["inc/customizer/header.php"],"sha":"<HEAD>","status":"pending"}
+{"ts":"2026-08-25T09:12:00Z","branch":"fix/1234-header","jira":null,"issue":1234,"files":["inc/customizer/header.php"],"sha":"<HEAD>","status":"pending"}
 ```
 
 The `spec-guard` hook appends a `pending` record when a session changes product

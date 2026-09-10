@@ -39,6 +39,7 @@ plugins/claudegrill/   the installable plugin — everything the skills need
     sync-secrets.mjs     per-repo secrets, because org secrets fail on Free
     scan-secrets.mjs     refuse to let a licence key become tracked content
     install-git-hook.mjs install the pre-commit half of that guard
+    file-issue.mjs       a verified finding -> a GitHub issue, capped and deduped
     boot-wp.mjs          disposable WordPress, product mounted live
     run-suite.mjs        run the product's own Playwright suite -> JSON
     suite-index.mjs      what the suite covers, and what it does NOT
@@ -82,8 +83,8 @@ around unlimited lifetime keys. Read it before touching anything under
 one. Eleven rules, drawn from a WordPress plugin suite that had already settled
 them in practice, adapted for a catalogue that is part themes and part plugins.
 Rule 11 is the newest and the one that decides where coverage goes: **a spec file
-is a feature, and a Jira key is metadata on a scenario, never the identity of a
-file.**
+is a feature, and an issue key is metadata on a scenario, never the identity of
+a file.**
 
 ## Invariants — do not break these
 
@@ -113,10 +114,28 @@ These are load-bearing. Changing one is a design decision, not a refactor.
    everything.
 
 4. **Nothing has write authority it does not need.** The PR runner comments; it
-   never approves, merges, commits or pushes. The sweep files tickets only when a
-   human passes `--file-tickets`, capped at five, into a triage state. Nothing
-   in this repo runs on a schedule at all: QA is a local `verify-fix` plus the
-   e2e suite on the PR, and there is no cron and no core-release watcher.
+   never approves, merges, commits or pushes. The sweep files issues only when a
+   human passes `--file-tickets`, capped at five, labelled `needs-triage` and
+   never assigned, milestoned or put on a board. Only the aggregate job holds
+   `issues: write`; the shards hold nothing. Nothing in this repo runs on a
+   schedule at all: QA is a local `verify-fix` plus the e2e suite on the PR, and
+   there is no cron and no core-release watcher.
+
+   **The tracker is GitHub Issues, in each product's own repo.** ThemeGrill moved
+   off Jira, so `file-issue.mjs` is the single filing path and no skill carries an
+   Atlassian tool any more. That move also deleted a credential: filing runs on
+   the workflow's built-in `GITHUB_TOKEN` rather than an org-wide Rovo token with
+   write access to everything, handed to an unattended agent.
+
+   Two rules that used to be prompt text are now arithmetic, which is the real
+   reason the script exists rather than a `gh issue create` call in a skill: the
+   five-per-run cap is enforced by counting a `qa-run:<id>` label, and dedup is
+   enforced by a fingerprint marker written into every issue body. Do not route
+   around it with a bare `gh issue create`.
+
+   Pre-GitHub Jira keys in `@guards` (`CMAG-741`) stay exactly as written — they
+   are the honest record of why a scenario exists. `areasGuarding()` matches both
+   forms, so a fix branch finds its guard either way.
 
 5. **A finding requires reproduction twice plus cited evidence.** The six-part
    gate in `regression-sweep` is the reason this is trusted. Do not relax it, and
@@ -162,7 +181,7 @@ These are load-bearing. Changing one is a design decision, not a refactor.
      data attributes for theme-specific chrome: header layouts, footer columns,
      customizer-driven regions.
 
-10. **A spec file is a feature; a Jira key is metadata.** Coverage is organised by
+10. **A spec file is a feature; an issue key is metadata.** Coverage is organised by
    what the product does, not by what has broken — `CONVENTIONS.md` rule 11. A
    verified finding does NOT imply a new spec file, and does not even imply a new
    test: `write-spec` identifies the feature, reads the scenarios already in its
@@ -318,6 +337,37 @@ decision in the suite layer.
   pushed `f6dea3d chore: WordPress 7.1 swept` as `themegrill-qa-bot`. That
   workflow has since been **deleted** — the team runs no scheduled QA — so no
   surviving CI path in this repo has ever run
+- **`file-issue.mjs`, every path except the two that write.** Repo resolution in
+  all four precedence orders (`--repo` > `suite.json` `issue_repo` >
+  `GITHUB_REPOSITORY` > git remote); text and fingerprint search live against
+  `themegrill/colormag`; `view` on a real issue, with and without a leading `#`;
+  the `--json` contract at **zero bytes of stderr** on every branch; and all four
+  refusals — missing `--confirm` (exit 1, `dry_run`, nothing created), unknown
+  severity, missing body file, search with no term. `create` and `comment` were
+  deliberately not run: opening an issue is outward-facing.
+
+  Two things checked rather than assumed, and both changed the design:
+  - **`gh issue create` fails outright on a label that does not exist**, and it
+    would fail at the END of a sweep that has already spent its whole budget. The
+    labels are created up front instead, and "already exists" is a success.
+  - **ColorMag already has an AI triage pipeline filing issues** from support
+    conversations, under `bug-report` and `bug-report-triage`. Found by searching
+    the live repo, not by reading anything in this codebase. The QA labels are
+    deliberately distinct (`automated-qa`, `needs-triage`) so the two sources stay
+    tellable apart — a sweep finding and a customer report need different triage.
+
+- **Branch-key extraction across both trackers**, eleven branch shapes: `#310`,
+  `issue-88`, `gh-42` and the bare `fix/123-` convention all resolve; `CMAG-741`
+  still resolves as a Jira key; `release/4.0.1`, `main` and `chore/update-deps`
+  resolve to neither. `fix/2-column-layout` reads as issue 2 — a real ambiguity
+  in the bare form, documented at the regex, and harmless because a wrong number
+  produces a 404 on lookup rather than a wrong fix.
+
+- **`areasGuarding()` against both key formats**, ten cases: an old Jira key
+  matches case-insensitively, `#123` matches a `123` guard and vice versa, `#456`
+  matches a `themegrill/colormag#456` guard, and a branch carrying both keys
+  finds the areas of both.
+
 - `claude plugin validate` passes on both the plugin and the marketplace
 - All YAML and JSON parses; every `.mjs` passes `node --check`
 
@@ -988,7 +1038,15 @@ decision in the suite layer.
   Local's router) and Playground would confound the result, since ColorMag's
   `@fresh` tier is 11/20 there.
 - `ingest-docs.mjs` against the real docs sites.
-- Jira filing end to end (needs Rovo API-token auth enabled).
+- **`file-issue.mjs create` and `comment` against a real repo.** Every read path
+  is proved live against `themegrill/colormag` — repo resolution in all four
+  precedence orders, text search, fingerprint search, `view` with and without a
+  leading `#`, the JSON contract at zero bytes of stderr, and all four refusal
+  branches (no `--confirm`, unknown severity, missing body file, missing search
+  term). The two paths that WRITE have deliberately not been run: creating an
+  issue is outward-facing and needed the team's say-so first. What that leaves
+  unproven is the label auto-creation, the `qa-run:` cap arithmetic against a
+  real label, and the duplicate refusal firing on a marker this script wrote.
 - Every `TODO` in `knowledge/colormag.md` and `knowledge/zakra.md` — those are
   inferred, not confirmed, and a wrong line there produces confidently wrong QA.
 
@@ -1064,7 +1122,7 @@ and CI runs the full `@fresh` tier with no API key. `pr-qa.yml` and
 `pr-command.yml` stay in the repo, unused, for a product whose suite is still
 too thin to trust.
 
-Deliberately **not** on the list: a dashboard (GitHub and Jira already are one),
+Deliberately **not** on the list: a dashboard (GitHub already is one),
 a vector database, a custom agent framework, merge authority, or a healer allowed
 to change assertions.
 

@@ -158,8 +158,8 @@ const suite = fs.existsSync(suitePath)
   ? path.relative(root, suitePath).split(path.sep).join("/")
   : null;
 
-// Branch and ticket key: a branch like fix/CM-1234-header-overlap tells the agent
-// which Jira issue this belongs to without anyone typing it.
+// Branch and ticket key: a branch like fix/123-header-overlap tells the agent
+// which issue this belongs to without anyone typing it.
 let branch = "";
 try {
   branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
@@ -170,7 +170,23 @@ try {
 } catch {
   /* not a git checkout */
 }
+// ThemeGrill tracks work in GitHub Issues. `ticket` is kept because it is part
+// of this script's output contract (invariant 2) and because branches created
+// before the move still carry Jira keys, and specs still `@guards` them; `issue`
+// is the field to reach for now. Both may be null and they are never both set.
 const ticket = (branch.match(/[A-Z][A-Z0-9]+-\d+/) ?? [null])[0];
+
+// Explicit forms first — `#123`, `issue-123`, `gh-123` — then the bare
+// `fix/123-what-broke` convention. The bare form is genuinely ambiguous
+// (`fix/2-column-layout` reads as issue 2), which is why it is tried last and
+// why every consumer treats this as a hint to verify rather than as fact: a
+// wrong number produces a 404 on lookup, not a wrong fix.
+const issue =
+  Number(
+    (branch.match(/(?:#|\b(?:issue|issues|gh)[-_/])(\d+)\b/i) ??
+      branch.match(/\/(\d+)(?:-|$)/) ??
+      [null, null])[1],
+  ) || null;
 
 // Pro companion, checked out alongside.
 const hasPro =
@@ -191,6 +207,8 @@ process.stdout.write(
       entry,
       branch,
       ticket,
+      issue,
+      issue_ref: issue ? `#${issue}` : null,
       has_pro: hasPro,
       platform: process.platform,
     },

@@ -28,7 +28,7 @@ so. Guessing at a path produces a confusing failure several steps later.
 ## What this is for
 
 `write-spec` writes new coverage into the **feature's** spec: a spec file is a
-feature, a `test()` is a scenario, and a Jira key is metadata on a scenario
+feature, a `test()` is a scenario, and an issue key is metadata on a scenario
 (`CONVENTIONS.md` rule 11). Specs written before that rule existed are shaped the
 other way — one file per ticket, named after the bug, holding a single test.
 

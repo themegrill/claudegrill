@@ -92,7 +92,7 @@ the same ticket every month.
 ```json
 {"fingerprint":"a3f19c2e","first_seen":"2026-08-24","area":"customizer",
  "surface":"header layout control","symptom":"selected layout not applied on archive templates",
- "severity":"major","jira":"CM-1481","spec":"tests/e2e/customizer.spec.js:88",
+ "severity":"major","issue":"themegrill/colormag#1481","spec":"tests/e2e/customizer.spec.js:88",
  "status":"fixed","versions_affected":["4.0.1"]}
 ```
 
@@ -139,8 +139,8 @@ pre-release sweeps. Long enough to investigate a result, and nothing worth
 keeping forever is only in there: what matters gets distilled into the ledger,
 the handbook or a spec.
 
-**No dashboard, and no metrics store.** GitHub and Jira already hold the state
-the team looks at.
+**No dashboard, and no metrics store.** GitHub already holds the state the team
+looks at — issues, PRs and Actions runs are the dashboard.
 
 ---
 
@@ -167,7 +167,7 @@ retrieval system.
 | Screenshots, recordings, transcripts (code review) | 14 days | CI artifacts |
 | Screenshots, recordings, reports (pre-release sweep) | 90 days | CI artifacts |
 | Docs fetch cache | until deleted | local only |
-| Tickets | your Jira retention | Jira |
+| Issues | forever | GitHub Issues, in the product's own repo |
 
 Ninety days on sweep artifacts is chosen so a release can be compared against the
 one before it. Everything with lasting value ends up in git.

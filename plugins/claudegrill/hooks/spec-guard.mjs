@@ -155,10 +155,21 @@ async function main() {
     }
   }
 
+  // `jira` is kept because queue files written before the move to GitHub Issues
+  // carry it and STORAGE.md documents the shape; `issue` is the field to read
+  // now. Both may be null, and they are never both set.
+  const issue =
+    Number(
+      (branch.match(/(?:#|\b(?:issue|issues|gh)[-_/])(\d+)\b/i) ??
+        branch.match(/\/(\d+)(?:-|$)/) ??
+        [null, null])[1],
+    ) || null;
+
   const record = {
     ts: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
     branch,
     jira: (branch.match(/[A-Z][A-Z0-9]+-\d+/) ?? [null])[0],
+    issue,
     files: sourceChanged.slice(0, 20),
     sha,
     status: "pending",

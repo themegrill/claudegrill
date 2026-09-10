@@ -947,9 +947,11 @@ async function main() {
       scope = { mode: "full", reason: `git diff against ${opt.since} failed` };
     } else {
       const a = affectedAreas(changed.files, m, specIndex);
-      // A fix for CMAG-1234 always runs the spec guarding CMAG-1234, whatever
-      // area it lives in. That is the single most important spec in the run.
-      const guarding = areasGuarding(info.ticket, specIndex);
+      // A fix for #123 always runs the spec guarding #123, whatever area it
+      // lives in. That is the single most important spec in the run. Both keys
+      // are passed: the branch may carry a pre-GitHub Jira key, and the spec
+      // that guards the behaviour may name either.
+      const guarding = areasGuarding([info.issue_ref, info.ticket], specIndex);
       const areas = [...new Set([...a.areas, ...guarding])];
 
       if (a.full) {

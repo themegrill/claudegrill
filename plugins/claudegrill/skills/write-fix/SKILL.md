@@ -1,8 +1,8 @@
 ---
 name: write-fix
 description: Write the fix or feature in a ThemeGrill plugin or theme to house coding standards, run the PHPCS gate, verify it, and prepare the commit, changelog entry and PR
-argument-hint: "[what to fix — a Jira key, an issue number, or a description]"
-allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Skill, AskUserQuestion, mcp__playwright__*, mcp__atlassian__*
+argument-hint: "[what to fix — an issue number or a description]"
+allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Skill, AskUserQuestion, mcp__playwright__*
 pass-arguments: true
 ---
 
@@ -31,18 +31,29 @@ QA="${CLAUDE_PLUGIN_ROOT:-${CLAUDEGRILL_HOME:-..}/plugins/claudegrill}"
 node "$QA/scripts/detect-product.mjs"
 ```
 
-That names the product, its type, its version, its branch, and any Jira key in
+That names the product, its type, its version, its branch, and any tracker key in
 the branch name.
 
 ## Step 1 — Understand the defect before touching anything
 
-`$ARGUMENTS` is a Jira key, an issue number, or a description. Sources, in order
-of authority:
+`$ARGUMENTS` is an issue number or a description. Sources, in order of
+authority:
 
-1. **A Jira key** — from `$ARGUMENTS` or the branch name. Fetch it through the
-   Atlassian MCP. The reported steps and expected behaviour are the
-   specification; use them verbatim rather than inventing your own.
-2. **A GitHub issue** — `gh issue view <n>`.
+1. **The GitHub issue** — from `$ARGUMENTS` or the branch name. ThemeGrill tracks
+   work in GitHub Issues:
+
+   ```bash
+   node "$QA/scripts/file-issue.mjs" view <number>
+   ```
+
+   The reported steps and expected behaviour are the specification; use them
+   verbatim rather than inventing your own. Note that some issues in these repos
+   are filed by an AI triage pipeline from support conversations — those carry a
+   `bug-report-triage` label and state their own confidence. Treat a triaged
+   diagnosis as a lead to verify, not as the root cause.
+2. **An old Jira key** in the branch name (`fix/CMAG-741-...`) predates the move
+   to GitHub and cannot be fetched. Fall through to the diff and the commit
+   messages, and say that is where the intent came from.
 3. **The description you were given**, and nothing more.
 
 Write out, explicitly, before opening an editor:

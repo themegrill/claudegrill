@@ -36,7 +36,8 @@ local session is slower, costs the same or more, and exhausts context. Only use
 `--local` for a single product you are actively debugging.
 
 `$1` is an optional version, tag or branch (default: the current checkout).
-`--tickets` files verified findings to Jira. `--local` runs here instead of CI.
+`--tickets` files verified findings as GitHub issues in the product's repo.
+`--local` runs here instead of CI.
 
 ## Step 1 — Identify and confirm scope
 
@@ -146,8 +147,17 @@ node "$QA/scripts/boot-wp.mjs" --engine playground
 
 Everything from the `regression-sweep` skill's gate applies here: reproduced
 twice, steps written down, expected behaviour justified by citation, not a known
-non-issue, not already in Jira. Maximum five tickets for the whole run, filed to
-triage, only with `--tickets`.
+non-issue, not already filed. Maximum five issues for the whole run, only with
+`--tickets`, and filed exactly the way `regression-sweep` describes:
+
+```bash
+node "$QA/scripts/file-issue.mjs" create --title ... --body-file ... \
+  --severity ... --area ... --fingerprint ... --run-id "$GITHUB_RUN_ID" --confirm
+```
+
+The cap and the duplicate check are enforced by that script rather than by this
+instruction, so a fan-out across shards cannot quietly exceed five between them —
+every shard counts the same `qa-run:<id>` label.
 
 ## Rules
 

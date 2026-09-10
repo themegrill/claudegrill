@@ -43,9 +43,16 @@ gh pr view "$PR_NUMBER" --json title,body,author,baseRefName,headRefName,files,a
 gh pr diff "$PR_NUMBER"
 ```
 
-Read the product knowledge file for this product. Fetch the linked Jira issue if
-the PR title, body or branch name contains a key — the issue's reproduction
-steps are better than any you would invent.
+Read the product knowledge file for this product. Fetch the linked GitHub issue
+if the PR title, body or branch name references one (`#1234`, or a `Fixes #1234`
+line) — the issue's reproduction steps are better than any you would invent:
+
+```bash
+node "$QA/scripts/file-issue.mjs" view <number>
+```
+
+An **old Jira key** in the branch name predates the move to GitHub and cannot be
+fetched; work from the diff instead.
 
 ## Step 2 — Risk-assess the diff before running anything
 

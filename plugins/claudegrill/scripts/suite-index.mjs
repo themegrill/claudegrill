@@ -124,7 +124,8 @@ function featureOf(relPath) {
 /**
  * Does this filename name an issue rather than a behaviour?
  *
- * A Jira key in the name, or a `-regression` / `-fix` / `-bug` suffix. Both say
+ * An issue key in the name — `#123`, `issue-123`, or a pre-GitHub Jira key —
+ * or a `-regression` / `-fix` / `-bug` suffix. Both say
  * the file was created by a ticket rather than by a feature, which is the drift
  * CONVENTIONS.md rule 11 exists to stop. Reported, never enforced: renaming a
  * file that CI and `area_paths` already reference is a human decision.
@@ -254,7 +255,7 @@ const areasUndeclared = areasCovered.filter(
  * one carries the individual test titles, which is the only thing that answers
  * "is THIS behaviour covered" — and that question is what stops a second spec
  * being written for a bug the suite already guards. The `guards` map above
- * cannot answer it: it is keyed by Jira key, so it only ever finds the
+ * cannot answer it: it is keyed by issue, so it only ever finds the
  * duplicate AFTER somebody has filed the same behaviour under a second key.
  *
  * Keyed by spec file, because the file is the feature's identity (see

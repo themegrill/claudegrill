@@ -17,7 +17,7 @@ Rules for maintaining it:
 - **Type:** theme | plugin
 - **Repo:** <org/repo>
 - **Pro companion:** <org/repo-pro> or "none"
-- **Jira project key:** <KEY>
+- **Issues:** <org/repo> — GitHub Issues, normally this product's own repo
 - **Supported:** WP <min>+ · PHP <min>+
 - **Companion plugins required for full function:** <e.g. demo importer>
 

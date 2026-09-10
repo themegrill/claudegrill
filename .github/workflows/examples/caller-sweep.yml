@@ -23,7 +23,7 @@ on:
         options: [full, smoke]
         default: full
       file_tickets:
-        description: 'File verified findings to Jira'
+        description: 'File verified findings as GitHub issues in this repo'
         type: boolean
         default: false
 
@@ -41,6 +41,13 @@ on:
 
 jobs:
   sweep:
+    # A called workflow can only narrow what the caller grants, so `issues:
+    # write` has to be here even though only the reusable workflow's aggregate
+    # job uses it. Without it, filing fails at the very end of a paid sweep.
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
     uses: ThemeGrill/claudegrill/.github/workflows/regression-sweep.yml@main
     with:
       product_slug: colormag
@@ -63,6 +70,12 @@ jobs:
 
       budget_per_shard_usd: "3.50"
       max_shards: 20
+
+      # Issues go to this repository by default — the bug, the fix, the spec and
+      # the changelog entry then all live together. Set this only if the product
+      # tracks its bugs somewhere else.
+      # issue_repo: themegrill/some-other-repo
     secrets:
+      # Filing needs no third-party credential: `gh` uses the built-in
+      # GITHUB_TOKEN, scoped by the `permissions` block above.
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      ATLASSIAN_ROVO_TOKEN: ${{ secrets.ATLASSIAN_ROVO_TOKEN }}

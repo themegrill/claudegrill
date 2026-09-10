@@ -257,7 +257,10 @@ it.
   still too thin to trust.
 - **Regression sweeps** for release candidates. `--file-tickets` is off by
   default and should stay off until the team has read several reports.
-- **Jira filing.** Needs Rovo API-token auth. Defer until sweeps are trusted.
+- **Issue filing.** Needs no extra credential — `gh` uses `GITHUB_TOKEN` and the
+  caller workflow grants `issues: write`. Defer turning it on until sweeps are
+  trusted, not because it is hard to set up but because an unread issue queue is
+  how the whole pipeline gets switched off.
 
 ## Remaining products
 

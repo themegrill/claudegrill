@@ -27,7 +27,7 @@ alongside the fix. CI then runs that spec on every future PR, deterministically.
 | 4 | `/claudegrill:rewrite-spec` | You, on a suite written before rule 11 | One feature's specs regrouped by feature, nothing lost, proved by the equivalence gate |
 | 5 | **QA suite** (CI) | Every PR | A pass/fail check and one PR comment |
 | 6 | **QA suite — pro** (CI) | Every PR on a pro repo | The same, plus `@pro` and `@unlicensed` |
-| 7 | `/claudegrill:regression-sweep` | Manual, on a release | A report; Jira tickets only when asked |
+| 7 | `/claudegrill:regression-sweep` | Manual, on a release | A report; GitHub issues only when asked |
 | 8 | `/claudegrill:full-test` | Manual, when a product ships | The sweep above, fanned out across CI shards |
 
 `knowledge-init` drafts a product's knowledge file for a human to correct, and
@@ -40,8 +40,13 @@ them. `full-test` does nothing but dispatch `sweep.yml` in the product repo, whi
 needs the cross-repo checkout of this repo (still blocked), an `ANTHROPIC_API_KEY`
 secret, and a caller workflow no product has installed — see
 `.github/workflows/examples/caller-sweep.yml`. `regression-sweep` runs standalone
-today and boots its own site, but it files nothing to Jira unless
-`--file-tickets` is passed, and Jira filing end to end is unproven.
+today and boots its own site, but it files nothing unless `--file-tickets` is
+passed, and filing end to end is unproven.
+
+Issues go to **GitHub**, in the product's own repository, through
+`scripts/file-issue.mjs`. There is no Jira path any more and no third-party
+credential: `gh` uses the workflow's built-in `GITHUB_TOKEN`, scoped to
+`issues: write` on that one repo.
 
 Skills are namespaced because they ship as a plugin: `/claudegrill:verify-fix`,
 not `/verify-fix`.

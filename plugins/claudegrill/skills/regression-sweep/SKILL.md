@@ -1,8 +1,8 @@
 ---
 name: regression-sweep
-description: Exploratory regression pass over a released product version, filing verified bugs to Jira
+description: Exploratory regression pass over a released product version, filing verified bugs as GitHub issues
 argument-hint: "<product-slug> [version] [--file-tickets]"
-allowed-tools: Bash, Read, Grep, Glob, Skill, mcp__playwright__*, mcp__atlassian__*
+allowed-tools: Bash, Read, Grep, Glob, Skill, mcp__playwright__*
 pass-arguments: true
 ---
 
@@ -40,8 +40,8 @@ Read this before doing anything else.
 
 Without `--file-tickets` you produce a report artifact and file nothing. This is
 the correct default and should stay the default until the team has read several
-reports and agrees the findings are real. An AI QA agent that floods Jira with
-false positives in week one is dead on arrival — the team learns to ignore it,
+reports and agrees the findings are real. An AI QA agent that floods the issue
+tracker with false positives in week one is dead on arrival — the team learns to ignore it,
 and no later improvement in accuracy brings that trust back. Earn the ticket
 permission; do not assume it.
 
@@ -147,7 +147,7 @@ value of the job; without it you are a random-noise generator.
    description, or established WordPress convention. "I think it should do X" is
    not justification. If you cannot say *why* it is wrong, it is not a finding.
 4. **Not a known non-issue** per the product knowledge file.
-5. **Not already known** — check the findings ledger *first*, then Jira.
+5. **Not already known** — check the findings ledger *first*, then GitHub.
 
    The ledger is `.themegrill-qa/findings/<product>-<year>.jsonl`, one JSON
    object per line. Compute the fingerprint — a short stable hash of
@@ -160,9 +160,20 @@ value of the job; without it you are a random-noise generator.
    - **present, `status: known` or `wontfix`** → say nothing at all. This is the
      machine-checkable half of the handbook's known-non-issues list.
 
-   Then still check Jira for open and recently closed issues, since a human may
-   have filed something the ledger has not seen. A closed "won't fix" is an
-   answer, not an invitation.
+   Then still check GitHub for open and recently closed issues, since a human
+   may have filed something the ledger has not seen — and ThemeGrill has a
+   second AI pipeline filing bug reports from support conversations, so the
+   tracker sees findings this sweep never produced:
+
+   ```bash
+   node "$QA/scripts/file-issue.mjs" search --fingerprint <fp> --json
+   node "$QA/scripts/file-issue.mjs" search --query "<symptom words>" --json
+   ```
+
+   The fingerprint search is exact — it matches the marker the filer writes into
+   every issue body. The text search is the weak one, and it is the only thing
+   that finds a human-filed issue, which is why both run. A closed "won't fix"
+   is an answer, not an invitation.
 
    Append, never rewrite: several shards run in parallel, and one object per line
    means appends do not conflict.
@@ -212,7 +223,7 @@ Expected: ...
 Actual: ...
 Why this is wrong: <citation>
 Evidence: <screenshots, console, network>
-Jira: <key, or "not filed — report-only run">
+Issue: <owner/repo#N, or "not filed — report-only run">
 Spec: <branch and path, or why none — e.g. "not mechanically observable">
 
 ## Suspicious, unverified
@@ -253,31 +264,78 @@ generating them. If you verified more than five, write specs for the five most
 severe and list the rest in the report as unguarded. A `reused` outcome does not
 count against the cap — it opens no PR.
 
-**If and only if `--file-tickets` was passed**, create a Jira issue per verified
-finding via the Atlassian MCP:
+**If and only if `--file-tickets` was passed**, file one **GitHub issue** per
+verified finding. ThemeGrill tracks work in GitHub Issues; there is no Jira
+path any more and no Atlassian tool in this skill's allow-list.
 
-- Summary: `[<Product>] <specific symptom>` — describe the symptom, not your
-  diagnosis. "Header menu items overlap logo below 480px", not "flex-wrap bug".
-- Include the full reproduction, expected/actual, environment, and evidence.
-- Label `automated-qa` and `needs-triage`, and set priority from severity.
-- **File into the triage state your project uses, never straight to a sprint or
-  backlog-ready.** A human triages.
-- Link to the sweep's workflow run.
-- Cap it: **maximum 5 tickets per sweep.** If you verified more than five, file
-  the five most severe and list the rest in the report. A 30-ticket dump gets the
-  whole pipeline switched off.
+Issues go to the **product's own repository** by default — the bug, the fix, the
+spec and the changelog entry then all live in one place, which is the same
+reasoning that puts `knowledge.md` in the product repo. Confirm the target
+before filing anything:
+
+```bash
+node "$QA/scripts/file-issue.mjs" repo
+```
+
+Write the body to a file rather than passing it as an argument, then file:
+
+```bash
+node "$QA/scripts/file-issue.mjs" create \
+  --title "[<Product>] <specific symptom>" \
+  --body-file /tmp/finding-1.md \
+  --severity blocker|major|minor|trivial \
+  --area <area> \
+  --fingerprint <the ledger fingerprint> \
+  --run-id "$GITHUB_RUN_ID" \
+  --json --confirm
+```
+
+What the script does for you, so you do not have to remember it:
+
+- **Refuses a duplicate.** `--fingerprint` writes a marker into the body and
+  searches for it first; a second issue for a finding already filed exits 1 with
+  `reason: "duplicate"` and the existing number. Comment on that one instead —
+  `file-issue.mjs comment <n> --body-file F --confirm`.
+- **Enforces the cap.** Every issue carries a `qa-run:<id>` label and `create`
+  counts them before opening another, so **maximum 5 per sweep** is arithmetic
+  rather than a promise. Past the cap it exits 1 with `reason: "cap_reached"`.
+  When that happens, file the five most severe and list the rest in the report.
+- **Creates the labels** it needs, because `gh issue create` fails outright on a
+  label that does not exist — and it would fail at the end of a sweep that has
+  already spent its whole budget.
+- **Applies `automated-qa` and `needs-triage`**, plus `severity:*` and `area:*`.
+
+What remains yours:
+
+- The **title is the symptom, not your diagnosis**. "Header menu items overlap
+  logo below 480px", not "flex-wrap bug".
+- The **body carries the full reproduction, expected/actual, environment and
+  evidence**, and a link to this sweep's workflow run.
+- **Never assign, never set a milestone, never add it to a project board.**
+  `needs-triage` is where it stops; a human decides scope and priority. This is
+  the GitHub equivalent of "file into the triage state, never straight to a
+  sprint", and it is invariant 4 — nothing here has write authority it does not
+  need.
+
+If `gh` is unauthenticated the script exits **2** and files nothing. That is a
+broken harness, not a clean run: say so in the report rather than reporting zero
+findings filed.
 
 ## Rules
 
 - Severity is about user impact, not how interesting the bug is. Data loss and
   fatals are Blockers. A 2px misalignment is Trivial and probably should not be
   a ticket at all.
-- Never file a duplicate. When unsure whether something is a duplicate, comment
-  on the existing issue instead of opening a new one.
+- Never file a duplicate. `--fingerprint` catches the ones this platform filed
+  before; it cannot catch a human-worded issue about the same behaviour, so the
+  text search still matters. When unsure, comment on the existing issue instead
+  of opening a new one.
 - Never file a feature request as a bug.
 - If you find a security issue — privilege escalation, unauthenticated write,
-  stored XSS — **do not open a public ticket and do not include working payloads
-  in the report.** Write `SECURITY FINDING — see workflow log` in the report and
+  stored XSS — **do not open an issue and do not include working payloads in the
+  report.** This matters more on GitHub than it did on Jira: most of these
+  product repos are public, so a filed issue is a public disclosure with a
+  reproduction attached. Write `SECURITY FINDING — see workflow log` in the report and
   stop the sweep. A human handles disclosure.
 - Report your own reliability honestly: if Playwright was flaky and you are
   unsure whether a failure was the product or the harness, say so.
