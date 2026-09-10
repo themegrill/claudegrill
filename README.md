@@ -63,10 +63,17 @@ A free product repo gets one workflow; a pro repo gets one more.
 
 | Check | Runs on | API key | Required? |
 |---|---|---|---|
-| **QA suite** (`suite.yml`) | every PR, drafts included | no | **yes** — make this the required check |
-| **QA suite — pro** (`pro-suite.yml`) | every PR on a pro repo | no | once green twice |
+| **QA suite** (`suite.yml`) | PR opened, then an `@claudegrill suite` comment — not on push | no | no — a comment-triggered run is not attached to the head commit |
+| **QA suite — pro** (`pro-suite.yml`) | pro PR opened, then an `@claudegrill suite` comment — not on push | no | no — same reason |
 | **QA review** (`pr-qa.yml`) | unused by default | yes | no, advisory |
 | **QA command** (`pr-command.yml`) | a `@claudegrill` comment | yes | no |
+
+To re-run the suite after pushing to a PR, comment `@claudegrill suite` on it.
+The command is the same in a free repo and a pro one.
+The caller must be on the product's default branch first: GitHub reads
+`issue_comment` workflows from there. Do not also install the `pr-command.yml`
+caller in the same repo, because its gate matches any `@claudegrill`, so one
+comment would start both.
 
 The agent tiers are off. The team removed AI from the PR path deliberately: the
 developer runs the scoped suite locally, commits the spec on their own branch,

@@ -303,17 +303,19 @@ is tiered rather than running everything everywhere.
 
 | Job | Trigger | Repo | Licence |
 |---|---|---|---|
-| Free suite | every PR | free repo (public — unlimited) | no |
-| `free-with-pro` | every PR on the pro repo | pro repo | yes |
-| `pro` | every PR on the pro repo | pro repo | yes |
-| `unlicensed` | every PR on the pro repo | pro repo | **no, deliberately** |
+| Free suite | PR opened, then `@claudegrill suite` | free repo (public — unlimited) | no |
+| `free-with-pro` | pro PR opened, then `@claudegrill suite` | pro repo | yes |
+| `pro` | pro PR opened, then `@claudegrill suite` | pro repo | yes |
+| `unlicensed` | the same, only with `run_unlicensed: true` | pro repo | **no, deliberately** |
 | Full pro sweep | manual / pre-release | pro repo | yes |
 
 Every job prints its elapsed minutes to the run summary, so consumption is
 visible without opening the billing page. **Check consumption against the 2,000
-after two weeks.** If pro CI is eating the allowance, move `pro` to
-merge-to-main only — but keep `free-with-pro` on every PR, because it is the
-only job that catches "installing pro broke a free feature".
+after two weeks.** A push no longer re-runs anything: a PR runs once when it
+opens, and again only on an `@claudegrill suite` comment. If pro CI still eats
+the allowance, move `pro` to merge-to-main only — but keep `free-with-pro`
+running on PRs, because it is the only job that catches "installing pro broke a
+free feature".
 
 `licence not active` is a distinct, **non-retryable** failure. A store outage is
 then instantly distinguishable from a product bug, and retrying it just spends

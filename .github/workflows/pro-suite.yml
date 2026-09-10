@@ -29,6 +29,17 @@ name: QA suite — pro (reusable)
 #    when the secrets are absent rather than failing or — far worse — falling
 #    through to silently testing the free version.
 #
+#    `issue_comment` has the same hole: it runs with secrets against whatever
+#    the PR contains. So the comment path below refuses a PR from a fork
+#    outright, and a fork re-runs through `pull_request` (close and reopen).
+#
+# 4. It runs when a PR opens, then ON REQUEST: `@claudegrill suite` on the PR,
+#    from an owner, member or collaborator — the same command as the free
+#    suite.yml. The shipped caller drops `synchronize`, so a push spends no
+#    metered minutes. A comment payload has no head SHA and no base branch, and
+#    checkout left alone would test the default branch, so `gate` resolves the
+#    PR once and nothing downstream reads github.event.pull_request.
+#
 # Minutes: private repos are metered at 2,000/month on Free. Every job prints
 # its elapsed minutes to the run summary so consumption is visible without
 # opening the billing page. If the allowance starts to bind, move `pro` to
@@ -192,11 +203,71 @@ jobs:
   # an `if:`. A JSON output consumed by `fromJSON` is the one mechanism that
   # does.
   gate:
+    # The comment gate, identical to suite.yml's. When it is false, `run`
+    # skips because it needs this job, and `answer` skips by testing for it.
+    if: >-
+      github.event_name != 'issue_comment' || (
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '@claudegrill suite') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    permissions:
+      contents: read
+      pull-requests: write   # the 👀, and the refusal on a fork PR
     outputs:
       modes: ${{ steps.check.outputs.modes }}
+      number: ${{ steps.pr.outputs.number }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      base_ref: ${{ steps.pr.outputs.base_ref }}
     steps:
+      # Resolved once here rather than in every matrix leg, and handed down as
+      # job outputs. Same logic as suite.yml's step of the same name.
+      - name: Resolve the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          # A pull_request payload already carries all three. A manual dispatch
+          # is no PR at all: every output stays empty, which means the unscoped
+          # full tier below.
+          if [ "$GITHUB_EVENT_NAME" != "issue_comment" ]; then
+            {
+              echo "number=$PR_NUMBER"
+              echo "head_sha=$PR_HEAD_SHA"
+              echo "base_ref=$PR_BASE_REF"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Acknowledge before the minutes a boot takes. A commenter who sees
+          # nothing assumes it did not fire and comments again.
+          gh api -X POST "repos/$REPO/issues/comments/$COMMENT_ID/reactions" \
+            -f content=eyes >/dev/null || true
+
+          gh pr view "$ISSUE_NUMBER" --repo "$REPO" \
+            --json headRefOid,baseRefName,isCrossRepository > pr.json
+
+          # See point 3 at the top: a comment run holds the licence key.
+          if [ "$(jq -r .isCrossRepository pr.json)" = "true" ]; then
+            gh pr comment "$ISSUE_NUMBER" --repo "$REPO" --body \
+              "\`@claudegrill suite\` does not run on a pull request from a fork. Close and reopen the PR to re-run the suite without this repository's secrets." || true
+            echo "::error::refusing a comment-triggered run on a fork PR"
+            exit 1
+          fi
+
+          {
+            echo "number=$ISSUE_NUMBER"
+            echo "head_sha=$(jq -r .headRefOid pr.json)"
+            echo "base_ref=$(jq -r .baseRefName pr.json)"
+          } >> "$GITHUB_OUTPUT"
+
       # ONE secret decides everything here: can we licence what we checked out?
       #
       # `unlicensed` deliberately does not need it — that mode's whole purpose is
@@ -271,6 +342,12 @@ jobs:
       contents: read
       pull-requests: write   # to post the one result comment per mode
 
+    # For `answer`. Every mode computes the scope from the same pro diff, so
+    # whichever leg GitHub reports these from carries the same answer.
+    outputs:
+      ran: ${{ steps.scope.outputs.run }}
+      reason: ${{ steps.scope.outputs.reason }}
+
     env:
       # Which checkout holds the suite this mode runs.
       #
@@ -281,7 +358,7 @@ jobs:
       SUITE_DIR: ${{ matrix.mode == 'free-with-pro' && 'product' || 'pro' }}
 
     concurrency:
-      group: qa-pro-${{ matrix.mode }}-${{ github.event.pull_request.number || github.ref }}
+      group: qa-pro-${{ matrix.mode }}-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
       cancel-in-progress: true
 
     steps:
@@ -297,13 +374,16 @@ jobs:
           echo "started=$(date +%s)" >> "$GITHUB_ENV"
 
       # The PRO code under test: THIS pull request's own commit. Deliberately no
-      # `repository:` and no `ref:` — naming the repo explicitly, even its own
-      # name, makes checkout take the default branch instead of the PR merge
-      # commit, and the run would then test code the PR does not contain.
+      # `repository:` — naming the repo explicitly, even its own name, makes
+      # checkout take the default branch instead of the PR merge commit, and the
+      # run would then test code the PR does not contain. `ref:` is empty on a
+      # pull_request run, which keeps that merge commit; a comment run has no PR
+      # in its context, so there it names the head `gate` resolved.
       # fetch-depth 0 so `run-suite.mjs --since` can diff against the base.
       - name: Check out the pro product (this repo)
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'issue_comment' && needs.gate.outputs.head_sha || '' }}
           # ColorMag Pro vendors the Freemius SDK as a SUBMODULE (`freemius`,
           # pointing at the public Freemius/wordpress-sdk). Without this the
           # directory is EMPTY in CI, and the failure is silent by design:
@@ -410,13 +490,13 @@ jobs:
 
           # Only a pull request is scoped. A manual run is somebody deliberately
           # asking for everything, and skipping it would be surprising.
-          if [ -z "${{ github.event.pull_request.base.ref }}" ]; then
+          if [ -z "${{ needs.gate.outputs.base_ref }}" ]; then
             echo '{"ok":true,"run":true,"areas":[],"reason":"not a pull request — full fresh tier"}' > scope.json
             cat scope.json
           else
           node claudegrill/plugins/claudegrill/scripts/pr-scope.mjs \
             --diff-root pro \
-            ${{ github.event.pull_request.base.ref && format('--since origin/{0}', github.event.pull_request.base.ref) || '' }} \
+            ${{ needs.gate.outputs.base_ref && format('--since origin/{0}', needs.gate.outputs.base_ref) || '' }} \
             | tee scope.json
           fi
 
@@ -794,7 +874,7 @@ jobs:
             --format html --out qa-report.html \
             --product-dir ${{ env.SUITE_DIR }} \
             --repo "${{ github.repository }}" \
-            --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --sha "${{ needs.gate.outputs.head_sha || github.sha }}" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       # Before the comment, deliberately: the upload is what mints the URL the
@@ -804,7 +884,7 @@ jobs:
         if: always() && steps.manifest.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: qa-pro-${{ matrix.mode }}-${{ inputs.pro_slug }}-${{ github.event.pull_request.number || github.run_id }}
+          name: qa-pro-${{ matrix.mode }}-${{ inputs.pro_slug }}-${{ needs.gate.outputs.number || github.run_id }}
           # SUITE_DIR, not a hardcoded `product/`. The `pro` and `unlicensed`
           # modes run the suite in `pro/`, so these globs matched nothing for
           # them and the artifact carried the report with NO evidence behind it —
@@ -829,17 +909,17 @@ jobs:
       # shared marker would make them overwrite each other's verdict, leaving
       # whichever finished last as the only one anyone sees.
       - name: Post the result on the PR
-        if: always() && steps.manifest.outputs.found == 'true' && github.event_name == 'pull_request'
+        if: always() && steps.manifest.outputs.found == 'true' && needs.gate.outputs.number != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ github.event.pull_request.number }}
+          PR: ${{ needs.gate.outputs.number }}
           REPO: ${{ github.repository }}
           MODE: ${{ matrix.mode }}
         run: |
           node claudegrill/plugins/claudegrill/scripts/report-suite.mjs \
             --suite suite.json --index index.json --format md --out body.md \
             --repo "$REPO" \
-            --sha "${{ github.event.pull_request.head.sha }}" \
+            --sha "${{ needs.gate.outputs.head_sha }}" \
             --artifact-url "${{ steps.upload.outputs.artifact-url }}" \
             --artifact-name "qa-pro-$MODE-${{ inputs.pro_slug }}-$PR" \
             --run-url "${{ github.server_url }}/$REPO/actions/runs/${{ github.run_id }}"
@@ -873,3 +953,46 @@ jobs:
         run: |
           echo "run-suite.mjs exited ${{ steps.suite.outputs.exit }}"
           exit 1
+
+  # Close the loop the 👀 opened, once for the whole matrix. Each mode posts its
+  # own result comment, but a reaction per leg would read as a split verdict.
+  # Comment runs only, so a pull_request run pays nothing for this job.
+  answer:
+    needs: [gate, run]
+    # `always()` so a failed leg still gets its 😕. The `skipped` test is what
+    # keeps a comment that was never the command from getting any answer.
+    if: always() && github.event_name == 'issue_comment' && needs.gate.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Answer the comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          GATE: ${{ needs.gate.result }}
+          RUN: ${{ needs.run.result }}
+          MODES: ${{ needs.gate.outputs.modes }}
+          RAN: ${{ needs.run.outputs.ran }}
+          REASON: ${{ needs.run.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          CONTENT=confused
+          if [ "$GATE" = "success" ] && [ "$RUN" = "success" ]; then CONTENT=rocket; fi
+          gh api -X POST "repos/$REPO/issues/comments/$COMMENT_ID/reactions" \
+            -f content="$CONTENT" >/dev/null || true
+
+          # Neither case posts a result comment, and a bare reaction does not
+          # say why. A fork refusal is absent on purpose: `gate` already said so.
+          MSG=""
+          if [ "$GATE" = "success" ] && [ "$MODES" = "[]" ]; then
+            MSG="Nothing ran: no pro job could run. Is \`TGQA_LICENSE_KEY\` set in this repo?"
+          elif [ "$RAN" = "false" ]; then
+            MSG="Nothing ran: $REASON"
+          fi
+          if [ -n "$MSG" ]; then
+            gh pr comment "$PR" --repo "$REPO" --body "$MSG — [run]($RUN_URL)" || true
+          fi

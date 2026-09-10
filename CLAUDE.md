@@ -850,6 +850,25 @@ decision in the suite layer.
 
 **Not verified**
 
+- **`@claudegrill suite` — the comment trigger on `suite.yml` and
+  `pro-suite.yml`.** Both shipped callers dropped `synchronize` to stop a full
+  boot per push, so both suites now run when a PR opens and again on that one
+  command. Each workflow resolves the PR itself: a comment payload has no head
+  SHA or base branch, and checkout would otherwise test the default branch.
+  Each refuses fork PRs, because a comment run holds secrets, the licence key
+  included. In `pro-suite.yml` the `gate` job resolves the PR once and passes
+  the result to the matrix as job outputs, and a separate `answer` job reacts
+  once for all modes. The new shell steps were lifted from the YAML and run
+  against a stubbed `gh`. Nothing has run live, so four things are still
+  assumptions:
+  - the job-level `if` gates
+  - reactions working with only `pull-requests: write`
+  - `author_association` reading `MEMBER` for someone whose org membership is
+    private
+  - a matrix job's outputs reaching `answer` from whichever leg reports them
+  Existing product callers are not rewritten, because `setup-product.mjs`
+  skips an existing workflow unless `--force`.
+
 - **Magazine Blocks Pro and BlockArt Blocks Pro have never been booted.** Every
   claim above is from source reading plus stubbed harnesses; no site has mounted
   either plugin. Neither can be booted alone — `Requires Plugins` means a

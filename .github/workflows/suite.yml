@@ -1,13 +1,26 @@
 name: QA suite (reusable)
 
 # The AI-free tier. THIS WORKFLOW NEEDS NO ANTHROPIC_API_KEY and spends nothing
-# but runner minutes — which is the whole point of it, and the reason it runs on
-# every PR including drafts.
+# but runner minutes — which is the whole point of it.
 #
-# It is therefore the natural **required** status check. The agent review
-# (pr-qa.yml) should stay advisory: it is probabilistic, and a required check
-# that is occasionally wrong for unexplainable reasons is a check people learn
-# to bypass.
+# The caller decides which events reach it, and it behaves the same for both:
+#
+#   pull_request   the payload names the PR, its head and its base
+#   issue_comment  `@claudegrill suite` on a PR, from an owner, member or
+#                  collaborator. The PR is resolved with `gh pr view`, because
+#                  a comment payload carries neither the head SHA nor the base
+#
+# The shipped caller drops `synchronize`, so a push does NOT re-run the suite:
+# on a busy PR that was a full boot per push, most of them superseded before
+# anyone read the result. It runs when the PR opens, then on request.
+#
+# A caller that does that must NOT make this a required status check. A
+# comment-triggered run is attached to the default branch, not to the PR's head
+# commit, so after any push a required check waits forever for a run that never
+# reports there. The one result comment, edited in place and naming the SHA it
+# tested, is the signal instead. The agent review (pr-qa.yml) stays advisory
+# either way: it is probabilistic, and a required check that is occasionally
+# wrong for unexplainable reasons is a check people learn to bypass.
 #
 # Only the `fresh` tier ever runs here. A `@demo` spec needs the product's demo
 # content imported, which a disposable runner site does not have, so running one
@@ -116,6 +129,15 @@ on:
 
 jobs:
   suite:
+    # A comment is a request only when it is on a PR, starts with the command,
+    # and comes from someone with a stake in the repo. Anyone can comment on a
+    # public PR; without the last clause anyone could spend runner minutes in a
+    # loop. The caller filters on the command too, but this is the gate.
+    if: >-
+      github.event_name != 'issue_comment' || (
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '@claudegrill suite') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     # Above `timeout_ms` (30 min), not equal to it. The job ceiling kills the
     # process tree outright and reports nothing; `run-suite.mjs`'s own ceiling
@@ -125,21 +147,75 @@ jobs:
     # measured at ~2m15s together.
     timeout-minutes: 40
 
-    # Read-only except for the checks the annotations produce. No comment is
-    # posted and nothing is written back to the PR: the job's own pass/fail is
-    # the signal, which is what a required check should be.
+    # The one write is the PR comment: the result, and the reactions that
+    # answer a triggering comment. Nothing else goes back to the PR.
     permissions:
       contents: read
       pull-requests: write   # to post the one result comment
 
     concurrency:
-      group: qa-suite-${{ github.event.pull_request.number || github.ref }}
+      group: qa-suite-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
       cancel-in-progress: true
 
     steps:
+      # Left to its default, checkout on a comment tests the DEFAULT branch — a
+      # green result about code nobody asked about. The PR is resolved here,
+      # once, for every event, and no later step reads github.event.pull_request.
+      - name: Resolve the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          # A pull_request payload already carries all three. A manual dispatch
+          # is no PR at all: every output stays empty, which means the unscoped
+          # full tier below.
+          if [ "$GITHUB_EVENT_NAME" != "issue_comment" ]; then
+            {
+              echo "number=$PR_NUMBER"
+              echo "head_sha=$PR_HEAD_SHA"
+              echo "base_ref=$PR_BASE_REF"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Acknowledge before the minutes a boot takes. A commenter who sees
+          # nothing assumes it did not fire and comments again.
+          gh api -X POST "repos/$REPO/issues/comments/$COMMENT_ID/reactions" \
+            -f content=eyes >/dev/null || true
+
+          gh pr view "$ISSUE_NUMBER" --repo "$REPO" \
+            --json headRefOid,baseRefName,isCrossRepository > pr.json
+
+          # A comment run executes the PR's code while holding this repo's
+          # secrets and a write token. For a fork that is the pull_request_target
+          # hole. A fork PR re-runs through `pull_request` instead — close and
+          # reopen it — which gives fork code neither.
+          if [ "$(jq -r .isCrossRepository pr.json)" = "true" ]; then
+            gh pr comment "$ISSUE_NUMBER" --repo "$REPO" --body \
+              "\`@claudegrill suite\` does not run on a pull request from a fork. Close and reopen the PR to re-run the suite without this repository's secrets." || true
+            echo "::error::refusing a comment-triggered run on a fork PR"
+            exit 1
+          fi
+
+          {
+            echo "number=$ISSUE_NUMBER"
+            echo "head_sha=$(jq -r .headRefOid pr.json)"
+            echo "base_ref=$(jq -r .baseRefName pr.json)"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Check out the product
         uses: actions/checkout@v4
         with:
+          # Set only for a comment: the PR head as it stands now, which is the
+          # SHA the result comment names. A pull_request run keeps checkout's
+          # default, the merge commit, exactly as before.
+          ref: ${{ github.event_name == 'issue_comment' && steps.pr.outputs.head_sha || '' }}
           # A product may vendor an SDK as a submodule; an empty submodule
           # directory fails silently rather than loudly. See pro-suite.yml.
           submodules: recursive
@@ -203,13 +279,13 @@ jobs:
 
           # Only a pull request is scoped. A manual run is somebody deliberately
           # asking for everything, and skipping it would be surprising.
-          if [ -z "${{ github.event.pull_request.base.ref }}" ]; then
+          if [ -z "${{ steps.pr.outputs.base_ref }}" ]; then
             echo '{"ok":true,"run":true,"areas":[],"reason":"not a pull request — full fresh tier"}' > scope.json
             cat scope.json
           else
           node claudegrill/plugins/claudegrill/scripts/pr-scope.mjs \
             --diff-root product \
-            ${{ github.event.pull_request.base.ref && format('--since origin/{0}', github.event.pull_request.base.ref) || '' }} \
+            ${{ steps.pr.outputs.base_ref && format('--since origin/{0}', steps.pr.outputs.base_ref) || '' }} \
             | tee scope.json
           fi
 
@@ -442,12 +518,12 @@ jobs:
       # genuinely need no spec, and a hard gate here would train people to add
       # an empty one to get past it.
       - name: Note whether this PR carries a spec
-        if: always() && steps.manifest.outputs.found == 'true' && github.event_name == 'pull_request'
+        if: always() && steps.manifest.outputs.found == 'true' && steps.pr.outputs.number != ''
         working-directory: product
         run: |
           SPEC_DIR="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(".themegrill-qa/suite.json","utf8")).spec_dir||"tests/e2e/specs")')"
-          BASE="origin/${{ github.event.pull_request.base.ref }}"
-          git fetch origin "${{ github.event.pull_request.base.ref }}" --depth=1 -q || true
+          BASE="origin/${{ steps.pr.outputs.base_ref }}"
+          git fetch origin "${{ steps.pr.outputs.base_ref }}" --depth=1 -q || true
           FILES="$(git diff --name-only "$BASE"...HEAD || true)"
 
           SRC="$(printf '%s\n' "$FILES" | grep -E '\.(php|js|jsx|ts|tsx|scss|css)$' | grep -vE "^($SPEC_DIR/|tests?/)" || true)"
@@ -495,7 +571,7 @@ jobs:
             --format html --out qa-report.html \
             --product-dir product \
             --repo "${{ github.repository }}" \
-            --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --sha "${{ steps.pr.outputs.head_sha || github.sha }}" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       # Before the comment, deliberately: the upload is what mints the URL the
@@ -506,7 +582,7 @@ jobs:
         if: always() && steps.manifest.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: qa-suite-${{ inputs.product_slug }}-${{ github.event.pull_request.number || github.run_id }}
+          name: qa-suite-${{ inputs.product_slug }}-${{ steps.pr.outputs.number || github.run_id }}
           # `**/test-results/**` as well as the top-level one, because a
           # product's outputDir is its own choice: ColorMag's real attachments
           # land in tests/e2e/test-results/, and the top-level glob alone would
@@ -525,16 +601,16 @@ jobs:
       # key. One comment per PR, edited in place: a PR with nine bot comments
       # gets muted, and then nobody reads any of them.
       - name: Post the result on the PR
-        if: always() && steps.manifest.outputs.found == 'true' && github.event_name == 'pull_request'
+        if: always() && steps.manifest.outputs.found == 'true' && steps.pr.outputs.number != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ github.event.pull_request.number }}
+          PR: ${{ steps.pr.outputs.number }}
           REPO: ${{ github.repository }}
         run: |
           node claudegrill/plugins/claudegrill/scripts/report-suite.mjs \
             --suite suite.json --index index.json --format md --out body.md \
             --repo "$REPO" \
-            --sha "${{ github.event.pull_request.head.sha }}" \
+            --sha "${{ steps.pr.outputs.head_sha }}" \
             --artifact-url "${{ steps.upload.outputs.artifact-url }}" \
             --artifact-name "qa-suite-${{ inputs.product_slug }}-$PR" \
             --run-url "${{ github.server_url }}/$REPO/actions/runs/${{ github.run_id }}"
@@ -557,7 +633,7 @@ jobs:
           node claudegrill/plugins/claudegrill/scripts/report-suite.mjs \
             --suite suite.json --index index.json --format summary \
             --repo "${{ github.repository }}" \
-            --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --sha "${{ steps.pr.outputs.head_sha || github.sha }}" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             >> "$GITHUB_STEP_SUMMARY"
 
@@ -578,3 +654,33 @@ jobs:
             1) echo "::error::suite failed — see annotations above"; exit 1 ;;
             *) echo "::error::suite could not run (exit $CODE) — this is a harness failure, not a test failure"; exit 1 ;;
           esac
+
+      # Close the loop the 👀 opened. A run that tested nothing posts no result
+      # comment, and a 🚀 with no words reads as "it passed", so that case says
+      # why in one line instead.
+      - name: Answer the comment
+        if: always() && github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          RAN: ${{ steps.scope.outputs.run }}
+          REASON: ${{ steps.scope.outputs.reason }}
+          FOUND: ${{ steps.manifest.outputs.found }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          CONTENT=rocket
+          [ "${{ job.status }}" = "success" ] || CONTENT=confused
+          gh api -X POST "repos/$REPO/issues/comments/$COMMENT_ID/reactions" \
+            -f content="$CONTENT" >/dev/null || true
+
+          MSG=""
+          if [ "$RAN" = "false" ]; then
+            MSG="Nothing ran: $REASON"
+          elif [ "$FOUND" = "false" ]; then
+            MSG="Nothing ran: this product has no \`.themegrill-qa/suite.json\` yet."
+          fi
+          if [ -n "$MSG" ]; then
+            gh pr comment "$PR" --repo "$REPO" --body "$MSG — [run]($RUN_URL)" || true
+          fi

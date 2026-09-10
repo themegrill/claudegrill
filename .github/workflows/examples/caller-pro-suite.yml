@@ -16,15 +16,33 @@
 # is public so its reusable workflows are callable with no token and no
 # Settings → Actions → Access change.
 #
+# It runs once when a PR opens, and after that ON REQUEST. Pushing a commit does
+# NOT re-run it. To run it against the PR's current head, comment:
+#
+#     @claudegrill suite
+#
+# the same command as in the free repo. 👀 means it started; 🚀 or 😕 means it
+# finished, and each mode edits its own result comment on the PR. Only owners,
+# members and collaborators can trigger it, and never on a PR from a fork.
+#
+# A comment does nothing until THIS FILE IS ON THE DEFAULT BRANCH, because
+# GitHub reads `issue_comment` workflows from there and never from the PR. Do
+# not make it a required check: a comment-triggered run is not attached to the
+# PR's head commit, so after a push the check would wait forever.
+#
 # `pull_request`, never `pull_request_target`. The latter runs with secrets
 # available against fork-supplied code. Forks get no secrets here; the licensed
 # jobs skip cleanly and `unlicensed` still runs, which is the correct trade.
+# `issue_comment` DOES carry secrets, which is why the reusable workflow refuses
+# a comment on a fork PR; close and reopen that PR instead.
 
 name: QA — pro
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # No `synchronize`: a push spends no metered minutes. The path filter below
+    # applies to this event only — a comment is an explicit request, and runs.
+    types: [opened, reopened, ready_for_review]
     paths:
       # Same path filter discipline as the free suite: private-repo minutes are
       # metered at 2,000/month, so a README change must not spend any.
@@ -38,13 +56,19 @@ on:
       - ".themegrill-qa/**"
       - "tests/e2e/**"
       - ".github/workflows/qa-pro.yml"
+  issue_comment:
+    types: [created]
   workflow_dispatch:
 
 jobs:
   pro:
-    # Draft PRs do not spend metered minutes. The author reopens it as ready
-    # when they want the answer.
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    # Drafts do not spend metered minutes unless someone asks by comment. Any
+    # other comment stops here; the reusable workflow checks the command again
+    # and also who wrote it.
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '@claudegrill suite'))
     uses: ThemeGrill/claudegrill/.github/workflows/pro-suite.yml@main
     with:
       product_slug: colormag
