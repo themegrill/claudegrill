@@ -590,6 +590,28 @@ jobs:
           restore-keys: |
             qa-deps-${{ runner.os }}-
 
+      # boot-wp.mjs's own downloads, separate from the product's — see the long
+      # comment on the same step in suite.yml for why each path is here and why
+      # `sites/` is deliberately excluded (it is the extracted, BOOTED WordPress
+      # tree, reused across boots with the same mount config; caching it in CI
+      # would let a stale site from a previous PR's run leak into this one,
+      # which is the opposite of what a disposable pro boot is for).
+      #
+      # Keyed on boot-wp.mjs's own hash: this cache's only reason to invalidate
+      # is the pinned `@wp-playground/cli` version changing, a different
+      # lifecycle from the pnpm/Playwright cache above.
+      - name: Cache Playground's own downloads (WordPress core, the CLI's dependencies)
+        if: steps.scope.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm/_cacache
+            ~/.wordpress-playground
+            !~/.wordpress-playground/sites
+          key: qa-playground-${{ runner.os }}-${{ hashFiles('claudegrill/plugins/claudegrill/scripts/boot-wp.mjs') }}
+          restore-keys: |
+            qa-playground-${{ runner.os }}-
+
       - name: Look for a suite manifest
         if: steps.scope.outputs.run == 'true'
         id: manifest

@@ -617,6 +617,53 @@ decision in the suite layer.
   org billing page) — the per-job "Report elapsed minutes" step already
   reports to the run summary, but nothing rolls that up across runs or repos.
 
+- **boot-wp.mjs's own downloads were invisible and uncached, on top of
+  everything the existing pnpm/Playwright cache already covers — found by
+  reading a real `npx` install on this machine, not by guessing.** The
+  existing cache step only ever covered the PRODUCT's dependencies. What
+  `npx --yes @wp-playground/cli@latest` pulls in on a cold runner was never
+  measured until now:
+  - `@php-wasm/*`, which the CLI bundles PHP.wasm binaries for every supported
+    PHP version through, is **~300MB** on disk — measured directly (`du -sh`
+    across every `.wasm` file under a real `@wp-playground` install), not
+    estimated.
+  - Playground has its OWN persistent download cache, `~/.wordpress-playground`
+    — found by reading `@wp-playground/cli` v3.1.53's source (`We()`: `existsSync(n)
+    || download(...)`, keyed on `<version>.zip`) and then confirmed on disk: a
+    real `7.1.zip` (37MB) sitting there from a previous local boot. On a
+    developer's machine this already makes every boot after the first free;
+    on a GitHub Actions runner, which starts empty every job, it has never
+    once been reused.
+  - `~/.wordpress-playground/sites/<hash>` is a THIRD thing living at that same
+    path and must NOT be cached: it is the extracted, booted WordPress tree
+    itself, keyed by mount config and reused across boots with the same key —
+    the exact mechanism behind the blueprint-idempotency bug recorded above
+    (`wp term create` failing "already exists" on a second boot of a cached
+    site). Caching it in CI would let a stale site from one PR's run leak into
+    another's, which is the opposite of what a disposable boot is for.
+    Confirmed by inspecting real `sites/` entries on disk: full `wp-admin`/
+    `wp-includes`/`wp-config.php` trees, not download artefacts.
+
+  Two changes:
+  - `@wp-playground/cli` is now pinned (`3.1.53`) instead of `@latest`, for the
+    same reason `@playwright/test` is pinned elsewhere in this repo: `@latest`
+    means CI silently starts running a different Playground release the day
+    one ships, and it is also what makes a cache key meaningless — a key
+    cannot promise it matches what was actually resolved when the resolution
+    itself floats.
+  - Both workflows gained a second `actions/cache` step, keyed on
+    `boot-wp.mjs`'s own hash rather than the product's lockfile (a different
+    invalidation lifecycle), covering `~/.npm/_cacache` and
+    `~/.wordpress-playground` with `sites/` excluded via a `!` glob.
+
+  **Not verified**: no live CI run has happened, so the cache-hit path — a
+  second run reusing what a first run saved — is unproven. What IS verified:
+  the pinned version resolves and runs via `npx` (confirmed locally), both
+  workflow files parse, and every path/exclusion above was read from real
+  source and real directories on disk, not assumed. The `!` exclusion glob
+  inside a multi-line `path:` is a documented `@actions/glob` pattern but has
+  not been observed working inside an actual `actions/cache` run in this repo.
+
 - **Three faults in this repo's own cost controls, found by them failing.**
   Worth recording because each one turned a diagnosable failure into an opaque
   one:

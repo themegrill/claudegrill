@@ -390,6 +390,43 @@ jobs:
           restore-keys: |
             qa-deps-${{ runner.os }}-
 
+      # boot-wp.mjs's own downloads, separate from the product's. Two of them:
+      #
+      #   ~/.npm/_cacache        npm's content-addressable cache. Confirmed by
+      #                          reading a real install on disk: the pinned
+      #                          `@wp-playground/cli` pulls in @php-wasm's PHP
+      #                          binaries for every version it bundles, ~300MB,
+      #                          none of which is on a fresh runner.
+      #   ~/.wordpress-playground   Playground's OWN disk cache for the
+      #                          WordPress core it downloads at boot — confirmed
+      #                          by reading `@wp-playground/cli`'s source: it
+      #                          skips the network fetch outright when
+      #                          `<version>.zip` already exists here.
+      #
+      # `sites/` under that second path is excluded on purpose. It is NOT a
+      # download cache — it is the extracted, booted WordPress tree, keyed by
+      # the mount config and REUSED across boots with the same key (see the
+      # blueprint-idempotency fix in CLAUDE.md: a second boot of a cached site
+      # hit "term already exists"). On a developer's machine that persistence
+      # is the point. In CI it would do the opposite of what a disposable site
+      # is for: a stale site from a previous run's PR would survive into this
+      # one.
+      #
+      # Keyed on boot-wp.mjs's own hash, not the lockfile above — this cache's
+      # only reason to invalidate is the pinned CLI version changing, which is
+      # a different lifecycle from the product's pnpm/Playwright dependencies.
+      - name: Cache Playground's own downloads (WordPress core, the CLI's dependencies)
+        if: steps.scope.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm/_cacache
+            ~/.wordpress-playground
+            !~/.wordpress-playground/sites
+          key: qa-playground-${{ runner.os }}-${{ hashFiles('claudegrill/plugins/claudegrill/scripts/boot-wp.mjs') }}
+          restore-keys: |
+            qa-playground-${{ runner.os }}-
+
       - name: Look for a suite manifest
         if: steps.scope.outputs.run == 'true'
         id: manifest
