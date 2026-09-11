@@ -25,6 +25,12 @@ name: QA suite (reusable)
 # Only the `fresh` tier ever runs here. A `@demo` spec needs the product's demo
 # content imported, which a disposable runner site does not have, so running one
 # would fail for reasons that have nothing to do with the pull request.
+#
+# A PR that changes product source with no regression spec is refused before
+# any of that: no Composer, no pnpm, no Chromium, no WordPress boot. See
+# "Require a regression spec before spending runner minutes" below — it used
+# to be a same-cost end-of-run nudge, and the team decided that finding out
+# for free up front beats finding out at the end, after paying for a boot.
 
 on:
   workflow_call:
@@ -236,6 +242,108 @@ jobs:
           submodules: recursive
           fetch-depth: 0
           path: product
+
+      # THE FIRST COST GATE, ahead of even the scope check below. A PR that
+      # changes product source with no regression spec is refused HERE —
+      # before checking out claudegrill's own tooling, before Composer, pnpm,
+      # Chromium or a WordPress boot — because paying for all five of those
+      # only to report "no spec" at the end (measured once at 5m47s) is the
+      # exact waste invariant 4b already refuses for an out-of-scope diff; this
+      # is the same refusal, just one gate earlier. `/claudegrill:verify-fix`
+      # is what writes the spec `write-spec` adds to THIS branch — a PR with
+      # neither has nothing for the suite to guard, so there is nothing to
+      # gain by booting one.
+      #
+      # This reverses a deliberate choice made a few lines below in the
+      # now-removed "note whether this PR carries a spec" step: that step was
+      # a nudge on purpose, reasoning that a hard gate would train people to
+      # add an empty spec just to get past it. The team decided the
+      # runner-minute cost of finding out at the very end outweighs that risk,
+      # and asked for this to fail immediately instead, with no escape valve —
+      # a source change with no spec fails every time, on every product. A
+      # docs/config-only diff (empty SRC below) still never trips this.
+      #
+      # Skipped for a manual dispatch (no PR to diff against, and "asked for
+      # everything" already means no scoping applies) and, for a
+      # comment-triggered run, only once the PR is resolved above — same
+      # condition every other PR-scoped step below already uses.
+      - name: Require a regression spec before spending runner minutes
+        id: specgate
+        if: steps.pr.outputs.number != ''
+        working-directory: product
+        run: |
+          set -o pipefail
+
+          if [ ! -f .themegrill-qa/suite.json ]; then
+            # No suite on this product yet — nothing to guard, and the
+            # "no suite manifest" notice further down already covers this.
+            echo "required=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          SPEC_DIR="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(".themegrill-qa/suite.json","utf8")).spec_dir||"tests/e2e/specs")')"
+          BASE="origin/${{ steps.pr.outputs.base_ref }}"
+          git fetch origin "${{ steps.pr.outputs.base_ref }}" --depth=1 -q || true
+          FILES="$(git diff --name-only "$BASE"...HEAD || true)"
+
+          SRC="$(printf '%s\n' "$FILES" | grep -E '\.(php|js|jsx|ts|tsx|scss|css)$' | grep -vE "^($SPEC_DIR/|tests?/)" || true)"
+          SPECS="$(printf '%s\n' "$FILES" | grep -E "^$SPEC_DIR/|\.spec\.[cm]?[jt]sx?$" || true)"
+
+          if [ -n "$SRC" ] && [ -z "$SPECS" ]; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+            printf '%s\n' "$SRC" > ../spec-gate-src.txt
+          else
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # One comment, same marker as the real result comment below, so the two
+      # never both sit on the PR at once — whichever ran last is what a human
+      # sees. Written here with a bare `gh` call rather than report-suite.mjs,
+      # because claudegrill has not even been checked out at this point.
+      - name: Post the "no spec" result on the PR
+        if: steps.specgate.outputs.required == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.pr.outputs.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          {
+            echo "<!-- claudegrill-suite -->"
+            echo "### QA suite — refused, no regression spec"
+            echo ""
+            echo "This PR changes product source but adds no spec, so the suite was"
+            echo "refused before booting WordPress — running it just to report the same"
+            echo "thing at the end costs runner minutes for nothing. Run"
+            echo "\`/claudegrill:verify-fix\` locally and let \`write-spec\` add the guard"
+            echo "to this branch, then push again."
+            echo ""
+            echo "<details><summary>Source files changed with no matching spec</summary>"
+            echo ""
+            echo '```'
+            cat spec-gate-src.txt
+            echo '```'
+            echo ""
+            echo "</details>"
+          } > body.md
+
+          ID="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                 --jq '[.[] | select(.body | contains("<!-- claudegrill-suite -->"))][0].id // empty')"
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@body.md >/dev/null
+          else
+            gh pr comment "$PR" --repo "$REPO" --body-file body.md
+          fi
+
+      # Every step below this point that boots or installs anything already
+      # guards on `steps.manifest.outputs.found` or `steps.scope.outputs.run`,
+      # neither of which is ever set once this step has failed — so failing
+      # here is enough to skip Composer, pnpm, Chromium and the WordPress boot
+      # with no further edits to their conditions.
+      - name: Fail — no regression spec
+        if: steps.specgate.outputs.required == 'true'
+        run: |
+          echo "::error::This PR changes product source but adds no regression spec — refusing before spending runner minutes. See the PR comment."
+          exit 1
 
       - name: Check out shared QA tooling
         uses: actions/checkout@v4
@@ -527,42 +635,6 @@ jobs:
             console.log(`::notice file=${f.file},line=${f.line ?? 1}::fixme, still open: ${f.title}`);
           }
           JS
-
-      # Deterministic, no AI: did a PR that changes product source also add or
-      # change a spec? A nudge in the summary, never a failure — some changes
-      # genuinely need no spec, and a hard gate here would train people to add
-      # an empty one to get past it.
-      - name: Note whether this PR carries a spec
-        if: always() && steps.manifest.outputs.found == 'true' && steps.pr.outputs.number != ''
-        working-directory: product
-        run: |
-          SPEC_DIR="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(".themegrill-qa/suite.json","utf8")).spec_dir||"tests/e2e/specs")')"
-          BASE="origin/${{ steps.pr.outputs.base_ref }}"
-          git fetch origin "${{ steps.pr.outputs.base_ref }}" --depth=1 -q || true
-          FILES="$(git diff --name-only "$BASE"...HEAD || true)"
-
-          SRC="$(printf '%s\n' "$FILES" | grep -E '\.(php|js|jsx|ts|tsx|scss|css)$' | grep -vE "^($SPEC_DIR/|tests?/)" || true)"
-          SPECS="$(printf '%s\n' "$FILES" | grep -E "^$SPEC_DIR/|\.spec\.[cm]?[jt]sx?$" || true)"
-
-          if [ -n "$SRC" ] && [ -z "$SPECS" ]; then
-            {
-              echo ""
-              echo "### No regression spec in this PR"
-              echo ""
-              echo "This PR changes product source but adds no spec. If the change fixes a"
-              echo "bug, run \`/claudegrill:verify-fix\` locally and let \`write-spec\` add one"
-              echo "to this branch — a finding without a spec is one you pay to rediscover."
-              echo ""
-              echo "<details><summary>Source files changed</summary>"
-              echo ""
-              echo '```'
-              printf '%s\n' "$SRC"
-              echo '```'
-              echo ""
-              echo "</details>"
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "::warning::This PR changes product source but adds no regression spec."
-          fi
 
       # Coverage, deterministically. No agent, no tokens — suite-index.mjs is
       # plain Node reading the specs and the knowledge file. The report reads
