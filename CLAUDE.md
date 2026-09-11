@@ -578,6 +578,45 @@ decision in the suite layer.
   against ColorMag Pro's real suite: with a 1.5s ceiling the run finished in 3.4s
   with the offending test named, rather than hanging.
 
+- **The `synchronize` drift that actually showed up on a bill — and why it
+  costs $0 now regardless of which caller drifts.** `qa-pro.yml` in
+  `user-registration-pro` re-added `synchronize` to `on.pull_request.types`,
+  which both `suite.yml` and `pro-suite.yml` explicitly document callers must
+  drop. Every push to release PR #1572 re-ran the full pro suite — 15+ full
+  runs in two days, themegrill org Actions billing going from $0/day to
+  ~$5.4/day. Found via the org bill, not via anything in this repo, and
+  reported as [claudegrill#5](https://github.com/themegrill/claudegrill/issues/5).
+  The repo's own file was already hand-fixed 12 minutes after the issue was
+  filed; what was still missing was anything that stops it recurring, since
+  `qa-pro.yml`/`qa-suite.yml` are copied into each product repo individually
+  with no central version lock — two repos had already disagreed on this exact
+  line before this fix.
+
+  Two changes, checked against real fixtures and the three live callers:
+  - **A cost backstop in the reusable workflows themselves**, not just the
+    callers. `suite.yml`'s `suite` job and `pro-suite.yml`'s `gate` job now
+    allow-list `pull_request` events to `opened`/`reopened`/`ready_for_review`
+    in their job-level `if:`; anything else (`synchronize` included) is a
+    skipped job — $0, no runner started — regardless of what any caller's own
+    `on:` block says. This is centralised on purpose: it protects every
+    current and future pro repo without needing every copy of the caller file
+    to be correct.
+  - **`setup-product.mjs check-workflow`**, a new read-only action: reads an
+    existing `qa-pro.yml`/`qa-suite.yml`, strips comment lines (the header
+    prose itself contains the string `pull_request_target` as a warning, which
+    a naive substring scan flagged as the violation — caught by testing against
+    the templates themselves, not assumed), and flags `synchronize` in
+    `pull_request.types` or any use of `pull_request_target`. Verified against
+    five fixtures (clean `qa-suite.yml`, clean `qa-pro.yml`, both with
+    `synchronize` added, and one with `pull_request_target`) plus a live pull of
+    all three real pro-repo callers (colormag-pro, user-registration-pro,
+    zakra-pro) — all three report `clean: true` today. This is Option A from
+    the issue: drift found on request, before a bill, rather than after one.
+
+  Not done: Option D (surfacing runner-minutes somewhere more visible than the
+  org billing page) — the per-job "Report elapsed minutes" step already
+  reports to the run summary, but nothing rolls that up across runs or repos.
+
 - **Three faults in this repo's own cost controls, found by them failing.**
   Worth recording because each one turned a diagnosable failure into an opaque
   one:

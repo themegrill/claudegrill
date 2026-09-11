@@ -205,11 +205,22 @@ jobs:
   gate:
     # The comment gate, identical to suite.yml's. When it is false, `run`
     # skips because it needs this job, and `answer` skips by testing for it.
+    #
+    # The `pull_request` clause is a cost backstop, not a courtesy check — see
+    # the long comment on suite.yml's `suite` job for the incident that made it
+    # necessary. `qa-pro.yml` is a per-repo caller with no central version lock,
+    # and one already drifted to include `synchronize`: 15+ full pro-suite runs
+    # in two days on one release PR, ~$5.4/day in billed Actions minutes, from
+    # a single re-added trigger type. Allow-listing here means that drift costs
+    # one skipped `gate` job — $0 — regardless of what any caller's own `on:`
+    # block says, because `run` needs `gate` and inherits the skip.
     if: >-
-      github.event_name != 'issue_comment' || (
+      (github.event_name != 'pull_request' ||
+       contains(fromJSON('["opened","reopened","ready_for_review"]'), github.event.action)) &&
+      (github.event_name != 'issue_comment' || (
       github.event.issue.pull_request != null &&
       startsWith(github.event.comment.body, '@claudegrill suite') &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:

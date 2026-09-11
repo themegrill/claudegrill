@@ -133,11 +133,26 @@ jobs:
     # and comes from someone with a stake in the repo. Anyone can comment on a
     # public PR; without the last clause anyone could spend runner minutes in a
     # loop. The caller filters on the command too, but this is the gate.
+    #
+    # The `pull_request` clause is a cost backstop, not a courtesy check. The
+    # design is "opened/reopened/ready_for_review, then on request" — a caller's
+    # own `on.pull_request.types` is SUPPOSED to leave `synchronize` out, so a
+    # push spends nothing. That is enforced by a file copied into every product
+    # repo individually, with no central version lock, and it already drifted
+    # once: a caller that re-added `synchronize` re-ran the full suite on every
+    # push to one release PR — 15+ full runs in two days, ~$5.4/day in billed
+    # Actions minutes, caught only when it showed up on the org bill. Allow-list
+    # here means that drift, in THIS repo or any future one, costs one skipped
+    # job — $0, no runner started — instead of a full run, even if the caller's
+    # own trigger is wrong. Fix the caller too (`check-workflow` below finds
+    # this without waiting for a bill), but do not rely on it alone.
     if: >-
-      github.event_name != 'issue_comment' || (
+      (github.event_name != 'pull_request' ||
+       contains(fromJSON('["opened","reopened","ready_for_review"]'), github.event.action)) &&
+      (github.event_name != 'issue_comment' || (
       github.event.issue.pull_request != null &&
       startsWith(github.event.comment.body, '@claudegrill suite') &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
     runs-on: ubuntu-latest
     # Above `timeout_ms` (30 min), not equal to it. The job ceiling kills the
     # process tree outright and reports nothing; `run-suite.mjs`'s own ceiling

@@ -23,6 +23,7 @@
  *   node scripts/setup-product.mjs write-suite    --root <p>
  *   node scripts/setup-product.mjs write-env      --root <p>      # values via env
  *   node scripts/setup-product.mjs write-workflow --root <p>
+ *   node scripts/setup-product.mjs check-workflow --root <p>
  */
 
 import { execFileSync } from "node:child_process";
@@ -45,6 +46,7 @@ const ACTIONS = [
   "write-suite",
   "write-env",
   "write-workflow",
+  "check-workflow",
 ];
 
 const opt = { type: null, slug: null, root: null, site: null, force: false };
@@ -574,6 +576,100 @@ function writeWorkflow() {
   return { ok: true, root, written: `.github/workflows/${name}`, pro: Boolean(proEntry) };
 }
 
+/**
+ * Does an existing caller workflow still match the cost-avoidance design?
+ *
+ * `write-workflow` never touches a file that already exists (without
+ * `--force`), which is correct — it is "safe to edit", per its own header, and
+ * a product may have reasons to diverge. But that also means nothing re-checks
+ * it after the fact, and the one caller written from this template has already
+ * drifted once: `qa-pro.yml` in a pro repo picked up `synchronize` in its
+ * `pull_request.types`, and every push to one release PR re-ran the full suite
+ * — 15+ full runs in two days, found only on the org's Actions bill days
+ * later. `suite.yml` and `pro-suite.yml` now refuse that event centrally (see
+ * their `gate`/`suite` job `if:`), so the same drift costs $0 even if a caller
+ * is wrong — but a wrong caller is still wrong, and this is how to find it
+ * without waiting for either a bill or the backstop to matter.
+ *
+ * Deterministic and read-only: a regex over the `on:` block, not a YAML parser
+ * (no dependencies — same convention as `envKeys` above), because every caller
+ * this repo has written shares the same one-line `types: [...]` shape.
+ */
+function checkWorkflow() {
+  const root = resolveRoot();
+  const registry = loadRegistry(qaHome);
+  const proEntry = registry[path.basename(root)] ?? null;
+  const name = proEntry ? "qa-pro.yml" : "qa-suite.yml";
+  const dest = path.join(root, ".github", "workflows", name);
+
+  if (!fs.existsSync(dest)) {
+    return { ok: false, root, error: `no ${name} at .github/workflows/ — run write-workflow first` };
+  }
+
+  const body = fs.readFileSync(dest, "utf8");
+  const findings = [];
+
+  // Every template in this repo explains itself in prose above the YAML it
+  // documents — the header here literally says "never pull_request_target"
+  // — so a substring scan of the raw file flags its own warning comment as
+  // the violation. Strip full-line comments first; nothing in these callers
+  // puts a trailing comment on a code line, so this loses no real YAML.
+  const code = body
+    .split(/\r?\n/)
+    .filter((l) => !/^\s*#/.test(l))
+    .join("\n");
+
+  // The design: opened/reopened/ready_for_review on pull_request, then only
+  // `@claudegrill suite` on request. Anything else in `types` costs metered
+  // minutes on every matching event a push produces.
+  const ALLOWED_PR_TYPES = ["opened", "reopened", "ready_for_review"];
+  const m = code.match(/pull_request:\s*\n(?:[^\n]*\n)*?\s*types:\s*\[([^\]]*)\]/);
+  if (!m) {
+    findings.push({
+      severity: "warning",
+      message: "no `pull_request: types: [...]` line found — could not verify the trigger at all",
+    });
+  } else {
+    const types = m[1]
+      .split(",")
+      .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+      .filter(Boolean);
+    const extra = types.filter((t) => !ALLOWED_PR_TYPES.includes(t));
+    if (extra.includes("synchronize")) {
+      findings.push({
+        severity: "error",
+        message:
+          "`synchronize` is in `pull_request.types` — every push to an open PR will re-run the " +
+          "full suite and spend metered runner minutes. Remove it; a push is meant to spend " +
+          "nothing, and `@claudegrill suite` is the way to re-run on demand.",
+      });
+    } else if (extra.length) {
+      findings.push({
+        severity: "warning",
+        message: `pull_request type(s) not in the canonical template: ${extra.join(", ")} — confirm this is deliberate`,
+      });
+    }
+  }
+
+  // Forbidden outright — see the reusable workflow's own header on this.
+  if (/pull_request_target/.test(code)) {
+    findings.push({
+      severity: "error",
+      message:
+        "`pull_request_target` is present. It runs with this repo's secrets against fork-supplied " +
+        "code and must never replace `pull_request` here.",
+    });
+  }
+
+  return {
+    ok: true,
+    root,
+    path: `.github/workflows/${name}`,
+    clean: findings.length === 0,
+    findings,
+  };
+}
+
 // ---------------------------------------------------------------------- main
 
 switch (action) {
@@ -605,6 +701,13 @@ switch (action) {
     const r = writeWorkflow();
     out(r);
     if (!r.ok) process.exit(2);
+    break;
+  }
+  case "check-workflow": {
+    const r = checkWorkflow();
+    out(r);
+    if (!r.ok) process.exit(2);
+    if (r.findings.some((f) => f.severity === "error")) process.exit(1);
     break;
   }
 }
