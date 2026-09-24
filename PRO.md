@@ -36,6 +36,14 @@ Where a row is incomplete it says so; nothing here is inferred.
 | **AllCoach Pro** | `themegrill/allcoach-pro` | **ThemeGrill SDK** | `https://api.themegrill.com/licenses/`, item_id `58` | `allcoach_pro_license` | `allcoach_pro_license_status` | `LicenseManager::activate()` — `src/Pro/Core/License/LicenseManager.php:39` → `ThemeGrillSDK\Modules\Licenser::activate()` at `vendor/themegrill/themegrill-sdk/src/Modules/Licenser.php:94` |
 | **Magazine Blocks Pro** | `themegrill/magazine-blocks-pro` | **Freemius** | id `15516`, slug `magazine-blocks-pro`, `pk_887f5d98b26b4d26ee2253d83ee8e` | Freemius `fs_accounts` | Freemius `fs_accounts` | `magazine_blocks_pro_freemius()` — `magazine-blocks-pro.php:132`, wrapping `fs_dynamic_init()` at `:142` |
 | **BlockArt Blocks Pro** | `themegrill/blockart-blocks-pro` | **Freemius** | id `15515`, slug `blockart-blocks-pro`, `pk_4acfc44f72d6c0d7bc6abd186ae44` | Freemius `fs_accounts` | Freemius `fs_accounts` | `blockart_pro_freemius()` — `blockart-pro.php:132`, wrapping `fs_dynamic_init()` at `:142` |
+| **Spacious Pro** | `themegrill/spacious-pro` | **Freemius** | id `4217`, slug `spacious`, `pk_38fe5c4b7d4937b449e2899a2f8fd` | Freemius `fs_accounts` | Freemius `fs_accounts` | `FS_ThemeGrill::init()` — `functions.php:362`, wrapping `fs_dynamic_init()` at `functions.php:317` |
+| **Accelerate Pro** | `themegrill/accelerate-pro` | **Freemius** | id `4215`, slug `accelerate`, `pk_6a52bfb38f6bc816da4643b9ebbdc` | Freemius `fs_accounts` | Freemius `fs_accounts` | `FS_ThemeGrill::init()` — `functions.php:330`, wrapping `fs_dynamic_init()` at `functions.php:285` |
+| **Flash Pro** | `themegrill/flash-pro` | **Freemius** | id `4223`, slug `flash`, `pk_9b5963cad22158476546c3b6b9d74` | Freemius `fs_accounts` | Freemius `fs_accounts` | `FS_ThemeGrill::init()` — `functions.php:738`, wrapping `fs_dynamic_init()` at `functions.php:693` |
+| **Radiate Pro** | `themegrill/radiate-pro` | **Freemius** | id `4214`, slug `radiate`, `pk_0f1958ed39075ce23559b1c1b48dc` | Freemius `fs_accounts` | Freemius `fs_accounts` | `FS_ThemeGrill::init()` — `functions.php:539`, wrapping `fs_dynamic_init()` at `functions.php:494` |
+| **Cenote Pro** | `themegrill/cenote-pro` | **Freemius** | id `4224`, slug `cenote`, `pk_b9adb96523e7353dd99ce5f0beedb` | Freemius `fs_accounts` | Freemius `fs_accounts` | `FS_ThemeGrill::init()` — `functions.php:589`, wrapping `fs_dynamic_init()` at `functions.php:544` |
+| **Himalayas Pro** | `themegrill/himalayas-pro` | **Freemius** | id `4210`, slug `himalayas`, `pk_915eca4fa2c0282a4959df24c9207` | Freemius `fs_accounts` | Freemius `fs_accounts` | `FS_ThemeGrill::init()` — `functions.php:243`, wrapping `fs_dynamic_init()` at `functions.php:200` |
+| **Ample Pro** | `themegrill/ample-pro` | **Freemius** | id `4213`, slug `ample`, `pk_8cdee14ea6e7fc9263af2ec1a0014` | Freemius `fs_accounts` | Freemius `fs_accounts` | `FS_ThemeGrill::init()` — `functions.php:261`, wrapping `fs_dynamic_init()` at `functions.php:218` |
+| **eStore Pro** | `themegrill/estore-pro` | **Freemius** | id `4220`, slug `estore`, `pk_4254cbdc5e2a6d66e77a0525284b9` | Freemius `fs_accounts` | Freemius `fs_accounts` | `FS_ThemeGrill::init()` — `functions.php:558`, wrapping `fs_dynamic_init()` at `functions.php:513` |
 
 ### How each product gates a premium feature
 
@@ -50,6 +58,14 @@ This differs per product and is what a `@pro` spec ultimately asserts against.
 | AllCoach Pro | `get_option('allcoach_pro_license_status') === 'valid'` |
 | Magazine Blocks Pro | `magazine_blocks_pro_freemius()->can_use_premium_code()` |
 | BlockArt Blocks Pro | `blockart_pro_freemius()->can_use_premium_code()` |
+| Spacious Pro | `FS_ThemeGrill::freemius()->can_use_premium_code()` |
+| Accelerate Pro | `FS_ThemeGrill::freemius()->can_use_premium_code()` |
+| Flash Pro | `FS_ThemeGrill::freemius()->can_use_premium_code()` |
+| Radiate Pro | `FS_ThemeGrill::freemius()->can_use_premium_code()` |
+| Cenote Pro | `FS_ThemeGrill::freemius()->can_use_premium_code()` |
+| Himalayas Pro | `FS_ThemeGrill::freemius()->can_use_premium_code()` |
+| Ample Pro | `FS_ThemeGrill::freemius()->can_use_premium_code()` |
+| eStore Pro | `FS_ThemeGrill::freemius()->can_use_premium_code()` |
 
 Those last two are a **fourth expression shape** — a plain global function, not
 the `Class::method` accessor ColorMag and Zakra publish. Both mu-plugins match
