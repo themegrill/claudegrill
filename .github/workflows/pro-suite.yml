@@ -45,6 +45,13 @@ name: QA suite — pro (reusable)
 # opening the billing page. If the allowance starts to bind, move `pro` to
 # merge-to-main only; `free-with-pro` is the one to keep on every PR, because
 # "installing pro breaks a free feature" is the bug class nothing else catches.
+#
+# A PR that changes pro source with no regression spec is refused in `gate`,
+# before any of `run`'s three legs checks out the free product, installs
+# anything, or boots a licensed WordPress. See "Require a regression spec
+# before spending runner minutes" below — the same policy as suite.yml's gate
+# of the same name, just here it skips the whole matrix in one failure instead
+# of three checkouts finding it independently.
 
 on:
   workflow_call:
@@ -278,6 +285,104 @@ jobs:
             echo "head_sha=$(jq -r .headRefOid pr.json)"
             echo "base_ref=$(jq -r .baseRefName pr.json)"
           } >> "$GITHUB_OUTPUT"
+
+      # THE FIRST COST GATE, ahead of even the licence check below and cheaper
+      # than every one of the three matrix legs it can now skip in one shot —
+      # this is the `gate` job precisely so that a single failure here means
+      # `run`'s `needs: gate` skips the WHOLE matrix, rather than each leg
+      # discovering the same thing after its own checkout, Composer, pnpm,
+      # Chromium and licensed WordPress boot. Same reasoning and the same
+      # no-escape-valve policy as suite.yml's step of the same name — see the
+      # long comment there for why this used to be a nudge and no longer is.
+      #
+      # Scoped to the PRO checkout only, because the PR under test lives in
+      # the pro repo (this workflow's caller) — the free product is a
+      # different repository entirely and not part of "this PR"'s diff.
+      # `fetch-depth: 0`, no `submodules: recursive`: this only needs the git
+      # history to diff, never runs the code.
+      - name: Check out the pro product for the spec check
+        if: steps.pr.outputs.number != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'issue_comment' && steps.pr.outputs.head_sha || '' }}
+          fetch-depth: 0
+          path: pro
+
+      - name: Require a regression spec before spending runner minutes
+        id: specgate
+        if: steps.pr.outputs.number != ''
+        working-directory: pro
+        run: |
+          set -o pipefail
+
+          if [ ! -f .themegrill-qa/suite.json ]; then
+            # No suite on this pro product yet — nothing to guard.
+            echo "required=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          SPEC_DIR="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(".themegrill-qa/suite.json","utf8")).spec_dir||"tests/e2e/specs")')"
+          BASE="origin/${{ steps.pr.outputs.base_ref }}"
+          git fetch origin "${{ steps.pr.outputs.base_ref }}" --depth=1 -q || true
+          FILES="$(git diff --name-only "$BASE"...HEAD || true)"
+
+          SRC="$(printf '%s\n' "$FILES" | grep -E '\.(php|js|jsx|ts|tsx|scss|css)$' | grep -vE "^($SPEC_DIR/|tests?/)" || true)"
+          SPECS="$(printf '%s\n' "$FILES" | grep -E "^$SPEC_DIR/|\.spec\.[cm]?[jt]sx?$" || true)"
+
+          if [ -n "$SRC" ] && [ -z "$SPECS" ]; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+            printf '%s\n' "$SRC" > ../spec-gate-src.txt
+          else
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # One dedicated marker, edited in place across repeated failing runs, and
+      # deliberately distinct from every `<!-- claudegrill-pro-<mode> -->`
+      # result comment below — this fires before any mode is even chosen.
+      - name: Post the "no spec" result on the PR
+        if: steps.specgate.outputs.required == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.pr.outputs.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          {
+            echo "<!-- claudegrill-pro-gate -->"
+            echo "### Pro QA suite — refused, no regression spec"
+            echo ""
+            echo "This PR changes pro source but adds no spec, so every pro job (pro,"
+            echo "free-with-pro, unlicensed) was refused before checking out the free"
+            echo "product, installing anything, or booting a licensed WordPress — running"
+            echo "all three just to report the same thing at the end costs runner minutes"
+            echo "for nothing. Run \`/claudegrill:verify-fix\` locally and let \`write-spec\`"
+            echo "add the guard to this branch, then push again."
+            echo ""
+            echo "<details><summary>Source files changed with no matching spec</summary>"
+            echo ""
+            echo '```'
+            cat spec-gate-src.txt
+            echo '```'
+            echo ""
+            echo "</details>"
+          } > body.md
+
+          ID="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                 --jq '[.[] | select(.body | contains("<!-- claudegrill-pro-gate -->"))][0].id // empty')"
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@body.md >/dev/null
+          else
+            gh pr comment "$PR" --repo "$REPO" --body-file body.md
+          fi
+
+      # Failing THIS job is what matters: `run` needs `gate`, and a needed job
+      # that fails skips its dependents by default — no `modes=[]` bookkeeping
+      # required, unlike the licence-missing case below, which is a legitimate
+      # skip rather than a refusal and must not turn the check red.
+      - name: Fail — no regression spec
+        if: steps.specgate.outputs.required == 'true'
+        run: |
+          echo "::error::This PR changes pro source but adds no regression spec — refusing before spending runner minutes. See the PR comment."
+          exit 1
 
       # ONE secret decides everything here: can we licence what we checked out?
       #
