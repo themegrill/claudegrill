@@ -40,6 +40,27 @@ const qaHome = resolveQaHome(here);
 const stateFile = path.join(os.tmpdir(), "claudegrill-playground.json");
 const logFile = path.join(os.tmpdir(), "claudegrill-playground.log");
 
+// Pinned, not `@latest`. Two independent reasons, the same lesson this repo
+// already paid for once with `@playwright/test` (a browser cache full of the
+// wrong revision reads as an empty one — see CLAUDE.md):
+//
+//   1. `@latest` means CI silently starts running a different Playground
+//      version the day a new one ships, with no changelog review and no
+//      diff to point at when something that used to boot stops booting.
+//   2. It is what makes caching this download possible at all. `npx --yes
+//      <pkg>@latest` re-resolves the dist-tag every invocation, so a runner
+//      cache keyed on anything stays a guess about whether the resolved
+//      version actually matches what got cached. Pinned, the version IS the
+//      cache key (see the workflows' "Cache Playground's own downloads"
+//      step, keyed on this file's own hash) and a cold runner reuses a warm
+//      one exactly, every time.
+//
+// `@php-wasm/*`, which this package bundles PHP.wasm binaries for every
+// supported PHP version through, is ~300MB on its own — confirmed by
+// inspecting a real `npx` install on disk, not estimated. Bump this
+// deliberately, after checking the new version still boots correctly.
+const PLAYGROUND_CLI_VERSION = "3.1.53";
+
 // ------------------------------------------------------------------ arguments
 
 const argv = process.argv.slice(2);
@@ -561,7 +582,7 @@ if (opt.engine === "playground") {
   const contentDir = info.type === "theme" ? "themes" : "plugins";
   const args = [
     "--yes",
-    "@wp-playground/cli@latest",
+    `@wp-playground/cli@${PLAYGROUND_CLI_VERSION}`,
     "start",
     `--path=${info.root}`,
     "--no-auto-mount",
