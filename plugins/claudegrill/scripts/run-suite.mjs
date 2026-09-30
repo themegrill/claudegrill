@@ -81,14 +81,14 @@ for (let i = 0; i < argv.length; i++) {
     // one area, and running one area per invocation would boot and tear down
     // the runner N times for no reason.
     opt.area = (opt.area ?? []).concat(
-      argv[++i].split(",").map((x) => x.trim()).filter(Boolean),
+      argv[++i].split(",").map((x) => x.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean),
     );
   }
   else if (a === "--spec") {
     // Comma-separated repo-relative spec paths, e.g.
     // `--spec tests/e2e/specs/header/color-switcher.spec.ts,tests/e2e/specs/…`.
     opt.spec = (opt.spec ?? []).concat(
-      argv[++i].split(",").map((x) => x.trim()).filter(Boolean),
+      argv[++i].split(",").map((x) => x.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean),
     );
   }
   else if (a === "--base-url") opt.baseUrl = argv[++i];

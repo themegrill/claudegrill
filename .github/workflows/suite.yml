@@ -612,7 +612,7 @@ jobs:
           SCOPE_ARGS=""
           # The scope gate already resolved this, for pull requests and for
           # everything else. `scope: full` still means the whole tier.
-          SCOPE_ARGS="--area '${{ steps.scope.outputs.areas }}'"
+          SCOPE_ARGS="--area ${{ steps.scope.outputs.areas }}"
           if [ -z "${{ steps.scope.outputs.areas }}" ] || [ "${{ inputs.scope }}" = "full" ]; then
             SCOPE_ARGS=""
           fi
@@ -627,7 +627,7 @@ jobs:
           # on a runner that cannot support it.
           if [ "${{ inputs.scope }}" = "specs" ] && [ "${{ steps.scope.outputs.mode }}" = "specs" ] \
              && [ -n "${{ steps.scope.outputs.specs }}" ]; then
-            SCOPE_ARGS="--spec '${{ steps.scope.outputs.specs }}'"
+            SCOPE_ARGS="--spec ${{ steps.scope.outputs.specs }}"
           fi
 
           node ../claudegrill/plugins/claudegrill/scripts/run-suite.mjs \
