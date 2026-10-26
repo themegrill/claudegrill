@@ -954,6 +954,13 @@ jobs:
           AREA_ARGS="--area '${{ steps.scope.outputs.areas }}'"
           if [ -z "${{ steps.scope.outputs.areas }}" ]; then AREA_ARGS=""; fi
 
+          # The area filter selects by tag, so a spec this branch added or
+          # changed that carries no matching area tag would be skipped while the
+          # PR still got a verdict. Run the changed specs as well.
+          if [ -n "$AREA_ARGS" ] && [ -n "${{ steps.scope.outputs.specs }}" ]; then
+            AREA_ARGS="$AREA_ARGS --include-spec '${{ steps.scope.outputs.specs }}'"
+          fi
+
           # `scope: specs` replaces the area filter with the spec files this
           # branch changed — and only when pr-scope.mjs judged that safe, which
           # it does not when the diff touched a fixture or carries no spec at

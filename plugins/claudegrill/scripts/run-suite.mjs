@@ -16,6 +16,8 @@
  *   node scripts/run-suite.mjs --tier fresh --base-url http://127.0.0.1:9400
  *   node scripts/run-suite.mjs --tier fresh --boot playground --install
  *   node scripts/run-suite.mjs --tier all --area header
+ *   node scripts/run-suite.mjs --tier fresh --area admin --include-spec tests/e2e/specs/x.spec.ts
+ *                                            # the admin area, plus a spec with no area tag
  *   node scripts/run-suite.mjs --tier fresh --pro --boot   # @pro + free, licensed
  *   node scripts/run-suite.mjs --tier fresh --pro --pro-specs none --boot
  *                                            # free specs, in the pro environment
@@ -88,6 +90,14 @@ for (let i = 0; i < argv.length; i++) {
     // Comma-separated repo-relative spec paths, e.g.
     // `--spec tests/e2e/specs/header/color-switcher.spec.ts,tests/e2e/specs/…`.
     opt.spec = (opt.spec ?? []).concat(
+      argv[++i].split(",").map((x) => x.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean),
+    );
+  }
+  else if (a === "--include-spec") {
+    // Spec files to run IN ADDITION to the area filter, not inside it. `--spec`
+    // narrows (a file AND the area tag); this widens (the area tag OR a file),
+    // so a spec the branch added still runs when it carries no area tag.
+    opt.includeSpec = (opt.includeSpec ?? []).concat(
       argv[++i].split(",").map((x) => x.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean),
     );
   }
@@ -807,12 +817,18 @@ function buildFilters() {
   // Several areas are an OR: a diff touching the header and the customizer
   // wants both areas' specs, not their (empty) intersection.
   const areaTags = (opt.area ?? []).map((a) => (a.startsWith("@") ? a : `@${a}`));
+  // Playwright's --grep also matches the spec's file path (relative to its
+  // testDir), so a changed spec's basename is an alternative to the area tag.
+  // The basename is used rather than the repo-relative path because the path
+  // Playwright matches against starts at testDir — verified on 1.63.
+  const includeFiles = opt.includeSpec ? [...new Set(opt.includeSpec.map((f) => path.basename(f)))] : [];
+  const areaAlts = [...areaTags, ...includeFiles];
   const areaAlt =
     areaTags.length === 0
       ? null
-      : areaTags.length === 1
-        ? escapeRe(areaTags[0])
-        : `(?:${areaTags.map(escapeRe).join("|")})`;
+      : areaAlts.length === 1
+        ? escapeRe(areaAlts[0])
+        : `(?:${areaAlts.map(escapeRe).join("|")})`;
   const args = [];
 
   if (opt.grep) {
