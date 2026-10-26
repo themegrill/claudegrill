@@ -152,9 +152,16 @@ jobs:
     # job — $0, no runner started — instead of a full run, even if the caller's
     # own trigger is wrong. Fix the caller too (`check-workflow` below finds
     # this without waiting for a bill), but do not rely on it alone.
+    #
+    # A `repo-sync/*` branch is the bot PR that copies files from the free repo
+    # into a pro repo. The code in it was already checked on the free PR, and a
+    # bot cannot add the spec this gate asks for, so running here only posts a
+    # "refused" or "BROKEN" comment nobody can act on. A person can still ask
+    # for a run on one with `@claudegrill suite`.
     if: >-
-      (github.event_name != 'pull_request' ||
-       contains(fromJSON('["opened","reopened","ready_for_review"]'), github.event.action)) &&
+      (github.event_name != 'pull_request' || (
+       contains(fromJSON('["opened","reopened","ready_for_review"]'), github.event.action) &&
+       !startsWith(github.event.pull_request.head.ref, 'repo-sync/'))) &&
       (github.event_name != 'issue_comment' || (
       github.event.issue.pull_request != null &&
       startsWith(github.event.comment.body, '@claudegrill suite') &&

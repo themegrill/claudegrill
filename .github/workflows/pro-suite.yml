@@ -221,9 +221,16 @@ jobs:
     # a single re-added trigger type. Allow-listing here means that drift costs
     # one skipped `gate` job — $0 — regardless of what any caller's own `on:`
     # block says, because `run` needs `gate` and inherits the skip.
+    #
+    # A `repo-sync/*` branch is the bot PR that copies files from the free repo
+    # into a pro repo. The code in it was already checked on the free PR, and a
+    # bot cannot add the spec this gate asks for, so running here only posts a
+    # "refused" or "BROKEN" comment nobody can act on. A person can still ask
+    # for a run on one with `@claudegrill suite`.
     if: >-
-      (github.event_name != 'pull_request' ||
-       contains(fromJSON('["opened","reopened","ready_for_review"]'), github.event.action)) &&
+      (github.event_name != 'pull_request' || (
+       contains(fromJSON('["opened","reopened","ready_for_review"]'), github.event.action) &&
+       !startsWith(github.event.pull_request.head.ref, 'repo-sync/'))) &&
       (github.event_name != 'issue_comment' || (
       github.event.issue.pull_request != null &&
       startsWith(github.event.comment.body, '@claudegrill suite') &&
