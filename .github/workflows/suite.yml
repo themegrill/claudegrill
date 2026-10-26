@@ -56,6 +56,16 @@ on:
         required: false
         type: string
         default: "main"
+      skip_branch_prefix:
+        description: >
+          A pull request from a branch starting with this is not gated or run.
+          The default is the bot PR that syncs files from the free repo into a
+          pro repo: the code was already checked on the free PR, and a bot cannot
+          add the spec the gate asks for. Empty turns the skip off. A person can
+          still ask for a run on such a PR with `@claudegrill suite`.
+        required: false
+        type: string
+        default: "repo-sync/"
       node_version:
         required: false
         type: string
@@ -153,8 +163,10 @@ jobs:
     # own trigger is wrong. Fix the caller too (`check-workflow` below finds
     # this without waiting for a bill), but do not rely on it alone.
     if: >-
-      (github.event_name != 'pull_request' ||
-       contains(fromJSON('["opened","reopened","ready_for_review"]'), github.event.action)) &&
+      (github.event_name != 'pull_request' || (
+       contains(fromJSON('["opened","reopened","ready_for_review"]'), github.event.action) &&
+       (inputs.skip_branch_prefix == '' ||
+        !startsWith(github.event.pull_request.head.ref, inputs.skip_branch_prefix)))) &&
       (github.event_name != 'issue_comment' || (
       github.event.issue.pull_request != null &&
       startsWith(github.event.comment.body, '@claudegrill suite') &&
