@@ -190,6 +190,14 @@ Tags are lowercase, hyphenated, and match the knowledge file's critical-flow
 names exactly. A tag that matches nothing in the knowledge file is reported as
 unrecognised rather than silently accepted.
 
+The tag is optional for the suite to run, but not for a PR to be scoped: a PR
+runs the areas its diff maps to, and a test with no area tag is never in any of
+them. So the spec gate (`check-specs.mjs`, run in `suite.yml` and `pro-suite.yml`
+before anything boots) refuses a PR whose changed specs contain a test with no
+area tag, on the test's title or on a `test.describe` around it. It only looks
+at the files the PR changed, so an older untagged spec never blocks an unrelated
+PR.
+
 ---
 
 ## 3. Spec annotation
