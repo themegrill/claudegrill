@@ -139,6 +139,14 @@ Four rules, and the third is the one people miss:
   the state every customer passes through between installing a pro product and
   entering their key — and the one nobody develops in.
 
+A spec that exists only in the pro repository must therefore be tagged `@pro` (or
+`@unlicensed`). The `pro` job runs `@pro` specs; the `free-with-pro` job runs the
+FREE repository's suite, where a pro-only file does not exist. A pro-only spec
+tagged just `@fresh` falls between the two and no job ever runs it. The pro gate
+in `pro-suite.yml` asks the free repository which changed specs it does not have,
+and refuses the PR if one of those is not tagged `@pro`. If the free repository
+cannot be reached, the file is left unchecked rather than refused.
+
 ### `area_paths` — which specs a diff could have broken
 
 Optional, and only needed if you want CI to narrow a PR to the areas it touches.

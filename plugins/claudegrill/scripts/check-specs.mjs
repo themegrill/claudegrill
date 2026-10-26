@@ -8,10 +8,19 @@
  * verdict — as if its own fix had been tested. This is the cheap, deterministic
  * check that says so BEFORE a WordPress is booted.
  *
- * The rule: every test carries an `@area` tag in its title, or in the title of a
- * `test.describe` around it (CONVENTIONS.md, SUITE.md §3). Those titles are what
- * `--grep` matches; a docblock `@area` alone selects nothing. `fixme` and `skip`
- * tests are ignored — they never run.
+ * Two rules, both about selection and neither about taste:
+ *
+ *   1. Every test carries an `@area` tag in its title (CONVENTIONS.md, SUITE.md
+ *      §3). The title is what `--grep` matches; a docblock `@area` alone does not
+ *      select anything. `fixme` and `skip` tests are ignored — they never run.
+ *
+ *   2. A spec that exists ONLY in the pro repo must be tagged `@pro` (or
+ *      `@unlicensed`). The two pro jobs split the matrix: one runs the pro
+ *      repo's `@pro` specs, the other runs the FREE repo's suite with pro
+ *      installed. A pro-only spec tagged just `@fresh` is skipped by the first
+ *      and not present in the second, so no job ever runs it. The caller says
+ *      which files are pro-only (`--pro-only`); this script cannot know, because
+ *      that takes a look at the free repo.
  *
  * Deterministic, so a script and not a skill (invariant 1). One JSON line on
  * stdout and nothing else (invariant 2's style); exit 0 whether or not the check
@@ -19,7 +28,7 @@
  *
  * Usage
  *   node scripts/check-specs.mjs --files a.spec.ts,b.spec.ts
- *   node scripts/check-specs.mjs --files a.spec.ts --product-dir product
+ *   node scripts/check-specs.mjs --files a.spec.ts --pro-only a.spec.ts --product-dir product
  */
 
 import fs from "node:fs";
@@ -28,16 +37,19 @@ import process from "node:process";
 
 import {
   areaTagsOf,
+  isProTest,
+  isUnlicensedTest,
   parseSpecFile,
   tagsOf,
 } from "./lib/spec-parse.mjs";
 
-const opt = { files: [], productDir: process.cwd() };
+const opt = { files: [], proOnly: [], productDir: process.cwd() };
 const list = (v) => v.split(",").map((x) => x.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean);
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === "--files") opt.files = list(argv[++i] ?? "");
+  else if (a === "--pro-only") opt.proOnly = list(argv[++i] ?? "");
   else if (a === "--product-dir") opt.productDir = path.resolve(argv[++i] ?? ".");
   else {
     console.error(`unknown flag: ${a}`);
@@ -98,7 +110,9 @@ function describeScopes(text) {
   return out;
 }
 
+const proOnly = new Set(opt.proOnly);
 const noArea = [];
+const proOnlyUntagged = [];
 let checked = 0;
 
 for (const rel of opt.files) {
@@ -119,13 +133,15 @@ for (const rel of opt.files) {
     const inherited = scopes.filter((d) => d.from <= t.line && t.line <= d.to).flatMap((d) => d.tags);
     const tags = [...t.tags, ...inherited];
     if (areaTagsOf(tags, tiers).length === 0) noArea.push(where);
+    if (proOnly.has(rel) && !isProTest(tags) && !isUnlicensedTest(tags)) proOnlyUntagged.push(where);
   }
 }
 
 console.log(
   JSON.stringify({
-    ok: noArea.length === 0,
+    ok: noArea.length === 0 && proOnlyUntagged.length === 0,
     checked,
     no_area: noArea,
+    pro_only_untagged: proOnlyUntagged,
   }),
 );
