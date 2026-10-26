@@ -239,6 +239,34 @@ function plainProblem(f) {
 // -------------------------------------------------------------------- verdict
 
 /**
+ * Why a pro job can select nothing even though the PR did add a spec.
+ *
+ * The two pro jobs split the matrix between them. `only` runs the pro repo's
+ * specs tagged `@pro`; `none` runs the FREE repo's suite with pro installed. A
+ * spec that lives only in the pro repo and is tagged `@fresh` alone falls in the
+ * gap: `only` skips it for the missing tag and `none` never sees the file. The
+ * bare "0 tests" message gave no hint of that.
+ */
+function proSelectionHint() {
+  if (!r.pro) return [];
+  if (r.pro_specs === "only") {
+    return [
+      "",
+      "This job runs only specs tagged `@pro`. A spec for pro-only code that is",
+      "tagged just `@fresh` is skipped here.",
+    ];
+  }
+  if (r.pro_specs === "none") {
+    return [
+      "",
+      "This job runs the free product's specs with pro installed. A spec that",
+      "exists only in the pro repository is not part of it.",
+    ];
+  }
+  return [];
+}
+
+/**
  * The headline, and the states that are not simply pass/fail.
  *
  * Each of these existed in the workflow already and each is load-bearing — in
@@ -263,6 +291,7 @@ function verdict() {
         "",
         "Likely causes: the grep matched nothing, `spec_dir` is wrong, or the",
         "install left no runner. The step log says which.",
+        ...proSelectionHint(),
       ],
     };
   }
