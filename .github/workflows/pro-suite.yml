@@ -414,7 +414,8 @@ jobs:
         with:
           repository: ThemeGrill/claudegrill
           ref: ${{ inputs.qa_ref }}
-          token: ${{ secrets.QA_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          # Public repo: a caller's stale QA_REPO_TOKEN would fail this checkout for no reason.
+          token: ${{ github.token }}
           sparse-checkout: plugins/claudegrill/scripts
           path: claudegrill-gate
 
