@@ -1079,13 +1079,18 @@ jobs:
             --max-failures ${{ inputs.max_failures }} \
             --base-url "$TGQA_BASE_URL" > ../suite.json
           code=$?
-          # A pro diff's scope can select no FREE spec; that is nothing to run, not a broken harness.
-          # Read run-suite's own `ran_nothing` field rather than its message text, and stamp
-          # the result so the annotation and the report treat it as nothing-to-run too,
-          # instead of a broken harness beside a green check.
-          if [ "${{ matrix.mode }}" = "free-with-pro" ] && [ -n "$AREA_ARGS" ] && [ "$code" = "2" ] \
+          # A diff's scope can select nothing in THIS job: a pro diff that touches an area
+          # with no `@pro` spec empties the `pro` job, and one that touches only pro specs
+          # empties `free-with-pro`. Each job runs a different slice of the suite, so the
+          # slices are rarely both non-empty. That is nothing to run, not a broken harness.
+          # `-n "$AREA_ARGS"` is what makes it a scope miss rather than a dead suite: an
+          # unscoped run (and `unlicensed`, which takes no scope) that runs 0 tests is
+          # still exit 2. Read run-suite's own `ran_nothing` field rather than its message
+          # text, and stamp the result so the annotation and the report treat it as
+          # nothing-to-run too, instead of a broken harness beside a green check.
+          if [ -n "$AREA_ARGS" ] && [ "$code" = "2" ] \
              && node -e 'process.exit(JSON.parse(require("fs").readFileSync("../suite.json","utf8")).ran_nothing === true ? 0 : 1)' 2>/dev/null; then
-            echo "::notice::free-with-pro: this PR's scope matches no free spec, so nothing ran"
+            echo "::notice::${{ matrix.mode }}: this PR's scope matches no spec this job runs, so nothing ran"
             node -e 'const fs = require("fs"), p = "../suite.json"; const s = JSON.parse(fs.readFileSync(p, "utf8")); s.scope_matched_nothing = true; fs.writeFileSync(p, JSON.stringify(s) + "\n")'
             code=0
           fi

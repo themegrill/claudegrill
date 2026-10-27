@@ -253,14 +253,15 @@ function verdict() {
       lines: ["This product has no `.themegrill-qa/suite.json`, so nothing ran."],
     };
   }
-  // Set by pro-suite.yml when a pro diff's scope selected no free spec. Ahead of
-  // `ran_nothing`, which this result also carries and which would call it broken.
+  // Set by pro-suite.yml when a diff's scope selected nothing in the job that ran.
+  // Ahead of `ran_nothing`, which this result also carries and which would call it
+  // broken.
   if (r.scope_matched_nothing) {
     return {
       state: "nothing-to-run",
       heading: "QA suite — nothing to run",
       lines: [
-        "This PR's scope matches no spec in the free suite, so no free spec ran.",
+        "This PR's scope matches no spec this job runs, so no spec ran here.",
         "That is not a statement about the change being correct.",
       ],
     };
