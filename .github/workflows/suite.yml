@@ -609,12 +609,17 @@ jobs:
           # SAFE by construction: any changed source file that matches no
           # area_paths pattern falls back to the full tier, so an unmapped
           # change costs runner time rather than coverage.
-          SCOPE_ARGS=""
+          #
+          # A bash ARRAY, not a string: `SCOPE_ARGS="--area '$X'"` followed by
+          # an unquoted `$SCOPE_ARGS` does NOT re-parse those embedded quotes
+          # as shell syntax — word-splitting just hands run-suite.mjs a value
+          # with literal quote characters glued onto it, matching nothing and
+          # silently running 0 tests (a harness failure, not a red suite).
+          SCOPE_ARGS=()
           # The scope gate already resolved this, for pull requests and for
           # everything else. `scope: full` still means the whole tier.
-          SCOPE_ARGS="--area ${{ steps.scope.outputs.areas }}"
-          if [ -z "${{ steps.scope.outputs.areas }}" ] || [ "${{ inputs.scope }}" = "full" ]; then
-            SCOPE_ARGS=""
+          if [ -n "${{ steps.scope.outputs.areas }}" ] && [ "${{ inputs.scope }}" != "full" ]; then
+            SCOPE_ARGS=(--area "${{ steps.scope.outputs.areas }}")
           fi
 
           # `scope: specs` REPLACES the area filter with the spec files this
@@ -627,11 +632,11 @@ jobs:
           # on a runner that cannot support it.
           if [ "${{ inputs.scope }}" = "specs" ] && [ "${{ steps.scope.outputs.mode }}" = "specs" ] \
              && [ -n "${{ steps.scope.outputs.specs }}" ]; then
-            SCOPE_ARGS="--spec ${{ steps.scope.outputs.specs }}"
+            SCOPE_ARGS=(--spec "${{ steps.scope.outputs.specs }}")
           fi
 
           node ../claudegrill/plugins/claudegrill/scripts/run-suite.mjs \
-            --tier fresh --json --full-results $SCOPE_ARGS \
+            --tier fresh --json --full-results "${SCOPE_ARGS[@]}" \
             --timeout-ms ${{ inputs.timeout_ms }} \
             --test-timeout-ms ${{ inputs.test_timeout_ms }} \
             --max-failures ${{ inputs.max_failures }} \
