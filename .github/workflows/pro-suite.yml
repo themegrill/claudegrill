@@ -1078,7 +1078,14 @@ jobs:
             --test-timeout-ms ${{ inputs.test_timeout_ms }} \
             --max-failures ${{ inputs.max_failures }} \
             --base-url "$TGQA_BASE_URL" > ../suite.json
-          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          code=$?
+          # A pro diff's scope can select no FREE spec; that is nothing to run, not a broken harness.
+          if [ "${{ matrix.mode }}" = "free-with-pro" ] && [ -n "$AREA_ARGS" ] && [ "$code" = "2" ] \
+             && grep -q '"reason":"the runner executed 0 tests"' ../suite.json; then
+            echo "::notice::free-with-pro: this PR's scope matches no free spec, so nothing ran"
+            code=0
+          fi
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
           cat ../suite.json
 
       - name: Annotate failures onto the PR
