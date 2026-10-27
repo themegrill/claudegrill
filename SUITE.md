@@ -60,6 +60,7 @@ that as a valid state rather than an error.
 | `json_report` | yes | Where the JSON reporter writes, repo-relative. |
 | `package_manager` | no | Inferred from the lockfile. |
 | `install` | no | Skipped entirely when absent; `--install` then does nothing. |
+| `build` | no | Run by CI after `install` and before the site boots, so the suite tests assets built from the PR's source rather than whatever compiled output is committed. Absent means the committed build output is tested, as before. CI-only: `run-suite.mjs` does not run it. |
 | `config` | no | Inferred from a conventional `playwright.config.*` at the repo root. |
 | `spec_extension` | no | Defaults to `.spec.ts`, then `.spec.js`. |
 | `env` | no | See §4. Absent means only the generic `TGQA_*` names are exported. |
@@ -205,6 +206,32 @@ before anything boots) refuses a PR whose changed specs contain a test with no
 area tag, on the test's title or on a `test.describe` around it. It only looks
 at the files the PR changed, so an older untagged spec never blocks an unrelated
 PR.
+
+### Refusals are neutral, and can be waived
+
+A PR the spec gate refuses — a source change with no spec, or a changed spec with
+an unselectable test — **does not fail the job**. Nothing was tested and nothing
+broke, so a red check would read as a test failure. In `suite.yml` the job passes
+with a warning and a separate grey check run, "QA suite — refused" (this needs
+`checks: write`; without it the check run is skipped with a warning). In
+`pro-suite.yml` the `gate` job passes and reports no modes, so the whole matrix is
+skipped. Either way the PR comment says what to add.
+
+Some changes cannot have the spec the gate asks for — a Stripe or PayPal webhook,
+a cron handler, a subscription row with no order — because the harness cannot
+create that state. For those, **a member of the organisation applies the
+`qa-waived` label.** `gate-refusal.mjs` checks that the label is on the PR *and*
+who applied it: the person must be a member of the repository's organisation (or
+hold write access, which is the same standing read from an endpoint that works
+for private members), and a bot never counts. A waived PR runs the suite on
+whatever its diff maps to; only the requirement that the PR carry a spec is
+waived, never the tests themselves. The comment names who waived it.
+
+The label takes effect on the next run. A caller that lists `labeled` in its
+`pull_request.types` (the shipped templates do) re-runs when `qa-waived` is
+applied, and `@claudegrill suite` does the same for any caller. The reusable
+workflows let only `qa-waived` through on `labeled`, so every other label is a
+skipped job and costs nothing.
 
 ---
 

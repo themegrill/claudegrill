@@ -39,8 +39,10 @@ name: QA suite
 
 on:
   pull_request:
-    # No `synchronize`: a push does not spend runner minutes.
-    types: [opened, reopened, ready_for_review]
+    # No `synchronize`: a push does not spend runner minutes. `labeled` is here
+    # for the `qa-waived` label only; the reusable workflow skips every other
+    # label for free.
+    types: [opened, reopened, ready_for_review, labeled]
   issue_comment:
     types: [created]
   workflow_dispatch:

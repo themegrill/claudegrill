@@ -233,7 +233,8 @@ jobs:
     # block says, because `run` needs `gate` and inherits the skip.
     if: >-
       (github.event_name != 'pull_request' || (
-       contains(fromJSON('["opened","reopened","ready_for_review"]'), github.event.action) &&
+       (contains(fromJSON('["opened","reopened","ready_for_review"]'), github.event.action) ||
+        (github.event.action == 'labeled' && github.event.label.name == 'qa-waived')) &&
        (inputs.skip_branch_prefix == '' ||
         !startsWith(github.event.pull_request.head.ref, inputs.skip_branch_prefix)))) &&
       (github.event_name != 'issue_comment' || (
@@ -246,7 +247,9 @@ jobs:
       contents: read
       pull-requests: write   # the 👀, and the refusal on a fork PR
     outputs:
-      modes: ${{ steps.check.outputs.modes }}
+      # A refusal reports no modes at all, so `run` is skipped (grey), not failed.
+      modes: ${{ steps.refusal.outputs.refused == 'true' && '[]' || steps.check.outputs.modes }}
+      refused: ${{ steps.refusal.outputs.refused }}
       number: ${{ steps.pr.outputs.number }}
       head_sha: ${{ steps.pr.outputs.head_sha }}
       base_ref: ${{ steps.pr.outputs.base_ref }}
@@ -304,8 +307,10 @@ jobs:
       # `run`'s `needs: gate` skips the WHOLE matrix, rather than each leg
       # discovering the same thing after its own checkout, Composer, pnpm,
       # Chromium and licensed WordPress boot. Same reasoning and the same
-      # no-escape-valve policy as suite.yml's step of the same name — see the
-      # long comment there for why this used to be a nudge and no longer is.
+      # policy as suite.yml's step of the same name — see the long comment there
+      # for why this used to be a nudge, and for the `qa-waived` label that is now
+      # its one escape valve. A refusal no longer fails this job: it reports
+      # `modes=[]`, which skips the whole matrix without turning anything red.
       #
       # Scoped to the PRO checkout only, because the PR under test lives in
       # the pro repo (this workflow's caller) — the free product is a
@@ -354,62 +359,17 @@ jobs:
             echo "has_specs=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # One dedicated marker, edited in place across repeated failing runs, and
-      # deliberately distinct from every `<!-- claudegrill-pro-<mode> -->`
-      # result comment below — this fires before any mode is even chosen.
-      - name: Post the "no spec" result on the PR
-        if: steps.specgate.outputs.required == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ steps.pr.outputs.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          {
-            echo "<!-- claudegrill-pro-gate -->"
-            echo "### Pro QA suite — refused, no regression spec"
-            echo ""
-            echo "This PR changes pro source but adds no spec, so every pro job (pro,"
-            echo "free-with-pro, unlicensed) was refused before checking out the free"
-            echo "product, installing anything, or booting a licensed WordPress — running"
-            echo "all three just to report the same thing at the end costs runner minutes"
-            echo "for nothing. Run \`/claudegrill:verify-fix\` locally and let \`write-spec\`"
-            echo "add the guard to this branch, then push again."
-            echo ""
-            echo "<details><summary>Source files changed with no matching spec</summary>"
-            echo ""
-            echo '```'
-            cat spec-gate-src.txt
-            echo '```'
-            echo ""
-            echo "</details>"
-          } > body.md
-
-          ID="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-                 --jq '[.[] | select(.body | contains("<!-- claudegrill-pro-gate -->"))][0].id // empty')"
-          if [ -n "$ID" ]; then
-            gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@body.md >/dev/null
-          else
-            gh pr comment "$PR" --repo "$REPO" --body-file body.md
-          fi
-
-      # Failing THIS job is what matters: `run` needs `gate`, and a needed job
-      # that fails skips its dependents by default — no `modes=[]` bookkeeping
-      # required, unlike the licence-missing case below, which is a legitimate
-      # skip rather than a refusal and must not turn the check red.
-      - name: Fail — no regression spec
-        if: steps.specgate.outputs.required == 'true'
-        run: |
-          echo "::error::This PR changes pro source but adds no regression spec — refusing before spending runner minutes. See the PR comment."
-          exit 1
-
       # Can the specs this PR changed be picked up at all? The suite selects tests
       # by tag, so a test missing the tag it is selected by never runs — and the PR
       # would still get a verdict, as if its own fix had been tested. Found HERE,
       # before anything is installed or booted, for the same reason as the gate
       # above. Only the files this PR changed are checked, so an old untagged spec
       # elsewhere never blocks an unrelated PR. Only the scripts are fetched.
-      - name: Check out the spec checker
-        if: steps.specgate.outputs.has_specs == 'true' && steps.specgate.outputs.required != 'true'
+      #
+      # Also fetched when the first gate fired, because the waiver check below is
+      # one of those scripts and runs for either gate.
+      - name: Check out the gate scripts
+        if: steps.specgate.outputs.has_specs == 'true' || steps.specgate.outputs.required == 'true'
         uses: actions/checkout@v4
         with:
           repository: ThemeGrill/claudegrill
@@ -450,8 +410,79 @@ jobs:
           OK="$(node -pe 'JSON.parse(require("fs").readFileSync("../spec-lint.json","utf8")).ok' 2>/dev/null || echo true)"
           echo "failed=$([ "$OK" = "true" ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
 
+      # Either gate can fire, and either can be waived. A PR that cannot have the
+      # spec the gate asks for — a Stripe or PayPal webhook, a cron handler, a
+      # subscription row with no order, none of which the harness can drive —
+      # carries the `qa-waived` label, applied by a member of the organisation.
+      # See suite.yml's step of the same name; this is the same mechanism, run
+      # once here so the whole matrix is skipped or released in one shot.
+      - name: Decide whether a refusal stands or is waived
+        id: refusal
+        if: steps.specgate.outputs.required == 'true' || steps.speclint.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.pr.outputs.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          TRIPPED=""
+          if [ "${{ steps.specgate.outputs.required }}" = "true" ]; then TRIPPED="spec"; fi
+          if [ "${{ steps.speclint.outputs.failed }}" = "true" ]; then TRIPPED="${TRIPPED:+$TRIPPED,}select"; fi
+
+          node claudegrill-gate/plugins/claudegrill/scripts/gate-refusal.mjs \
+            --repo "$REPO" --pr "$PR" --tripped "$TRIPPED" | tee gate-refusal.json
+
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("gate-refusal.json", "utf8"));
+            const out = process.env.GITHUB_OUTPUT, fs = require("fs");
+            fs.appendFileSync(out, `refused=${r.refused}\nwaived=${r.waived}\n`);
+            fs.appendFileSync(out, `actor=${r.actor ?? ""}\nwhy=${r.reason}\n`);
+          '
+
+      # One dedicated marker, edited in place across repeated failing runs, and
+      # deliberately distinct from every `<!-- claudegrill-pro-<mode> -->`
+      # result comment below — this fires before any mode is even chosen.
+      - name: Post the "no spec" result on the PR
+        if: steps.refusal.outputs.refused == 'true' && steps.specgate.outputs.required == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.pr.outputs.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          {
+            echo "<!-- claudegrill-pro-gate -->"
+            echo "### Pro QA suite — refused, no regression spec"
+            echo ""
+            echo "This PR changes pro source but adds no spec, so every pro job (pro,"
+            echo "free-with-pro, unlicensed) was refused before checking out the free"
+            echo "product, installing anything, or booting a licensed WordPress — running"
+            echo "all three just to report the same thing at the end costs runner minutes"
+            echo "for nothing. Run \`/claudegrill:verify-fix\` locally and let \`write-spec\`"
+            echo "add the guard to this branch, then push again."
+            echo ""
+            echo "If this change cannot have a spec — a payment webhook, cron, or"
+            echo "state the harness cannot create — a member of the organisation can"
+            echo "apply the \`qa-waived\` label. The pro jobs then run on what the diff"
+            echo "maps to, without the spec requirement."
+            echo ""
+            echo "<details><summary>Source files changed with no matching spec</summary>"
+            echo ""
+            echo '```'
+            cat spec-gate-src.txt
+            echo '```'
+            echo ""
+            echo "</details>"
+          } > body.md
+
+          ID="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                 --jq '[.[] | select(.body | contains("<!-- claudegrill-pro-gate -->"))][0].id // empty')"
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@body.md >/dev/null
+          else
+            gh pr comment "$PR" --repo "$REPO" --body-file body.md
+          fi
+
       - name: Post the "spec cannot be selected" result on the PR
-        if: steps.speclint.outputs.failed == 'true'
+        if: steps.refusal.outputs.refused == 'true' && steps.speclint.outputs.failed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ steps.pr.outputs.number }}
@@ -465,6 +496,7 @@ jobs:
             b += "The suite picks tests by tag, so a test missing the tag it is selected by never runs, and this PR would get a verdict that leaves it out. It was refused before booting WordPress.\n\n";
             if (j.no_area && j.no_area.length) b += "**No `@area` tag.** Add one that matches an area in `.themegrill-qa/knowledge.md`, on the test title or on its `test.describe`:\n\n" + rows(j.no_area) + "\n\n";
             if (j.pro_only_untagged && j.pro_only_untagged.length) b += "**Only in this pro repo, but not tagged `@pro`.** The `pro` job runs `@pro` specs and the other pro job runs the free repo suite, so no job would run these:\n\n" + rows(j.pro_only_untagged) + "\n\n";
+            b += "A member of the organisation can apply the `qa-waived` label to run the pro jobs anyway.\n";
             fs.writeFileSync("body.md", b);
           '
 
@@ -476,11 +508,52 @@ jobs:
             gh pr comment "$PR" --repo "$REPO" --body-file body.md
           fi
 
-      - name: Fail — a changed spec cannot be selected
-        if: steps.speclint.outputs.failed == 'true'
+      # Replaces a refusal comment left by an earlier run, and says who agreed.
+      - name: Say the refusal was waived
+        if: steps.refusal.outputs.waived == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.pr.outputs.number }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ steps.refusal.outputs.actor }}
         run: |
-          echo "::error::A spec this PR changes has tests the suite would never select — refusing before spending runner minutes. See the PR comment."
-          exit 1
+          {
+            echo "<!-- claudegrill-pro-gate -->"
+            echo "### Pro QA suite — spec requirement waived"
+            echo ""
+            echo "@$ACTOR applied \`qa-waived\`, so the missing-spec refusal does not stand."
+            echo "The pro jobs run on whatever this diff maps to; only the requirement"
+            echo "that the PR carry a spec is waived, not the tests."
+          } > body.md
+
+          ID="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                 --jq '[.[] | select(.body | contains("<!-- claudegrill-pro-gate -->"))][0].id // empty')"
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@body.md >/dev/null
+          else
+            gh pr comment "$PR" --repo "$REPO" --body-file body.md
+          fi
+          echo "::notice::spec requirement waived by @$ACTOR (qa-waived)"
+
+      # A refusal is not a failure: nothing was tested, and nothing broke. The
+      # `gate` job now passes and reports `modes=[]`, so `run` is SKIPPED — grey
+      # in the checks list, not red — and its `needs: gate` never sees a failure.
+      # The licence-missing case below skips the same way. No check run is
+      # created here: skipped already reads as "did not run", and that would
+      # need `checks: write` on a job that otherwise only comments.
+      - name: Record the refusal as neutral, not failed
+        if: steps.refusal.outputs.refused == 'true'
+        env:
+          WHY: ${{ steps.refusal.outputs.why }}
+        run: |
+          echo "::warning::Pro QA suite refused this PR — nothing was tested. See the PR comment."
+          {
+            echo "### Pro QA suite — refused, nothing was tested"
+            echo ""
+            echo "$WHY"
+            echo ""
+            echo "The pro jobs were skipped. See the PR comment for what to add, or have a member of the organisation apply the qa-waived label."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # ONE secret decides everything here: can we licence what we checked out?
       #
@@ -489,6 +562,7 @@ jobs:
       # is the one place pro QA can still say something true.
       - name: Which pro jobs can this run actually do?
         id: check
+        if: steps.refusal.outputs.refused != 'true'
         env:
           KEY: ${{ secrets.TGQA_LICENSE_KEY }}
         run: |
@@ -836,6 +910,24 @@ jobs:
           install=$(node -p 'require("./.themegrill-qa/suite.json").install || ""')
           if [ -n "$install" ]; then sh -c "$install"; fi
           "$pm" exec -- playwright install --with-deps chromium
+
+      # CI builds the product's assets rather than testing whatever compiled
+      # output happens to be committed — see suite.yml's step of the same name.
+      # Runs in the suite's own directory, so each repo's suite.json declares the
+      # build for the checkout it describes: `pro` builds pro, `free-with-pro`
+      # builds the free product. Before the boot, which mounts them live.
+      - name: Build the product's assets
+        if: steps.manifest.outputs.found == 'true'
+        working-directory: ${{ env.SUITE_DIR }}
+        run: |
+          set -euo pipefail
+          build=$(node -p 'require("./.themegrill-qa/suite.json").build || ""')
+          if [ -n "$build" ]; then
+            echo "building: $build"
+            sh -c "$build"
+          else
+            echo "no \`build\` in .themegrill-qa/suite.json — testing the committed build output"
+          fi
 
       # `--with-pro <slug>=<path>` because the pro checkout is at `pro/`, not at
       # a sibling named after the slug. The same class of bug as the mount fix in
@@ -1232,6 +1324,7 @@ jobs:
           GATE: ${{ needs.gate.result }}
           RUN: ${{ needs.run.result }}
           MODES: ${{ needs.gate.outputs.modes }}
+          REFUSED: ${{ needs.gate.outputs.refused }}
           RAN: ${{ needs.run.outputs.ran }}
           REASON: ${{ needs.run.outputs.reason }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -1244,7 +1337,9 @@ jobs:
           # Neither case posts a result comment, and a bare reaction does not
           # say why. A fork refusal is absent on purpose: `gate` already said so.
           MSG=""
-          if [ "$GATE" = "success" ] && [ "$MODES" = "[]" ]; then
+          if [ "$REFUSED" = "true" ]; then
+            : # `gate` already posted the refusal on the PR, and says why
+          elif [ "$GATE" = "success" ] && [ "$MODES" = "[]" ]; then
             MSG="Nothing ran: no pro job could run. Is \`TGQA_LICENSE_KEY\` set in this repo?"
           elif [ "$RAN" = "false" ]; then
             MSG="Nothing ran: $REASON"
