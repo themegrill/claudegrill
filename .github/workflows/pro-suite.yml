@@ -1080,9 +1080,13 @@ jobs:
             --base-url "$TGQA_BASE_URL" > ../suite.json
           code=$?
           # A pro diff's scope can select no FREE spec; that is nothing to run, not a broken harness.
+          # Read run-suite's own `ran_nothing` field rather than its message text, and stamp
+          # the result so the annotation and the report treat it as nothing-to-run too,
+          # instead of a broken harness beside a green check.
           if [ "${{ matrix.mode }}" = "free-with-pro" ] && [ -n "$AREA_ARGS" ] && [ "$code" = "2" ] \
-             && grep -q '"reason":"the runner executed 0 tests"' ../suite.json; then
+             && node -e 'process.exit(JSON.parse(require("fs").readFileSync("../suite.json","utf8")).ran_nothing === true ? 0 : 1)' 2>/dev/null; then
             echo "::notice::free-with-pro: this PR's scope matches no free spec, so nothing ran"
+            node -e 'const fs = require("fs"), p = "../suite.json"; const s = JSON.parse(fs.readFileSync(p, "utf8")); s.scope_matched_nothing = true; fs.writeFileSync(p, JSON.stringify(s) + "\n")'
             code=0
           fi
           echo "exit=$code" >> "$GITHUB_OUTPUT"
@@ -1098,6 +1102,7 @@ jobs:
           catch { console.log("::warning::run-suite.mjs produced no parseable JSON"); process.exit(0); }
 
           if (r.suite === false) { console.log("::notice::no suite manifest"); process.exit(0); }
+          if (r.scope_matched_nothing) process.exit(0);
 
           if (r.ok === false && !r.failures) {
             console.log(`::error::suite could not run — ${r.reason ?? "unknown"}`);
