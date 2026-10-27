@@ -139,6 +139,14 @@ Four rules, and the third is the one people miss:
   the state every customer passes through between installing a pro product and
   entering their key — and the one nobody develops in.
 
+A spec that exists only in the pro repository must therefore be tagged `@pro` (or
+`@unlicensed`). The `pro` job runs `@pro` specs; the `free-with-pro` job runs the
+FREE repository's suite, where a pro-only file does not exist. A pro-only spec
+tagged just `@fresh` falls between the two and no job ever runs it. The pro gate
+in `pro-suite.yml` asks the free repository which changed specs it does not have,
+and refuses the PR if one of those is not tagged `@pro`. If the free repository
+cannot be reached, the file is left unchecked rather than refused.
+
 ### `area_paths` — which specs a diff could have broken
 
 Optional, and only needed if you want CI to narrow a PR to the areas it touches.
@@ -189,6 +197,14 @@ agent which areas it does not need to look at.
 Tags are lowercase, hyphenated, and match the knowledge file's critical-flow
 names exactly. A tag that matches nothing in the knowledge file is reported as
 unrecognised rather than silently accepted.
+
+The tag is optional for the suite to run, but not for a PR to be scoped: a PR
+runs the areas its diff maps to, and a test with no area tag is never in any of
+them. So the spec gate (`check-specs.mjs`, run in `suite.yml` and `pro-suite.yml`
+before anything boots) refuses a PR whose changed specs contain a test with no
+area tag, on the test's title or on a `test.describe` around it. It only looks
+at the files the PR changed, so an older untagged spec never blocks an unrelated
+PR.
 
 ---
 

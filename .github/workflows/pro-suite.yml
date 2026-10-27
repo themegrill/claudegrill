@@ -113,6 +113,16 @@ on:
         required: false
         type: string
         default: "main"
+      skip_branch_prefix:
+        description: >
+          A pull request from a branch starting with this is not gated or run.
+          The default is the bot PR that syncs files from the free repo into a
+          pro repo: the code was already checked on the free PR, and a bot cannot
+          add the spec the gate asks for. Empty turns the skip off. A person can
+          still ask for a run on such a PR with `@claudegrill suite`.
+        required: false
+        type: string
+        default: "repo-sync/"
       node_version:
         required: false
         type: string
@@ -222,8 +232,10 @@ jobs:
     # one skipped `gate` job — $0 — regardless of what any caller's own `on:`
     # block says, because `run` needs `gate` and inherits the skip.
     if: >-
-      (github.event_name != 'pull_request' ||
-       contains(fromJSON('["opened","reopened","ready_for_review"]'), github.event.action)) &&
+      (github.event_name != 'pull_request' || (
+       contains(fromJSON('["opened","reopened","ready_for_review"]'), github.event.action) &&
+       (inputs.skip_branch_prefix == '' ||
+        !startsWith(github.event.pull_request.head.ref, inputs.skip_branch_prefix)))) &&
       (github.event_name != 'issue_comment' || (
       github.event.issue.pull_request != null &&
       startsWith(github.event.comment.body, '@claudegrill suite') &&
@@ -336,6 +348,12 @@ jobs:
             echo "required=false" >> "$GITHUB_OUTPUT"
           fi
 
+          # The changed spec files, for the selection check further down.
+          if [ -n "$SPECS" ]; then
+            printf '%s\n' "$SPECS" > ../spec-gate-specs.txt
+            echo "has_specs=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # One dedicated marker, edited in place across repeated failing runs, and
       # deliberately distinct from every `<!-- claudegrill-pro-<mode> -->`
       # result comment below — this fires before any mode is even chosen.
@@ -382,6 +400,86 @@ jobs:
         if: steps.specgate.outputs.required == 'true'
         run: |
           echo "::error::This PR changes pro source but adds no regression spec — refusing before spending runner minutes. See the PR comment."
+          exit 1
+
+      # Can the specs this PR changed be picked up at all? The suite selects tests
+      # by tag, so a test missing the tag it is selected by never runs — and the PR
+      # would still get a verdict, as if its own fix had been tested. Found HERE,
+      # before anything is installed or booted, for the same reason as the gate
+      # above. Only the files this PR changed are checked, so an old untagged spec
+      # elsewhere never blocks an unrelated PR. Only the scripts are fetched.
+      - name: Check out the spec checker
+        if: steps.specgate.outputs.has_specs == 'true' && steps.specgate.outputs.required != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ThemeGrill/claudegrill
+          ref: ${{ inputs.qa_ref }}
+          token: ${{ secrets.QA_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          sparse-checkout: plugins/claudegrill/scripts
+          path: claudegrill-gate
+
+      - name: Check the changed specs can be selected
+        id: speclint
+        if: steps.specgate.outputs.has_specs == 'true' && steps.specgate.outputs.required != 'true'
+        working-directory: pro
+        env:
+          GH_TOKEN: ${{ secrets.QA_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          FREE_REPO: ${{ inputs.product_repo }}
+          FREE_REF: ${{ inputs.product_ref }}
+        run: |
+          # A spec that exists only in this repo can run only in the `pro` job,
+          # which runs `@pro` specs alone; the other pro job runs the FREE repo's
+          # suite and never sees the file. Ask the free repo which of the changed
+          # specs it does not have. Only a clear "not found" counts: any other
+          # answer (no access, network) leaves the file unchecked rather than
+          # refusing the PR on a guess.
+          PRO_ONLY=""
+          if [ -n "$FREE_REPO" ]; then
+            while IFS= read -r f; do
+              [ -n "$f" ] && [ -f "$f" ] || continue
+              if ! err="$(gh api "repos/$FREE_REPO/contents/$f${FREE_REF:+?ref=$FREE_REF}" 2>&1 >/dev/null)" \
+                 && printf '%s' "$err" | grep -q "HTTP 404"; then
+                PRO_ONLY="$PRO_ONLY,$f"
+              fi
+            done < ../spec-gate-specs.txt
+          fi
+
+          node ../claudegrill-gate/plugins/claudegrill/scripts/check-specs.mjs \
+            --files "$(paste -sd, ../spec-gate-specs.txt)" --pro-only "${PRO_ONLY#,}" > ../spec-lint.json || true
+          # A crash in the checker must not refuse a PR: unreadable means unchecked.
+          OK="$(node -pe 'JSON.parse(require("fs").readFileSync("../spec-lint.json","utf8")).ok' 2>/dev/null || echo true)"
+          echo "failed=$([ "$OK" = "true" ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
+
+      - name: Post the "spec cannot be selected" result on the PR
+        if: steps.speclint.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.pr.outputs.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const j = JSON.parse(fs.readFileSync("spec-lint.json", "utf8"));
+            const rows = (a) => a.map((x) => "- `" + x.file + ":" + x.line + "` — " + x.title).join("\n");
+            let b = "<!-- claudegrill-pro-gate -->\n### Pro QA suite — refused, a changed spec cannot be selected\n\n";
+            b += "The suite picks tests by tag, so a test missing the tag it is selected by never runs, and this PR would get a verdict that leaves it out. It was refused before booting WordPress.\n\n";
+            if (j.no_area && j.no_area.length) b += "**No `@area` tag.** Add one that matches an area in `.themegrill-qa/knowledge.md`, on the test title or on its `test.describe`:\n\n" + rows(j.no_area) + "\n\n";
+            if (j.pro_only_untagged && j.pro_only_untagged.length) b += "**Only in this pro repo, but not tagged `@pro`.** The `pro` job runs `@pro` specs and the other pro job runs the free repo suite, so no job would run these:\n\n" + rows(j.pro_only_untagged) + "\n\n";
+            fs.writeFileSync("body.md", b);
+          '
+
+          ID="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                 --jq '[.[] | select(.body | contains("<!-- claudegrill-pro-gate -->"))][0].id // empty')"
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@body.md >/dev/null
+          else
+            gh pr comment "$PR" --repo "$REPO" --body-file body.md
+          fi
+
+      - name: Fail — a changed spec cannot be selected
+        if: steps.speclint.outputs.failed == 'true'
+        run: |
+          echo "::error::A spec this PR changes has tests the suite would never select — refusing before spending runner minutes. See the PR comment."
           exit 1
 
       # ONE secret decides everything here: can we licence what we checked out?
