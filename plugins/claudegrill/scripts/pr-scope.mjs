@@ -139,7 +139,7 @@ const specMode = specs.length > 0 && !harnessChanged;
 
 out({
   ok: true,
-  run: areas.length > 0 || specs.length > 0,
+  run: areas.length > 0 || specs.length > 0 || Boolean(r.full),
   // What a caller SHOULD narrow to, given the diff. The caller still decides:
   // suite.yml honours it only under `scope: specs`.
   mode: specMode ? "specs" : "areas",
