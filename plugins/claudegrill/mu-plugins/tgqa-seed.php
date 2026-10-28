@@ -1,0 +1,778 @@
+<?php
+/**
+ * Put a site into a named state over HTTP, on any engine: options and cron.
+ *
+ * Why this exists
+ * ---------------
+ * Some of a product's behaviour only happens in a state a click cannot reach: a
+ * gateway configured in test mode with a webhook secret, a renewal that is due
+ * today, a retry job that runs once a day. A spec for it has two jobs mixed
+ * together — getting the site INTO that state, and asserting what the product
+ * then does. Only the second is the point. Without a way to do the first, the
+ * spec cannot be written, and a PR touching that code has nothing to point at
+ * but the `qa-waived` label.
+ *
+ * Playground has no shell and no real cron, so `wp option update` and
+ * `wp cron event run` are not available there. HTTP is the one channel every
+ * engine has, which is the same reason `tgqa-theme-mod.php` exists. This file is
+ * its generalisation: any option, and a named cron hook run synchronously.
+ *
+ * Contract
+ * --------
+ *   GET  /?tgqa_seed=<token>&op=options&keys=a,b -> {"options":{"a":…,"b":"__tgqa_absent__"}}
+ *   POST /?tgqa_seed=<token>&op=options  body: JSON object
+ *                                                -> {"previous":{…},"applied":[…]}
+ *   POST /?tgqa_seed=<token>&op=cron     body: {"hook":"…","args":[…]}
+ *                                                -> {"hook":…,"callbacks":n,"scheduled":b,"ran":true,…}
+ *   POST /?tgqa_seed=<token>&op=rows     body: {"action":"insert","table":"t","row":{…}}
+ *                                                -> {"id":n}
+ *                                         or   {"action":"select","table":"t","where":{…}}
+ *                                                -> {"rows":[…]}
+ *                                         or   {"action":"delete","table":"t","where":{…}}
+ *                                                -> {"deleted":n}
+ *   POST /?tgqa_seed=<token>&op=stubs    body: {"set":[{"via":"stripe","method":"GET",
+ *                                          "path":"/v1/events/evt_1","status":200,"body":{…}},
+ *                                         {"via":"http","method":"POST",
+ *                                          "url":"https://api-m.sandbox.paypal.com/v1/oauth2/token",
+ *                                          "status":200,"body":{…}}]}
+ *                                         or   {"clear":true}
+ *   GET  /?tgqa_seed=<token>&op=stubs                -> {"stubs":[…],"calls":[…]}
+ *   POST /?tgqa_seed=<token>&op=mail     body: {"capture":true} | {"capture":false} | {"clear":true}
+ *   GET  /?tgqa_seed=<token>&op=mail                 -> {"capturing":b,"mail":[{to,subject,message,headers}]}
+ *
+ * `previous` tells "was absent" from "was null" with a sentinel, so a restore puts
+ * the site back exactly as found. Posting the sentinel as a value DELETES the
+ * option, which is what makes the restore exact: `get_option()` returns its
+ * default only when the row is missing.
+ *
+ * What it refuses, and why
+ * ------------------------
+ * - A hook the product did not declare in `seed_cron_hooks` (staged as
+ *   `tgqa-seed.json`): running `init` or `wp_login` through here is not a cron
+ *   test. And a declared hook with no callback attached: it "runs"
+ *   successfully while exercising nothing — a green that means nothing.
+ *
+ *   Whether the product SCHEDULES the hook is reported, not required. UR attaches
+ *   its payment-retry handler in the free plugin and schedules it only when Pro
+ *   is active, so requiring a schedule would put free-plugin logic out of reach.
+ *   A spec that is about the schedule asserts `scheduled` itself.
+ * - The options that would take the site away from the harness (`siteurl`,
+ *   `home`, `active_plugins`, `template`, `stylesheet`).
+ * - A table the product did not declare. `rows` is not a SQL endpoint: it takes
+ *   unprefixed table names from `seed_tables` in the product's suite.json (staged
+ *   beside this file as `tgqa-seed.json`), checks every column against the real
+ *   table, and takes equality conditions only. With no declaration it refuses.
+ * - An enum value the column does not allow. SQLite accepts any string in an ENUM
+ *   column where MySQL refuses it — measured on Playground — so a seed that
+ *   passes here could still be state production would never hold. The check
+ *   below is what keeps the two engines honest.
+ * - A delete with no condition.
+ * - Mail that is not being captured: `mail` records what `wp_mail()` was asked to
+ *   send and sends nothing. Capture is off until a spec turns it on and the call
+ *   log is capped, so a forgotten `capture:true` neither floods the site nor hides
+ *   real mail from the next run.
+ * - An outbound call nobody stubbed. While a Stripe stub is registered, the Stripe
+ *   SDK talks to this file and never to the network. For `via: http` (anything
+ *   going through `wp_remote_*`, such as PayPal) a request to a HOST that has a
+ *   stub is answered or refused here, and one to any other host passes through
+ *   untouched — blocking everything would break WordPress's own update checks and
+ *   hide the failure that matters. Either way an unmatched request gets an error
+ *   response and is logged as `matched: false`, so a spec cannot reach a real
+ *   gateway by accident and a missing stub is a named failure, not a timeout.
+ *
+ * Engine shim: named locks on SQLite
+ * ------------------------------------
+ * `GET_LOCK()` and `RELEASE_LOCK()` do not exist in SQLite, and Playground's
+ * translation layer does not fail on them: it answers the STRING `1=1`. Code
+ * written for MySQL reads that as "lock not acquired" (`'1' === (string) $result`)
+ * and gives up, so a webhook that takes a lock before it writes — UR's PayPal
+ * subscription handler does — can never succeed on Playground, and a spec for it
+ * fails for a reason that has nothing to do with the product. Measured, not
+ * assumed: `SELECT GET_LOCK('x', 1)` returned `"1=1"`.
+ *
+ * On SQLite only, those two statements are rewritten to answer `1`, which is what
+ * MySQL answers for an uncontended lock. Nothing here can contend — there is one
+ * request at a time and one writer — so the answer is the true one. The race the
+ * lock guards against is NOT testable on this engine, and this does not pretend
+ * otherwise.
+ *
+ * Runs on `wp_loaded`, late, so the product has already registered its cron
+ * handlers and scheduled its events. At `init` priority 1 a product that
+ * schedules on `init` would not yet look scheduled.
+ *
+ * @package claudegrill
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+const TGQA_SEED_ABSENT = '__tgqa_absent__';
+
+add_action( 'wp_loaded', 'tgqa_seed_maybe_respond', 999 );
+
+/**
+ * Answer `?tgqa_seed=<token>` and stop.
+ *
+ * @return void
+ */
+function tgqa_seed_maybe_respond() {
+	if ( ! isset( $_GET['tgqa_seed'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		return;
+	}
+
+	$expected = tgqa_seed_token();
+	$given    = sanitize_text_field( wp_unslash( $_GET['tgqa_seed'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+
+	// A constant-time compare, and a refusal when no token was staged at all —
+	// an empty expected token must never match an empty supplied one.
+	if ( '' === $expected || ! hash_equals( $expected, $given ) ) {
+		tgqa_seed_fail( 403, 'bad seed token' );
+	}
+
+	$op     = isset( $_GET['op'] ) ? sanitize_key( wp_unslash( $_GET['op'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+	$method = isset( $_SERVER['REQUEST_METHOD'] ) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+
+	if ( 'options' === $op ) {
+		'POST' === $method ? tgqa_seed_options_write() : tgqa_seed_options_read();
+	}
+
+	if ( 'cron' === $op ) {
+		'POST' === $method ? tgqa_seed_cron_run() : tgqa_seed_fail( 405, 'cron takes POST' );
+	}
+
+	if ( 'rows' === $op ) {
+		'POST' === $method ? tgqa_seed_rows() : tgqa_seed_fail( 405, 'rows takes POST' );
+	}
+
+	if ( 'stubs' === $op ) {
+		'POST' === $method ? tgqa_seed_stubs_write() : tgqa_seed_stubs_read();
+	}
+
+	if ( 'mail' === $op ) {
+		'POST' === $method ? tgqa_seed_mail_write() : tgqa_seed_mail_read();
+	}
+
+	tgqa_seed_fail( 400, 'unknown op — expected options, cron, rows, stubs or mail' );
+}
+
+/** The staged token. Shared with tgqa-probe.php so one install covers every endpoint. */
+function tgqa_seed_token() {
+	if ( function_exists( 'tgqa_probe_token' ) ) {
+		return tgqa_probe_token();
+	}
+	$file = __DIR__ . '/tgqa-probe.token';
+
+	return is_readable( $file ) ? trim( (string) file_get_contents( $file ) ) : ''; // phpcs:ignore WordPress.WP.AlternativeFunctions
+}
+
+/**
+ * End the request with an error body.
+ *
+ * @param int    $status  HTTP status.
+ * @param string $message What went wrong.
+ * @return void
+ */
+function tgqa_seed_fail( $status, $message ) {
+	status_header( $status );
+	wp_send_json( array( 'error' => $message ), $status );
+}
+
+/**
+ * The decoded JSON body, or a 400.
+ *
+ * @return array
+ */
+function tgqa_seed_body() {
+	$in = json_decode( (string) file_get_contents( 'php://input' ), true ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+	if ( ! is_array( $in ) ) {
+		tgqa_seed_fail( 400, 'body must be a JSON object' );
+	}
+
+	return $in;
+}
+
+/**
+ * Report the named options. Naming none is refused: dumping `wp_options` is not
+ * a thing a spec needs, and it would put every secret on the site in a log.
+ *
+ * @return void
+ */
+function tgqa_seed_options_read() {
+	$raw  = isset( $_GET['keys'] ) ? sanitize_text_field( wp_unslash( $_GET['keys'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+	$keys = array_filter( array_map( 'trim', explode( ',', $raw ) ) );
+
+	if ( empty( $keys ) ) {
+		tgqa_seed_fail( 400, 'name the options to read with keys=a,b' );
+	}
+
+	$options = array();
+	foreach ( $keys as $k ) {
+		$options[ $k ] = get_option( $k, TGQA_SEED_ABSENT );
+	}
+
+	wp_send_json( array( 'options' => $options ) );
+}
+
+/**
+ * Apply the posted options, answering with what was there before.
+ *
+ * @return void
+ */
+function tgqa_seed_options_write() {
+	$in       = tgqa_seed_body();
+	$denied   = array( 'siteurl', 'home', 'active_plugins', 'template', 'stylesheet' );
+	$previous = array();
+
+	foreach ( array_keys( $in ) as $key ) {
+		if ( in_array( (string) $key, $denied, true ) ) {
+			tgqa_seed_fail( 403, "option {$key} is not seedable — it would take the site away from the harness" );
+		}
+	}
+
+	foreach ( $in as $key => $value ) {
+		$key              = (string) $key;
+		$previous[ $key ] = get_option( $key, TGQA_SEED_ABSENT );
+
+		if ( TGQA_SEED_ABSENT === $value ) {
+			delete_option( $key );
+			continue;
+		}
+		update_option( $key, $value );
+	}
+
+	wp_send_json(
+		array(
+			'previous' => $previous,
+			'applied'  => array_keys( $in ),
+		)
+	);
+}
+
+/**
+ * Run one scheduled cron hook now, in this request.
+ *
+ * Reports how many callbacks it ran and whether any threw, rather than only that
+ * the request came back: the caller needs to tell "the handler ran and did
+ * nothing" from "nothing was attached".
+ *
+ * @return void
+ */
+function tgqa_seed_cron_run() {
+	$in   = tgqa_seed_body();
+	$hook = isset( $in['hook'] ) ? (string) $in['hook'] : '';
+	$args = isset( $in['args'] ) && is_array( $in['args'] ) ? array_values( $in['args'] ) : array();
+
+	if ( '' === $hook ) {
+		tgqa_seed_fail( 400, 'body needs {"hook":"…"}' );
+	}
+
+	$cfg = tgqa_seed_config();
+	if ( ! in_array( $hook, isset( $cfg['cron_hooks'] ) && is_array( $cfg['cron_hooks'] ) ? $cfg['cron_hooks'] : array(), true ) ) {
+		tgqa_seed_fail( 403, "hook {$hook} is not declared in seed_cron_hooks of the product's suite.json" );
+	}
+
+	$scheduled = false;
+	foreach ( (array) _get_cron_array() as $events ) {
+		if ( isset( $events[ $hook ] ) ) {
+			$scheduled = true;
+			break;
+		}
+	}
+
+	$callbacks = 0;
+	if ( isset( $GLOBALS['wp_filter'][ $hook ] ) ) {
+		foreach ( $GLOBALS['wp_filter'][ $hook ]->callbacks as $at_priority ) {
+			$callbacks += count( $at_priority );
+		}
+	}
+	if ( 0 === $callbacks ) {
+		tgqa_seed_fail( 409, "{$hook} has no callback attached, so running it would test nothing — is the product active and its module enabled?" );
+	}
+
+	$errors = array();
+	$start  = microtime( true );
+	ob_start();
+	try {
+		do_action_ref_array( $hook, $args );
+	} catch ( \Throwable $e ) {
+		$errors[] = get_class( $e ) . ': ' . $e->getMessage();
+	}
+	$output = (string) ob_get_clean();
+
+	wp_send_json(
+		array(
+			'hook'        => $hook,
+			'callbacks'   => $callbacks,
+			'scheduled'   => $scheduled,
+			'ran'         => empty( $errors ),
+			'errors'      => $errors,
+			'output'      => substr( $output, 0, 2000 ),
+			'duration_ms' => (int) round( ( microtime( true ) - $start ) * 1000 ),
+		)
+	);
+}
+
+/**
+ * The tables the product declared seedable, unprefixed.
+ *
+ * @return string[]
+ */
+function tgqa_seed_tables() {
+	$cfg = tgqa_seed_config();
+
+	return isset( $cfg['tables'] ) && is_array( $cfg['tables'] ) ? array_map( 'strval', $cfg['tables'] ) : array();
+}
+
+/**
+ * The product's staged allow-lists: `tables` and `cron_hooks`.
+ *
+ * @return array
+ */
+function tgqa_seed_config() {
+	$file = __DIR__ . '/tgqa-seed.json';
+	if ( ! is_readable( $file ) ) {
+		return array();
+	}
+	$cfg = json_decode( (string) file_get_contents( $file ), true ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+	return is_array( $cfg ) ? $cfg : array();
+}
+
+/**
+ * Resolve a declared table to its prefixed name and its real columns.
+ *
+ * @param string $table Unprefixed name from the request.
+ * @return array{0:string,1:array<string,string>} Prefixed name, and column => SQL type.
+ */
+function tgqa_seed_table( $table ) {
+	global $wpdb;
+
+	if ( ! in_array( $table, tgqa_seed_tables(), true ) ) {
+		tgqa_seed_fail( 403, "table {$table} is not declared in seed_tables of the product's suite.json" );
+	}
+
+	$name = $wpdb->prefix . $table;
+	$cols = array();
+	foreach ( (array) $wpdb->get_results( "SHOW COLUMNS FROM `{$name}`", ARRAY_A ) as $c ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$cols[ $c['Field'] ] = (string) $c['Type'];
+	}
+	if ( empty( $cols ) ) {
+		tgqa_seed_fail( 409, "table {$name} does not exist on this site — has the product created it (module enabled)?" );
+	}
+
+	return array( $name, $cols );
+}
+
+/**
+ * Refuse a column the table does not have, or an enum value its column forbids.
+ *
+ * @param array $data Column => value.
+ * @param array $cols Column => SQL type.
+ * @return void
+ */
+function tgqa_seed_check_columns( array $data, array $cols ) {
+	foreach ( $data as $col => $value ) {
+		if ( ! isset( $cols[ $col ] ) ) {
+			tgqa_seed_fail( 400, "unknown column {$col}" );
+		}
+		if ( preg_match( "/^enum\\((.*)\\)$/i", $cols[ $col ], $m ) && null !== $value ) {
+			preg_match_all( "/'((?:[^']|'')*)'/", $m[1], $allowed );
+			$allowed = array_map( static function ( $v ) { return str_replace( "''", "'", $v ); }, $allowed[1] );
+			if ( ! in_array( (string) $value, $allowed, true ) ) {
+				tgqa_seed_fail( 400, "{$value} is not a value of enum column {$col} (" . implode( ', ', $allowed ) . ') — MySQL would refuse it' );
+			}
+		}
+	}
+}
+
+/**
+ * Build `col = %s AND …` from an equality map, refusing an empty one.
+ *
+ * @param array $where Column => value.
+ * @param array $cols  Column => SQL type.
+ * @return string Prepared fragment.
+ */
+function tgqa_seed_where( $where, array $cols ) {
+	global $wpdb;
+
+	if ( ! is_array( $where ) || empty( $where ) ) {
+		tgqa_seed_fail( 400, 'where is required: this endpoint will not touch every row of a table' );
+	}
+	tgqa_seed_check_columns( $where, $cols );
+
+	$parts = array();
+	foreach ( $where as $col => $value ) {
+		$parts[] = null === $value ? "`{$col}` IS NULL" : $wpdb->prepare( "`{$col}` = %s", $value ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+	}
+
+	return implode( ' AND ', $parts );
+}
+
+/**
+ * Insert, select or delete rows in a declared table.
+ *
+ * @return void
+ */
+function tgqa_seed_rows() {
+	global $wpdb;
+
+	$in     = tgqa_seed_body();
+	$action = isset( $in['action'] ) ? (string) $in['action'] : '';
+	$table  = isset( $in['table'] ) ? (string) $in['table'] : '';
+
+	list( $name, $cols ) = tgqa_seed_table( $table );
+
+	if ( 'insert' === $action ) {
+		$row = isset( $in['row'] ) && is_array( $in['row'] ) ? $in['row'] : array();
+		if ( empty( $row ) ) {
+			tgqa_seed_fail( 400, 'insert needs a non-empty row' );
+		}
+		tgqa_seed_check_columns( $row, $cols );
+
+		$wpdb->suppress_errors( true );
+		$ok    = $wpdb->insert( $name, $row ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$error = $wpdb->last_error;
+		$wpdb->suppress_errors( false );
+
+		if ( false === $ok ) {
+			// SQLite's driver wraps the real reason in an HTML query trace; MySQL
+			// gives a plain sentence. Pull the reason out of either.
+			$text = trim( preg_replace( '/\s+/', ' ', wp_strip_all_tags( $error ) ) );
+			if ( preg_match( '/SQLSTATE\[[^\]]*\]: [^:]*: \d+ [^.]*?(?= Backtrace| #0|$)/', $text, $m ) ) {
+				$text = $m[0];
+			}
+			tgqa_seed_fail( 409, 'insert refused: ' . substr( $text, 0, 300 ) );
+		}
+		wp_send_json( array( 'id' => (int) $wpdb->insert_id ) );
+	}
+
+	if ( 'select' === $action ) {
+		$where = tgqa_seed_where( isset( $in['where'] ) ? $in['where'] : null, $cols );
+		wp_send_json( array( 'rows' => $wpdb->get_results( "SELECT * FROM `{$name}` WHERE {$where} LIMIT 200", ARRAY_A ) ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+	}
+
+	if ( 'delete' === $action ) {
+		$where = tgqa_seed_where( isset( $in['where'] ) ? $in['where'] : null, $cols );
+		wp_send_json( array( 'deleted' => (int) $wpdb->query( "DELETE FROM `{$name}` WHERE {$where}" ) ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+	}
+
+	tgqa_seed_fail( 400, 'rows action must be insert, select or delete' );
+}
+
+/*
+ * Outbound HTTP stubs.
+ *
+ * Stored in an option, because the request that registers a stub and the request
+ * that needs it (a webhook the spec then POSTs) are different PHP processes.
+ * Only the Stripe SDK is covered so far: it talks over its own curl client, which
+ * `pre_http_request` never sees, so it is replaced through the SDK's documented
+ * `ApiRequestor::setHttpClient()`.
+ */
+
+const TGQA_STUBS_OPTION = 'tgqa_http_stubs';
+const TGQA_CALLS_OPTION = 'tgqa_http_calls';
+
+add_action( 'init', 'tgqa_seed_install_stripe_client', 20 );
+add_action( 'rest_api_init', 'tgqa_seed_install_stripe_client', 1 );
+add_action( 'wp_loaded', 'tgqa_seed_install_stripe_client', 1 );
+// A REST handler that builds its own service loads the SDK inside the permission
+// callback, after every hook above. This one fires after that and before the
+// handler runs, which is the last moment a replacement client still matters.
+add_filter( 'rest_dispatch_request', 'tgqa_seed_install_stripe_client_filter', 10, 1 );
+add_filter( 'pre_http_request', 'tgqa_seed_http_stub', 10, 3 );
+add_action( 'admin_init', 'tgqa_seed_install_stripe_client', 1 );
+
+/**
+ * Replace the Stripe SDK's HTTP client while a Stripe stub is registered.
+ *
+ * Tried on several hooks because the SDK is loaded by the product, at a time this
+ * file does not control; it does nothing until the SDK exists, and only once.
+ *
+ * @return void
+ */
+function tgqa_seed_install_stripe_client() {
+	static $installed = false;
+
+	if ( $installed || ! interface_exists( '\\Stripe\\HttpClient\\ClientInterface' ) || ! class_exists( '\\Stripe\\ApiRequestor' ) ) {
+		return;
+	}
+	$has_stripe_stub = false;
+	foreach ( (array) get_option( TGQA_STUBS_OPTION, array() ) as $stub ) {
+		if ( isset( $stub['via'] ) && 'stripe' === $stub['via'] ) {
+			$has_stripe_stub = true;
+		}
+	}
+	if ( ! $has_stripe_stub ) {
+		return;
+	}
+
+	if ( ! class_exists( 'Tgqa_Stripe_Stub_Client', false ) ) {
+		class Tgqa_Stripe_Stub_Client implements \Stripe\HttpClient\ClientInterface { // phpcs:ignore
+			public function request( $method, $absUrl, $headers, $params, $hasFile, $apiMode = 'v1', $maxNetworkRetries = null ) { // phpcs:ignore
+				$path  = (string) wp_parse_url( $absUrl, PHP_URL_PATH );
+				$match = null;
+				foreach ( (array) get_option( TGQA_STUBS_OPTION, array() ) as $stub ) {
+					if ( isset( $stub['via'] ) && 'stripe' === $stub['via']
+						&& strtoupper( (string) $stub['method'] ) === strtoupper( $method )
+						&& (string) $stub['path'] === $path ) {
+						$match = $stub;
+						break;
+					}
+				}
+
+				$calls   = (array) get_option( TGQA_CALLS_OPTION, array() );
+				$calls[] = array(
+					'via'     => 'stripe',
+					'method'  => strtoupper( $method ),
+					'path'    => $path,
+					'params'  => $params,
+					'matched' => null !== $match,
+				);
+				update_option( TGQA_CALLS_OPTION, array_slice( $calls, -100 ), false );
+
+				if ( null === $match ) {
+					return array(
+						wp_json_encode( array( 'error' => array( 'type' => 'api_error', 'message' => "tgqa: no stub for {$method} {$path}" ) ) ),
+						500,
+						array(),
+					);
+				}
+
+				return array( wp_json_encode( isset( $match['body'] ) ? $match['body'] : new \stdClass() ), (int) ( isset( $match['status'] ) ? $match['status'] : 200 ), array() );
+			}
+		}
+	}
+
+	\Stripe\ApiRequestor::setHttpClient( new Tgqa_Stripe_Stub_Client() );
+	$installed = true;
+}
+
+/**
+ * Answer a `wp_remote_*` request from a registered `via: http` stub.
+ *
+ * @param false|array|WP_Error $pre  Preempted response, or false.
+ * @param array                $args Request arguments.
+ * @param string               $url  Request URL.
+ * @return false|array
+ */
+function tgqa_seed_http_stub( $pre, $args, $url ) {
+	if ( false !== $pre ) {
+		return $pre;
+	}
+
+	$stubs = array();
+	$hosts = array();
+	foreach ( (array) get_option( TGQA_STUBS_OPTION, array() ) as $stub ) {
+		if ( isset( $stub['via'] ) && 'http' === $stub['via'] ) {
+			$stubs[] = $stub;
+			$hosts[] = (string) wp_parse_url( $stub['url'], PHP_URL_HOST );
+		}
+	}
+	if ( ! in_array( (string) wp_parse_url( $url, PHP_URL_HOST ), $hosts, true ) ) {
+		return $pre;
+	}
+
+	$method = strtoupper( isset( $args['method'] ) ? (string) $args['method'] : 'GET' );
+	$base   = strtok( $url, '?' );
+	$match  = null;
+	$query = (string) wp_parse_url( $url, PHP_URL_QUERY );
+	foreach ( $stubs as $stub ) {
+		// An optional `query` narrows a stub to requests whose query string contains it,
+		// for endpoints that serve many answers from one path (PayPal's event listing
+		// takes the event type as a parameter). The first matching stub wins, so the
+		// narrow one goes before a catch-all.
+		if ( $stub['method'] === $method && $stub['url'] === $base
+			&& ( empty( $stub['query'] ) || false !== strpos( $query, (string) $stub['query'] ) ) ) {
+			$match = $stub;
+			break;
+		}
+	}
+
+	$calls   = (array) get_option( TGQA_CALLS_OPTION, array() );
+	$calls[] = array(
+		'via'     => 'http',
+		'method'  => $method,
+		'path'    => $base . ( '' !== $query ? '?' . $query : '' ),
+		'params'  => isset( $args['body'] ) ? ( is_string( $args['body'] ) ? json_decode( $args['body'], true ) : $args['body'] ) : array(),
+		'matched' => null !== $match,
+	);
+	update_option( TGQA_CALLS_OPTION, array_slice( $calls, -100 ), false );
+
+	$status = null === $match ? 500 : (int) $match['status'];
+	$body   = null === $match ? array( 'message' => "tgqa: no stub for {$method} {$base}" ) : $match['body'];
+
+	return array(
+		'headers'  => array( 'content-type' => 'application/json' ),
+		'body'     => wp_json_encode( $body ),
+		'response' => array( 'code' => $status, 'message' => 'tgqa stub' ),
+		'cookies'  => array(),
+		'filename' => null,
+	);
+}
+
+/**
+ * Filter form of the installer, which must hand its input back untouched.
+ *
+ * @param mixed $result Passed through.
+ * @return mixed
+ */
+function tgqa_seed_install_stripe_client_filter( $result ) {
+	tgqa_seed_install_stripe_client();
+
+	return $result;
+}
+
+/**
+ * Report the registered stubs and the calls they answered.
+ *
+ * @return void
+ */
+function tgqa_seed_stubs_read() {
+	wp_send_json(
+		array(
+			'stubs' => array_values( (array) get_option( TGQA_STUBS_OPTION, array() ) ),
+			'calls' => array_values( (array) get_option( TGQA_CALLS_OPTION, array() ) ),
+		)
+	);
+}
+
+/**
+ * Replace the registered stubs, or clear them and the call log.
+ *
+ * @return void
+ */
+function tgqa_seed_stubs_write() {
+	$in = tgqa_seed_body();
+
+	if ( ! empty( $in['clear'] ) ) {
+		delete_option( TGQA_STUBS_OPTION );
+		delete_option( TGQA_CALLS_OPTION );
+		wp_send_json( array( 'cleared' => true ) );
+	}
+
+	if ( ! isset( $in['set'] ) || ! is_array( $in['set'] ) ) {
+		tgqa_seed_fail( 400, 'body needs {"set":[…]} or {"clear":true}' );
+	}
+
+	$stubs = array();
+	foreach ( $in['set'] as $stub ) {
+		$via = is_array( $stub ) && isset( $stub['via'] ) ? (string) $stub['via'] : '';
+		if ( 'stripe' === $via && ! empty( $stub['method'] ) && ! empty( $stub['path'] ) ) {
+			$key = array( 'path' => (string) $stub['path'] );
+		} elseif ( 'http' === $via && ! empty( $stub['method'] ) && ! empty( $stub['url'] ) && wp_parse_url( (string) $stub['url'], PHP_URL_HOST ) ) {
+			$key = array( 'url' => (string) $stub['url'] ) + ( ! empty( $stub['query'] ) ? array( 'query' => (string) $stub['query'] ) : array() );
+		} else {
+			tgqa_seed_fail( 400, 'each stub needs via=stripe with method and path, or via=http with method and a full url' );
+		}
+		$stubs[] = array_merge(
+			array(
+				'via'    => $via,
+				'method' => strtoupper( (string) $stub['method'] ),
+				'status' => isset( $stub['status'] ) ? (int) $stub['status'] : 200,
+				'body'   => isset( $stub['body'] ) ? $stub['body'] : new \stdClass(),
+			),
+			$key
+		);
+	}
+
+	update_option( TGQA_STUBS_OPTION, $stubs, false );
+	delete_option( TGQA_CALLS_OPTION );
+	wp_send_json( array( 'registered' => count( $stubs ) ) );
+}
+
+/*
+ * Named locks on SQLite: see "Engine shim" in the file header.
+ */
+add_filter( 'query', 'tgqa_seed_sqlite_named_locks' );
+
+/**
+ * Answer `GET_LOCK` / `RELEASE_LOCK` with `1` when the database is SQLite.
+ *
+ * @param string $query SQL about to run.
+ * @return string
+ */
+function tgqa_seed_sqlite_named_locks( $query ) {
+	static $sqlite = null;
+	if ( null === $sqlite ) {
+		$sqlite = defined( 'SQLITE_DB_DROPIN_VERSION' ) || ( isset( $GLOBALS['wpdb'] ) && false !== stripos( get_class( $GLOBALS['wpdb'] ), 'sqlite' ) );
+	}
+	if ( ! $sqlite || false === stripos( $query, 'LOCK(' ) ) {
+		return $query;
+	}
+
+	return preg_replace( '/SELECT\s+(?:GET_LOCK|RELEASE_LOCK)\s*\([^)]*\)/i', 'SELECT 1', $query );
+}
+
+/*
+ * Mail capture.
+ *
+ * Playground cannot send mail, so "the admin was emailed" has nothing to observe.
+ * `pre_wp_mail` (WordPress 5.7) lets a filter take over `wp_mail()` before it sends,
+ * which is also what keeps a capturing run from ever mailing a real address.
+ */
+
+const TGQA_MAIL_FLAG = 'tgqa_mail_capture';
+const TGQA_MAIL_LOG  = 'tgqa_mail_log';
+
+add_filter( 'pre_wp_mail', 'tgqa_seed_capture_mail', 10, 2 );
+
+/**
+ * Record a mail instead of sending it, while capture is on.
+ *
+ * @param null|bool $pre  Short-circuit value.
+ * @param array     $atts wp_mail() arguments.
+ * @return null|bool True when captured, otherwise the incoming value.
+ */
+function tgqa_seed_capture_mail( $pre, $atts ) {
+	if ( null !== $pre || '1' !== get_option( TGQA_MAIL_FLAG, '' ) ) {
+		return $pre;
+	}
+
+	$log   = (array) get_option( TGQA_MAIL_LOG, array() );
+	$log[] = array(
+		'to'      => array_values( (array) ( isset( $atts['to'] ) ? $atts['to'] : array() ) ),
+		'subject' => isset( $atts['subject'] ) ? (string) $atts['subject'] : '',
+		'message' => substr( (string) ( isset( $atts['message'] ) ? $atts['message'] : '' ), 0, 4000 ),
+		'headers' => isset( $atts['headers'] ) ? $atts['headers'] : array(),
+	);
+	update_option( TGQA_MAIL_LOG, array_slice( $log, -100 ), false );
+
+	return true;
+}
+
+/**
+ * Report whether capture is on and what it has recorded.
+ *
+ * @return void
+ */
+function tgqa_seed_mail_read() {
+	wp_send_json(
+		array(
+			'capturing' => '1' === get_option( TGQA_MAIL_FLAG, '' ),
+			'mail'      => array_values( (array) get_option( TGQA_MAIL_LOG, array() ) ),
+		)
+	);
+}
+
+/**
+ * Turn capture on or off, or clear the log. Turning it on clears the log, so a
+ * spec never reads the previous spec's mail.
+ *
+ * @return void
+ */
+function tgqa_seed_mail_write() {
+	$in = tgqa_seed_body();
+
+	if ( array_key_exists( 'capture', $in ) ) {
+		if ( $in['capture'] ) {
+			update_option( TGQA_MAIL_FLAG, '1', false );
+			delete_option( TGQA_MAIL_LOG );
+		} else {
+			delete_option( TGQA_MAIL_FLAG );
+		}
+	}
+	if ( ! empty( $in['clear'] ) ) {
+		delete_option( TGQA_MAIL_LOG );
+	}
+
+	tgqa_seed_mail_read();
+}

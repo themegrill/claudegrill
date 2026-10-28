@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 import { resolveQaHome } from "./lib/qa-home.mjs";
 import { isWindows, killTree, npxCommand, shellQuote } from "./lib/platform.mjs";
 import { loadRegistry } from "./lib/license/registry.mjs";
+import { seedConfig } from "./lib/suite-manifest.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -381,6 +382,7 @@ function stageMuPlugins(siteUrl) {
     "tgqa-probe.php",
     // Shares the probe's token, so it costs no extra staging.
     "tgqa-theme-mod.php",
+    "tgqa-seed.php",
     ...(opt.license ? ["tgqa-license.php"] : []),
   ]) {
     fs.copyFileSync(path.join(qaHome, "mu-plugins", f), path.join(dir, f));
@@ -388,6 +390,14 @@ function stageMuPlugins(siteUrl) {
 
   const token = crypto.randomBytes(16).toString("hex");
   fs.writeFileSync(path.join(dir, "tgqa-probe.token"), token, { mode: 0o600 });
+
+  // The product's declaration of which tables a spec may seed and which cron hooks it may run. Written even when
+  // empty: an absent file and an empty list both refuse, but only one of them
+  // says the product was asked.
+  fs.writeFileSync(
+    path.join(dir, "tgqa-seed.json"),
+    JSON.stringify(seedConfig(info.root)),
+  );
 
   const verdicts = [];
   if (opt.license) {
@@ -779,7 +789,11 @@ if (opt.engine === "playground") {
           }
         : { error: "probe did not answer" },
       probe_url: `${url}/?tgqa_probe=${staged.token}`,
-      caveats: ["SQLite not MySQL", "no real cron", "no outbound mail"],
+      caveats: [
+        "SQLite not MySQL",
+        "no real cron (a declared hook can be run through tgqa-seed)",
+        "no outbound mail (wp_mail can be captured through tgqa-seed, SUITE.md §2c)",
+      ],
     }),
   );
   process.exit(0);

@@ -618,7 +618,13 @@ jobs:
     needs: gate
     if: needs.gate.outputs.modes != '[]'
     name: ${{ matrix.mode }}
-    runs-on: ubuntu-latest
+    # Not `ubuntu-latest`: it now resolves to Ubuntu 26.04, which Playwright 1.57 (a
+    # product pins its own) does not support, and `playwright install --with-deps
+    # chromium` fails with "does not support chromium on ubuntu26.04-x64" before a
+    # single spec runs. Found on the first live run of this workflow on UR. Pinning
+    # to the image Playwright documents keeps a runner image rolling forward from
+    # breaking every product's suite on the day GitHub moves the label.
+    runs-on: ubuntu-24.04
     # Above `timeout_ms` (30 min), never equal to it: the job ceiling kills the
     # process tree and reports nothing, while run-suite.mjs's own ceiling stops
     # the run and still names the spec that was running when time ran out. Equal

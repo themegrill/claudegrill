@@ -56,6 +56,8 @@ plugins/claudegrill/   the installable plugin — everything the skills need
   mu-plugins/            QA-only, mounted into the disposable site, never shipped
     tgqa-license.php     puts a licence where WordPress can see it
     tgqa-probe.php       reports what the booted site ACTUALLY believes
+    tgqa-seed.php        sets options, runs a declared cron hook, seeds declared tables,
+                         stubs outbound Stripe/HTTP calls — over HTTP, SUITE.md §2c
   hooks/
     hooks.json           Stop hook registration
     spec-guard.mjs       notices source changed with no spec; queues it
@@ -1234,7 +1236,8 @@ to change assertions.
 ## Two things worth knowing
 
 **Playground is not a real server.** PHP-WASM with SQLite: no MySQL-specific SQL,
-no real cron, no outbound mail. The skills switch to `wp-env` when a diff touches
+no real cron, no outbound mail (both can be driven or observed through the seed endpoint,
+SUITE.md §2c). The skills switch to `wp-env` when a diff touches
 those, but check which engine a run actually used before trusting a green result.
 
 **Doc drift is an output, not a bug.** If the docs promise a control the product

@@ -137,7 +137,9 @@ are known non-issues. Every false positive should become a line in that file.
 ## Known limits — read before trusting a green result
 
 **Playground is not a real server.** PHP-WASM with SQLite: no MySQL-specific SQL,
-no real cron, no outbound mail, no genuine GD/Imagick uploads.
+no real cron, no outbound mail, no genuine GD/Imagick uploads. A declared cron
+hook can be run, and `wp_mail()` captured, through the seed endpoint (SUITE.md §2c),
+which is how a spec asserts "the member was emailed" without a mail server.
 `boot-wp.mjs --engine wp-env` exists for those cases and the skills switch when
 the diff touches them — but check which engine a run actually used.
 

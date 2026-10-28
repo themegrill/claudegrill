@@ -172,7 +172,13 @@ jobs:
       github.event.issue.pull_request != null &&
       startsWith(github.event.comment.body, '@claudegrill suite') &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
-    runs-on: ubuntu-latest
+    # Not `ubuntu-latest`: it now resolves to Ubuntu 26.04, which Playwright 1.57 (a
+    # product pins its own) does not support, and `playwright install --with-deps
+    # chromium` fails with "does not support chromium on ubuntu26.04-x64" before a
+    # single spec runs. Found on the first live run of this workflow on UR. Pinning
+    # to the image Playwright documents keeps a runner image rolling forward from
+    # breaking every product's suite on the day GitHub moves the label.
+    runs-on: ubuntu-24.04
     # Above `timeout_ms` (30 min), not equal to it. The job ceiling kills the
     # process tree outright and reports nothing; `run-suite.mjs`'s own ceiling
     # stops the run and still writes a report naming the spec that was running.
@@ -810,6 +816,14 @@ jobs:
           # throws on a runner that has neither WP_DB_* nor a mysql binary, and
           # Playwright reports 0 tests — a BROKEN suite, not a failing one.
           echo "TGQA_ENV=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("../boot.json","utf8")).engine)')" >> "$GITHUB_ENV"
+
+          # The seed endpoint's address. `boot-wp.mjs` stages `tgqa-seed.php` on every
+          # boot and reports the URL carrying this run's token as `probe_url`, but with
+          # the suite handed a bare --base-url nothing carried it across, so every spec
+          # that seeds state (payments, webhooks, cron, mail) found no endpoint and
+          # SKIPPED — 25 tests on the first live run of them, reported as "skipped",
+          # which reads as coverage that exists. pro-suite.yml already exports it.
+          node -e 'const b=JSON.parse(require("fs").readFileSync("../boot.json","utf8")); if (b.probe_url) require("fs").appendFileSync(process.env.GITHUB_ENV, `TGQA_PROBE_URL=${b.probe_url}\n`)'
 
       - name: Run the suite (fresh tier)
         id: suite

@@ -152,6 +152,21 @@ export function loadManifest(productRoot) {
 }
 
 /**
+ * What a product lets `tgqa-seed.php` touch: `seed_tables` (unprefixed table
+ * names) and `seed_cron_hooks` in suite.json. These two lists are the whole
+ * allow-list of a write endpoint, so anything that is not a plain identifier is
+ * dropped rather than passed on.
+ *
+ * @returns {{tables: string[], cron_hooks: string[]}}
+ */
+export function seedConfig(productRoot) {
+  const m = loadManifest(productRoot).manifest ?? {};
+  const clean = (list) =>
+    Array.isArray(list) ? list.filter((t) => typeof t === "string" && /^[A-Za-z0-9_]+$/.test(t)) : [];
+  return { tables: clean(m.seed_tables), cron_hooks: clean(m.seed_cron_hooks) };
+}
+
+/**
  * Areas the product says it has, from the knowledge file or an ingested docs
  * index. This is the denominator of every coverage number the platform prints,
  * so when it is empty the honest answer is "unknown", never "zero".
