@@ -817,6 +817,14 @@ jobs:
           # Playwright reports 0 tests — a BROKEN suite, not a failing one.
           echo "TGQA_ENV=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("../boot.json","utf8")).engine)')" >> "$GITHUB_ENV"
 
+          # The seed endpoint's address. `boot-wp.mjs` stages `tgqa-seed.php` on every
+          # boot and reports the URL carrying this run's token as `probe_url`, but with
+          # the suite handed a bare --base-url nothing carried it across, so every spec
+          # that seeds state (payments, webhooks, cron, mail) found no endpoint and
+          # SKIPPED — 25 tests on the first live run of them, reported as "skipped",
+          # which reads as coverage that exists. pro-suite.yml already exports it.
+          node -e 'const b=JSON.parse(require("fs").readFileSync("../boot.json","utf8")); if (b.probe_url) require("fs").appendFileSync(process.env.GITHUB_ENV, `TGQA_PROBE_URL=${b.probe_url}\n`)'
+
       - name: Run the suite (fresh tier)
         id: suite
         if: steps.manifest.outputs.found == 'true'
