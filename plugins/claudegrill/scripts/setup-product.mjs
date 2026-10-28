@@ -630,8 +630,11 @@ function checkWorkflow() {
 
   // The design: opened/reopened/ready_for_review on pull_request, then only
   // `@claudegrill suite` on request. Anything else in `types` costs metered
-  // minutes on every matching event a push produces.
-  const ALLOWED_PR_TYPES = ["opened", "reopened", "ready_for_review"];
+  // minutes on every matching event a push produces. `labeled` is the one
+  // addition: it fires on EVERY label, but the reusable workflows' job `if`
+  // lets only `qa-waived` through, so any other label is a skipped job — $0 —
+  // and that one label is how a refusal gets waived without a push.
+  const ALLOWED_PR_TYPES = ["opened", "reopened", "ready_for_review", "labeled"];
   const m = code.match(/pull_request:\s*\n(?:[^\n]*\n)*?\s*types:\s*\[([^\]]*)\]/);
   if (!m) {
     findings.push({

@@ -42,7 +42,9 @@ on:
   pull_request:
     # No `synchronize`: a push spends no metered minutes. The path filter below
     # applies to this event only — a comment is an explicit request, and runs.
-    types: [opened, reopened, ready_for_review]
+    # `labeled` is here for the `qa-waived` label only; the reusable workflow
+    # skips every other label for free.
+    types: [opened, reopened, ready_for_review, labeled]
     paths:
       # Private-repo minutes are metered, so a README change must not spend any.
       - "**/*.php"
