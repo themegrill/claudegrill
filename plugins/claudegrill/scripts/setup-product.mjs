@@ -489,13 +489,22 @@ function writeEnv() {
     const declared = m.manifest?.env?.base_url;
     if (declared && declared !== "TGQA_BASE_URL") applied[declared] = setKey(declared, wanted.base_url);
   }
+  // The generic TGQA_* name is written alongside the manifest's own, the way the
+  // URL is above. `run-suite.mjs` maps one onto the other, so a suite run under
+  // the runner never noticed — but a product's `env.ts` and Playwright config read
+  // the generic names, and `pnpm test:e2e` run directly has no runner to map them.
+  // With only the product-named keys, that run reached the right site with
+  // `admin`/`password` and died as a 45s `#wpadminbar` timeout that never mentioned
+  // `.env.local` (user-registration #1504, #1506).
   if (wanted.admin_user) {
     const name = m.manifest?.env?.admin_user ?? "TGQA_ADMIN_USER";
     applied[name] = setKey(name, wanted.admin_user);
+    if (name !== "TGQA_ADMIN_USER") applied.TGQA_ADMIN_USER = setKey("TGQA_ADMIN_USER", wanted.admin_user);
   }
   if (wanted.admin_pass) {
     const name = m.manifest?.env?.admin_pass ?? "TGQA_ADMIN_PASS";
     applied[name] = setKey(name, wanted.admin_pass);
+    if (name !== "TGQA_ADMIN_PASS") applied.TGQA_ADMIN_PASS = setKey("TGQA_ADMIN_PASS", wanted.admin_pass);
   }
   if (wanted.license) {
     if (!proEntry) {
