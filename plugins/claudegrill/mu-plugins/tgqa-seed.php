@@ -30,6 +30,10 @@
  *                                                -> {"rows":[…]}
  *                                         or   {"action":"delete","table":"t","where":{…}}
  *                                                -> {"deleted":n}
+ *   POST /?tgqa_seed=<token>&op=stubs    body: {"set":[{"via":"stripe","method":"GET",
+ *                                          "path":"/v1/events/evt_1","status":200,"body":{…}}]}
+ *                                         or   {"clear":true}
+ *   GET  /?tgqa_seed=<token>&op=stubs                -> {"stubs":[…],"calls":[…]}
  *
  * `previous` tells "was absent" from "was null" with a sentinel, so a restore puts
  * the site back exactly as found. Posting the sentinel as a value DELETES the
@@ -53,6 +57,11 @@
  *   passes here could still be state production would never hold. The check
  *   below is what keeps the two engines honest.
  * - A delete with no condition.
+ * - An outbound Stripe call nobody stubbed. While any stub is registered, the
+ *   Stripe SDK talks to this file and never to the network; a request with no
+ *   matching stub gets an error response and is logged as unmatched, so a spec
+ *   cannot reach api.stripe.com by accident and a missing stub is a named
+ *   failure instead of a timeout.
  *
  * Runs on `wp_loaded`, late, so the product has already registered its cron
  * handlers and scheduled its events. At `init` priority 1 a product that
@@ -101,7 +110,11 @@ function tgqa_seed_maybe_respond() {
 		'POST' === $method ? tgqa_seed_rows() : tgqa_seed_fail( 405, 'rows takes POST' );
 	}
 
-	tgqa_seed_fail( 400, 'unknown op — expected options, cron or rows' );
+	if ( 'stubs' === $op ) {
+		'POST' === $method ? tgqa_seed_stubs_write() : tgqa_seed_stubs_read();
+	}
+
+	tgqa_seed_fail( 400, 'unknown op — expected options, cron, rows or stubs' );
 }
 
 /** The staged token. Shared with tgqa-probe.php so one install covers every endpoint. */
@@ -392,4 +405,154 @@ function tgqa_seed_rows() {
 	}
 
 	tgqa_seed_fail( 400, 'rows action must be insert, select or delete' );
+}
+
+/*
+ * Outbound HTTP stubs.
+ *
+ * Stored in an option, because the request that registers a stub and the request
+ * that needs it (a webhook the spec then POSTs) are different PHP processes.
+ * Only the Stripe SDK is covered so far: it talks over its own curl client, which
+ * `pre_http_request` never sees, so it is replaced through the SDK's documented
+ * `ApiRequestor::setHttpClient()`.
+ */
+
+const TGQA_STUBS_OPTION = 'tgqa_http_stubs';
+const TGQA_CALLS_OPTION = 'tgqa_http_calls';
+
+add_action( 'init', 'tgqa_seed_install_stripe_client', 20 );
+add_action( 'rest_api_init', 'tgqa_seed_install_stripe_client', 1 );
+add_action( 'wp_loaded', 'tgqa_seed_install_stripe_client', 1 );
+// A REST handler that builds its own service loads the SDK inside the permission
+// callback, after every hook above. This one fires after that and before the
+// handler runs, which is the last moment a replacement client still matters.
+add_filter( 'rest_dispatch_request', 'tgqa_seed_install_stripe_client_filter', 10, 1 );
+add_action( 'admin_init', 'tgqa_seed_install_stripe_client', 1 );
+
+/**
+ * Replace the Stripe SDK's HTTP client while a Stripe stub is registered.
+ *
+ * Tried on several hooks because the SDK is loaded by the product, at a time this
+ * file does not control; it does nothing until the SDK exists, and only once.
+ *
+ * @return void
+ */
+function tgqa_seed_install_stripe_client() {
+	static $installed = false;
+
+	if ( $installed || ! interface_exists( '\\Stripe\\HttpClient\\ClientInterface' ) || ! class_exists( '\\Stripe\\ApiRequestor' ) ) {
+		return;
+	}
+	$has_stripe_stub = false;
+	foreach ( (array) get_option( TGQA_STUBS_OPTION, array() ) as $stub ) {
+		if ( isset( $stub['via'] ) && 'stripe' === $stub['via'] ) {
+			$has_stripe_stub = true;
+		}
+	}
+	if ( ! $has_stripe_stub ) {
+		return;
+	}
+
+	if ( ! class_exists( 'Tgqa_Stripe_Stub_Client', false ) ) {
+		class Tgqa_Stripe_Stub_Client implements \Stripe\HttpClient\ClientInterface { // phpcs:ignore
+			public function request( $method, $absUrl, $headers, $params, $hasFile, $apiMode = 'v1', $maxNetworkRetries = null ) { // phpcs:ignore
+				$path  = (string) wp_parse_url( $absUrl, PHP_URL_PATH );
+				$match = null;
+				foreach ( (array) get_option( TGQA_STUBS_OPTION, array() ) as $stub ) {
+					if ( isset( $stub['via'] ) && 'stripe' === $stub['via']
+						&& strtoupper( (string) $stub['method'] ) === strtoupper( $method )
+						&& (string) $stub['path'] === $path ) {
+						$match = $stub;
+						break;
+					}
+				}
+
+				$calls   = (array) get_option( TGQA_CALLS_OPTION, array() );
+				$calls[] = array(
+					'via'     => 'stripe',
+					'method'  => strtoupper( $method ),
+					'path'    => $path,
+					'params'  => $params,
+					'matched' => null !== $match,
+				);
+				update_option( TGQA_CALLS_OPTION, array_slice( $calls, -100 ), false );
+
+				if ( null === $match ) {
+					return array(
+						wp_json_encode( array( 'error' => array( 'type' => 'api_error', 'message' => "tgqa: no stub for {$method} {$path}" ) ) ),
+						500,
+						array(),
+					);
+				}
+
+				return array( wp_json_encode( isset( $match['body'] ) ? $match['body'] : new \stdClass() ), (int) ( isset( $match['status'] ) ? $match['status'] : 200 ), array() );
+			}
+		}
+	}
+
+	\Stripe\ApiRequestor::setHttpClient( new Tgqa_Stripe_Stub_Client() );
+	$installed = true;
+}
+
+/**
+ * Filter form of the installer, which must hand its input back untouched.
+ *
+ * @param mixed $result Passed through.
+ * @return mixed
+ */
+function tgqa_seed_install_stripe_client_filter( $result ) {
+	tgqa_seed_install_stripe_client();
+
+	return $result;
+}
+
+/**
+ * Report the registered stubs and the calls they answered.
+ *
+ * @return void
+ */
+function tgqa_seed_stubs_read() {
+	wp_send_json(
+		array(
+			'stubs' => array_values( (array) get_option( TGQA_STUBS_OPTION, array() ) ),
+			'calls' => array_values( (array) get_option( TGQA_CALLS_OPTION, array() ) ),
+		)
+	);
+}
+
+/**
+ * Replace the registered stubs, or clear them and the call log.
+ *
+ * @return void
+ */
+function tgqa_seed_stubs_write() {
+	$in = tgqa_seed_body();
+
+	if ( ! empty( $in['clear'] ) ) {
+		delete_option( TGQA_STUBS_OPTION );
+		delete_option( TGQA_CALLS_OPTION );
+		wp_send_json( array( 'cleared' => true ) );
+	}
+
+	if ( ! isset( $in['set'] ) || ! is_array( $in['set'] ) ) {
+		tgqa_seed_fail( 400, 'body needs {"set":[…]} or {"clear":true}' );
+	}
+
+	$stubs = array();
+	foreach ( $in['set'] as $stub ) {
+		if ( ! is_array( $stub ) || 'stripe' !== ( isset( $stub['via'] ) ? $stub['via'] : '' ) || empty( $stub['method'] ) || empty( $stub['path'] ) ) {
+			tgqa_seed_fail( 400, 'each stub needs via=stripe, method and path' );
+		}
+		$stubs[] = array(
+			'via'    => 'stripe',
+			'method' => strtoupper( (string) $stub['method'] ),
+			'path'   => (string) $stub['path'],
+			'status' => isset( $stub['status'] ) ? (int) $stub['status'] : 200,
+			'body'   => isset( $stub['body'] ) ? $stub['body'] : new \stdClass(),
+		);
+	}
+
+	update_option( TGQA_STUBS_OPTION, $stubs, false );
+	delete_option( TGQA_CALLS_OPTION );
+	wp_send_json( array( 'registered' => count( $stubs ) ) );
 }
