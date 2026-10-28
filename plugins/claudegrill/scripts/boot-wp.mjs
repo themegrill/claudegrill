@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 import { resolveQaHome } from "./lib/qa-home.mjs";
 import { isWindows, killTree, npxCommand, shellQuote } from "./lib/platform.mjs";
 import { loadRegistry } from "./lib/license/registry.mjs";
+import { seedTables } from "./lib/suite-manifest.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -389,6 +390,14 @@ function stageMuPlugins(siteUrl) {
 
   const token = crypto.randomBytes(16).toString("hex");
   fs.writeFileSync(path.join(dir, "tgqa-probe.token"), token, { mode: 0o600 });
+
+  // The product's declaration of which tables a spec may seed. Written even when
+  // empty: an absent file and an empty list both refuse, but only one of them
+  // says the product was asked.
+  fs.writeFileSync(
+    path.join(dir, "tgqa-seed.json"),
+    JSON.stringify({ tables: seedTables(info.root) }),
+  );
 
   const verdicts = [];
   if (opt.license) {

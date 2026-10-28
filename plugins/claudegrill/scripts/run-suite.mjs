@@ -34,7 +34,7 @@ import { resolveQaHome } from "./lib/qa-home.mjs";
 import { isWindows, killTree, shellQuote } from "./lib/platform.mjs";
 import { PRO_TAG, UNLICENSED_TAG, parseSpecFile } from "./lib/spec-parse.mjs";
 import { loadRegistry } from "./lib/license/registry.mjs";
-import { detectProduct, loadManifest } from "./lib/suite-manifest.mjs";
+import { detectProduct, loadManifest, seedTables } from "./lib/suite-manifest.mjs";
 import { affectedAreas, areasGuarding, changedFiles } from "./lib/affected.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -450,6 +450,12 @@ function installProbe(url, slug) {
     const tokenFile = path.join(muDir, "tgqa-probe.token");
     fs.writeFileSync(tokenFile, token, { mode: 0o600 });
     written.push(tokenFile);
+
+    const seedCfg = path.join(muDir, "tgqa-seed.json");
+    if (!fs.existsSync(seedCfg)) {
+      fs.writeFileSync(seedCfg, JSON.stringify({ tables: seedTables(root) }));
+      written.push(seedCfg);
+    }
 
     // The pro_check expression and nothing else: the licence STATE is the
     // product's to report, never ours to assert.

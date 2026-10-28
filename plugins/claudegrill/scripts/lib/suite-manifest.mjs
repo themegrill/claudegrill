@@ -152,6 +152,19 @@ export function loadManifest(productRoot) {
 }
 
 /**
+ * The tables a product lets `tgqa-seed.php` touch: `seed_tables` in suite.json,
+ * unprefixed. Anything that is not a plain table name is dropped rather than
+ * passed on, because this list is the whole allow-list of a write endpoint.
+ *
+ * @returns {string[]}
+ */
+export function seedTables(productRoot) {
+  const loaded = loadManifest(productRoot);
+  const list = loaded.manifest?.seed_tables;
+  return Array.isArray(list) ? list.filter((t) => typeof t === "string" && /^[A-Za-z0-9_]+$/.test(t)) : [];
+}
+
+/**
  * Areas the product says it has, from the knowledge file or an ingested docs
  * index. This is the denominator of every coverage number the platform prints,
  * so when it is empty the honest answer is "unknown", never "zero".
