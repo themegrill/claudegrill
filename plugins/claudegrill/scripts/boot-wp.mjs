@@ -789,7 +789,11 @@ if (opt.engine === "playground") {
           }
         : { error: "probe did not answer" },
       probe_url: `${url}/?tgqa_probe=${staged.token}`,
-      caveats: ["SQLite not MySQL", "no real cron", "no outbound mail"],
+      caveats: [
+        "SQLite not MySQL",
+        "no real cron (a declared hook can be run through tgqa-seed)",
+        "no outbound mail (wp_mail can be captured through tgqa-seed, SUITE.md §2c)",
+      ],
     }),
   );
   process.exit(0);

@@ -1236,7 +1236,8 @@ to change assertions.
 ## Two things worth knowing
 
 **Playground is not a real server.** PHP-WASM with SQLite: no MySQL-specific SQL,
-no real cron, no outbound mail. The skills switch to `wp-env` when a diff touches
+no real cron, no outbound mail (both can be driven or observed through the seed endpoint,
+SUITE.md §2c). The skills switch to `wp-env` when a diff touches
 those, but check which engine a run actually used before trusting a green result.
 
 **Doc drift is an output, not a bug.** If the docs promise a control the product

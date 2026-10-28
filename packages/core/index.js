@@ -10,4 +10,5 @@ module.exports = {
 	...require("./wp-cli"),
 	...require("./fixtures"),
 	...require("./theme"),
+	...require("./mail"),
 };
