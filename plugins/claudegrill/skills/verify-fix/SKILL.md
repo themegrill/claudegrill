@@ -337,6 +337,17 @@ record the key in @guards
   key, in the feature's existing spec, so it flips green the day it is fixed.
 - On **CANNOT VERIFY** — nothing.
 
+**The guard is always a Playwright spec in the manifest's `spec_dir`.** Not
+PHPUnit: nothing in this platform runs it, so a `phpunit.xml` pointing at an empty
+or gitignored `tests/phpunit/` is not a gap to fill, and a developer who finds one
+should not conclude the suite wants it. Not a standalone script under
+`tests/manual/` either — the gate and the suite only see files in `spec_dir`, so a
+guard written anywhere else is one CI cannot count. A change with no browser
+surface, pure PHP logic, is still guarded there: a spec whose test runs the PHP in
+a child process and asserts on what it returns. Look in the product's own
+`spec_dir` for one before writing it — user-registration has 21, titled
+`(isolated PHP)`, on `tests/e2e/support/security.ts`.
+
 You already did most of the feature identification in Step 2 ("blast radius") and
 Step 3.5 (mapping the diff to areas). Pass that along — the area you ran, the
 specs you saw pass or fail, and the behaviour in the customer's words — so the
@@ -358,6 +369,8 @@ the queue tracks whether a finding is guarded, not whether a file was added.
   the fix is wrong, say the fix is wrong.
 - **Never report a bug you have not reproduced twice.** One-shot anomalies in a
   browser-driving agent are usually the agent, not the product.
+- **Never write the guard as a PHPUnit test or a `tests/manual/` script.** Only a
+  spec in `spec_dir` counts (Step 6).
 - Tear down the site when finished (kill the pid from `boot-wp.mjs`).
 - If Playwright fails to drive the page three times in a row, stop and report
   the blocker. Do not keep retrying variations.
