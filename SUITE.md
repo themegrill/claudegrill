@@ -65,6 +65,8 @@ that as a valid state rather than an error.
 | `spec_extension` | no | Defaults to `.spec.ts`, then `.spec.js`. |
 | `env` | no | See §4. Absent means only the generic `TGQA_*` names are exported. |
 | `tiers` | no | Defaults to `{"fresh": "@fresh", "demo": "@demo"}`. |
+| `seed_tables` | no | Unprefixed table names a spec may insert into, read and delete from through the seed endpoint (§2c). Absent means the `rows` operation refuses. |
+| `seed_cron_hooks` | no | Cron hook names a spec may run through the seed endpoint (§2c). Absent means the `cron` operation refuses. |
 
 **`env` maps the platform's generic concepts onto whatever variable names the
 product's suite already uses**, so no product has to rename its variables to join
@@ -148,6 +150,49 @@ in `pro-suite.yml` asks the free repository which changed specs it does not have
 and refuses the PR if one of those is not tagged `@pro`. If the free repository
 cannot be reached, the file is left unchecked rather than refused.
 
+### 2c. Seeding state — the `tgqa-seed.php` endpoint
+
+Payment code runs in states a click cannot reach: a gateway in test mode with a
+webhook secret, a subscription that is due today, a daily job nobody can wait for.
+Playground has no shell and no real cron, so the one channel every engine has is
+HTTP. `tgqa-seed.php` is a QA-only mu-plugin, staged next to the probe and
+answering to the same per-run token (`TGQA_PROBE_URL`, with `tgqa_probe` swapped
+for `tgqa_seed`). It exists only on a disposable site the runner booted, or a
+local one it installed the probe into; on any other site a spec gets no endpoint
+and must skip with that reason, never pass.
+
+| Operation | Does | Refuses |
+|---|---|---|
+| `options` | Read named options; set options and get back `previous`. Posting the absent sentinel deletes, so a restore is exact. | `siteurl`, `home`, `active_plugins`, `template`, `stylesheet`; a read naming no keys. |
+| `cron` | Run one hook now, in the request, and report `callbacks`, `scheduled`, `ran`, `errors`. | A hook not in `seed_cron_hooks`; a declared hook with no callback attached (it would test nothing). `scheduled` is reported, not required. |
+| `rows` | `insert`, `select`, `delete` in a table from `seed_tables`. | An undeclared table, an unknown column, an enum value the column does not allow, a delete or select with no condition. |
+| `stubs` | Answer outbound calls from a list: `via: stripe` (the Stripe SDK) and `via: http` (anything on `wp_remote_*`, e.g. PayPal). | Never sends an unstubbed call to a host it has stubs for: it answers 500 and logs `matched: false`. |
+
+Four things a spec author needs to know, each measured on Playground:
+
+- **SQLite accepts any string in an ENUM column.** MySQL does not. `rows` checks
+  enum values against the real column definition so a seed that passes here is
+  state production could hold.
+- **`ON DELETE CASCADE` does not fire on SQLite.** Deleting the user left the
+  subscription and order rows behind. Seeding helpers delete children first
+  and never rely on the user's deletion.
+- **`GET_LOCK()` answers the string `1=1` on SQLite**, which MySQL-written code
+  reads as "lock not acquired". The endpoint rewrites it to `1` on SQLite only,
+  because nothing can contend there. The race a lock guards is therefore **not
+  testable on Playground**, and a spec must not claim to cover it.
+- **PayPal's signature cannot be computed locally**: PayPal verifies against a
+  certificate it hosts. Stub the verification call. That tests what the product
+  does with each verdict, not PayPal's scheme. Stripe's can be signed for real
+  with a seeded secret, and the product's own check then runs.
+
+Specs seed in a fixture, restore in its teardown (never the test body), and assert
+the call log (`stubCalls()`) has no `matched: false` entry. A stubbed gateway that
+nobody checks is a green that means nothing.
+
+**Not covered:** mail (nothing observes it, so "the member was emailed" cannot be
+asserted), a real cron daemon, and the Stripe SDK on engines without the
+endpoint. `--engine wp-env` stages no mu-plugins today, so none of this runs there.
+
 ### `area_paths` — which specs a diff could have broken
 
 Optional, and only needed if you want CI to narrow a PR to the areas it touches.
@@ -217,10 +262,13 @@ with a warning and a separate grey check run, "QA suite — refused" (this needs
 `pro-suite.yml` the `gate` job passes and reports no modes, so the whole matrix is
 skipped. Either way the PR comment says what to add.
 
-Some changes cannot have the spec the gate asks for — a Stripe or PayPal webhook,
-a cron handler, a subscription row with no order — because the harness cannot
-create that state. For those, **a member of the organisation applies the
-`qa-waived` label.** `gate-refusal.mjs` checks that the label is on the PR *and*
+Some changes cannot have the spec the gate asks for. A Stripe or PayPal webhook,
+a cron handler or a subscription row with no order used to be in that group
+because the harness could not create the state; the seed endpoint (§2c) can now,
+so write the spec before reaching for the label. What is left is a change whose
+state still cannot be seeded — an outbound call the stubs do not cover, or
+behaviour that needs real MySQL, mail or a cron daemon (§2c lists the limits).
+For those, **a member of the organisation applies the `qa-waived` label.** `gate-refusal.mjs` checks that the label is on the PR *and*
 who applied it: the person must be a member of the repository's organisation (or
 hold write access, which is the same standing read from an endpoint that works
 for private members), and a bot never counts. A waived PR runs the suite on

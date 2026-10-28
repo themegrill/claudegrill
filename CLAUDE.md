@@ -56,6 +56,8 @@ plugins/claudegrill/   the installable plugin — everything the skills need
   mu-plugins/            QA-only, mounted into the disposable site, never shipped
     tgqa-license.php     puts a licence where WordPress can see it
     tgqa-probe.php       reports what the booted site ACTUALLY believes
+    tgqa-seed.php        sets options, runs a declared cron hook, seeds declared tables,
+                         stubs outbound Stripe/HTTP calls — over HTTP, SUITE.md §2c
   hooks/
     hooks.json           Stop hook registration
     spec-guard.mjs       notices source changed with no spec; queues it

@@ -31,7 +31,10 @@
  *                                         or   {"action":"delete","table":"t","where":{…}}
  *                                                -> {"deleted":n}
  *   POST /?tgqa_seed=<token>&op=stubs    body: {"set":[{"via":"stripe","method":"GET",
- *                                          "path":"/v1/events/evt_1","status":200,"body":{…}}]}
+ *                                          "path":"/v1/events/evt_1","status":200,"body":{…}},
+ *                                         {"via":"http","method":"POST",
+ *                                          "url":"https://api-m.sandbox.paypal.com/v1/oauth2/token",
+ *                                          "status":200,"body":{…}}]}
  *                                         or   {"clear":true}
  *   GET  /?tgqa_seed=<token>&op=stubs                -> {"stubs":[…],"calls":[…]}
  *
@@ -62,11 +65,30 @@
  *   passes here could still be state production would never hold. The check
  *   below is what keeps the two engines honest.
  * - A delete with no condition.
- * - An outbound Stripe call nobody stubbed. While any stub is registered, the
- *   Stripe SDK talks to this file and never to the network; a request with no
- *   matching stub gets an error response and is logged as unmatched, so a spec
- *   cannot reach api.stripe.com by accident and a missing stub is a named
- *   failure instead of a timeout.
+ * - An outbound call nobody stubbed. While a Stripe stub is registered, the Stripe
+ *   SDK talks to this file and never to the network. For `via: http` (anything
+ *   going through `wp_remote_*`, such as PayPal) a request to a HOST that has a
+ *   stub is answered or refused here, and one to any other host passes through
+ *   untouched — blocking everything would break WordPress's own update checks and
+ *   hide the failure that matters. Either way an unmatched request gets an error
+ *   response and is logged as `matched: false`, so a spec cannot reach a real
+ *   gateway by accident and a missing stub is a named failure, not a timeout.
+ *
+ * Engine shim: named locks on SQLite
+ * ------------------------------------
+ * `GET_LOCK()` and `RELEASE_LOCK()` do not exist in SQLite, and Playground's
+ * translation layer does not fail on them: it answers the STRING `1=1`. Code
+ * written for MySQL reads that as "lock not acquired" (`'1' === (string) $result`)
+ * and gives up, so a webhook that takes a lock before it writes — UR's PayPal
+ * subscription handler does — can never succeed on Playground, and a spec for it
+ * fails for a reason that has nothing to do with the product. Measured, not
+ * assumed: `SELECT GET_LOCK('x', 1)` returned `"1=1"`.
+ *
+ * On SQLite only, those two statements are rewritten to answer `1`, which is what
+ * MySQL answers for an uncontended lock. Nothing here can contend — there is one
+ * request at a time and one writer — so the answer is the true one. The race the
+ * lock guards against is NOT testable on this engine, and this does not pretend
+ * otherwise.
  *
  * Runs on `wp_loaded`, late, so the product has already registered its cron
  * handlers and scheduled its events. At `init` priority 1 a product that
@@ -446,6 +468,7 @@ add_action( 'wp_loaded', 'tgqa_seed_install_stripe_client', 1 );
 // callback, after every hook above. This one fires after that and before the
 // handler runs, which is the last moment a replacement client still matters.
 add_filter( 'rest_dispatch_request', 'tgqa_seed_install_stripe_client_filter', 10, 1 );
+add_filter( 'pre_http_request', 'tgqa_seed_http_stub', 10, 3 );
 add_action( 'admin_init', 'tgqa_seed_install_stripe_client', 1 );
 
 /**
@@ -514,6 +537,63 @@ function tgqa_seed_install_stripe_client() {
 }
 
 /**
+ * Answer a `wp_remote_*` request from a registered `via: http` stub.
+ *
+ * @param false|array|WP_Error $pre  Preempted response, or false.
+ * @param array                $args Request arguments.
+ * @param string               $url  Request URL.
+ * @return false|array
+ */
+function tgqa_seed_http_stub( $pre, $args, $url ) {
+	if ( false !== $pre ) {
+		return $pre;
+	}
+
+	$stubs = array();
+	$hosts = array();
+	foreach ( (array) get_option( TGQA_STUBS_OPTION, array() ) as $stub ) {
+		if ( isset( $stub['via'] ) && 'http' === $stub['via'] ) {
+			$stubs[] = $stub;
+			$hosts[] = (string) wp_parse_url( $stub['url'], PHP_URL_HOST );
+		}
+	}
+	if ( ! in_array( (string) wp_parse_url( $url, PHP_URL_HOST ), $hosts, true ) ) {
+		return $pre;
+	}
+
+	$method = strtoupper( isset( $args['method'] ) ? (string) $args['method'] : 'GET' );
+	$base   = strtok( $url, '?' );
+	$match  = null;
+	foreach ( $stubs as $stub ) {
+		if ( $stub['method'] === $method && $stub['url'] === $base ) {
+			$match = $stub;
+			break;
+		}
+	}
+
+	$calls   = (array) get_option( TGQA_CALLS_OPTION, array() );
+	$calls[] = array(
+		'via'     => 'http',
+		'method'  => $method,
+		'path'    => $base,
+		'params'  => isset( $args['body'] ) ? ( is_string( $args['body'] ) ? json_decode( $args['body'], true ) : $args['body'] ) : array(),
+		'matched' => null !== $match,
+	);
+	update_option( TGQA_CALLS_OPTION, array_slice( $calls, -100 ), false );
+
+	$status = null === $match ? 500 : (int) $match['status'];
+	$body   = null === $match ? array( 'message' => "tgqa: no stub for {$method} {$base}" ) : $match['body'];
+
+	return array(
+		'headers'  => array( 'content-type' => 'application/json' ),
+		'body'     => wp_json_encode( $body ),
+		'response' => array( 'code' => $status, 'message' => 'tgqa stub' ),
+		'cookies'  => array(),
+		'filename' => null,
+	);
+}
+
+/**
  * Filter form of the installer, which must hand its input back untouched.
  *
  * @param mixed $result Passed through.
@@ -559,19 +639,49 @@ function tgqa_seed_stubs_write() {
 
 	$stubs = array();
 	foreach ( $in['set'] as $stub ) {
-		if ( ! is_array( $stub ) || 'stripe' !== ( isset( $stub['via'] ) ? $stub['via'] : '' ) || empty( $stub['method'] ) || empty( $stub['path'] ) ) {
-			tgqa_seed_fail( 400, 'each stub needs via=stripe, method and path' );
+		$via = is_array( $stub ) && isset( $stub['via'] ) ? (string) $stub['via'] : '';
+		if ( 'stripe' === $via && ! empty( $stub['method'] ) && ! empty( $stub['path'] ) ) {
+			$key = array( 'path' => (string) $stub['path'] );
+		} elseif ( 'http' === $via && ! empty( $stub['method'] ) && ! empty( $stub['url'] ) && wp_parse_url( (string) $stub['url'], PHP_URL_HOST ) ) {
+			$key = array( 'url' => (string) $stub['url'] );
+		} else {
+			tgqa_seed_fail( 400, 'each stub needs via=stripe with method and path, or via=http with method and a full url' );
 		}
-		$stubs[] = array(
-			'via'    => 'stripe',
-			'method' => strtoupper( (string) $stub['method'] ),
-			'path'   => (string) $stub['path'],
-			'status' => isset( $stub['status'] ) ? (int) $stub['status'] : 200,
-			'body'   => isset( $stub['body'] ) ? $stub['body'] : new \stdClass(),
+		$stubs[] = array_merge(
+			array(
+				'via'    => $via,
+				'method' => strtoupper( (string) $stub['method'] ),
+				'status' => isset( $stub['status'] ) ? (int) $stub['status'] : 200,
+				'body'   => isset( $stub['body'] ) ? $stub['body'] : new \stdClass(),
+			),
+			$key
 		);
 	}
 
 	update_option( TGQA_STUBS_OPTION, $stubs, false );
 	delete_option( TGQA_CALLS_OPTION );
 	wp_send_json( array( 'registered' => count( $stubs ) ) );
+}
+
+/*
+ * Named locks on SQLite: see "Engine shim" in the file header.
+ */
+add_filter( 'query', 'tgqa_seed_sqlite_named_locks' );
+
+/**
+ * Answer `GET_LOCK` / `RELEASE_LOCK` with `1` when the database is SQLite.
+ *
+ * @param string $query SQL about to run.
+ * @return string
+ */
+function tgqa_seed_sqlite_named_locks( $query ) {
+	static $sqlite = null;
+	if ( null === $sqlite ) {
+		$sqlite = defined( 'SQLITE_DB_DROPIN_VERSION' ) || ( isset( $GLOBALS['wpdb'] ) && false !== stripos( get_class( $GLOBALS['wpdb'] ), 'sqlite' ) );
+	}
+	if ( ! $sqlite || false === stripos( $query, 'LOCK(' ) ) {
+		return $query;
+	}
+
+	return preg_replace( '/SELECT\s+(?:GET_LOCK|RELEASE_LOCK)\s*\([^)]*\)/i', 'SELECT 1', $query );
 }
