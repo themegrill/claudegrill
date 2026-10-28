@@ -166,7 +166,8 @@ and must skip with that reason, never pass.
 | `options` | Read named options; set options and get back `previous`. Posting the absent sentinel deletes, so a restore is exact. | `siteurl`, `home`, `active_plugins`, `template`, `stylesheet`; a read naming no keys. |
 | `cron` | Run one hook now, in the request, and report `callbacks`, `scheduled`, `ran`, `errors`. | A hook not in `seed_cron_hooks`; a declared hook with no callback attached (it would test nothing). `scheduled` is reported, not required. |
 | `rows` | `insert`, `select`, `delete` in a table from `seed_tables`. | An undeclared table, an unknown column, an enum value the column does not allow, a delete or select with no condition. |
-| `stubs` | Answer outbound calls from a list: `via: stripe` (the Stripe SDK) and `via: http` (anything on `wp_remote_*`, e.g. PayPal). | Never sends an unstubbed call to a host it has stubs for: it answers 500 and logs `matched: false`. |
+| `stubs` | Answer outbound calls from a list: `via: stripe` (the Stripe SDK) and `via: http` (anything on `wp_remote_*`, e.g. PayPal). An `http` stub may carry a `query` to narrow it (PayPal's event listing takes the event type as a parameter); the first matching stub wins. | Never sends an unstubbed call to a host it has stubs for: it answers 500 and logs `matched: false`. |
+| `mail` | `capture: true` records what `wp_mail()` is asked to send (`to`, `subject`, `message`) and sends nothing; `capture: false` stops; `clear` empties the log. Turning capture on clears the log. | Capture is off by default, so a spec that forgets to turn it off in teardown is the only way mail goes missing. |
 
 Four things a spec author needs to know, each measured on Playground:
 
@@ -189,9 +190,9 @@ Specs seed in a fixture, restore in its teardown (never the test body), and asse
 the call log (`stubCalls()`) has no `matched: false` entry. A stubbed gateway that
 nobody checks is a green that means nothing.
 
-**Not covered:** mail (nothing observes it, so "the member was emailed" cannot be
-asserted), a real cron daemon, and the Stripe SDK on engines without the
-endpoint. `--engine wp-env` stages no mu-plugins today, so none of this runs there.
+**Not covered:** a real cron daemon, mail actually leaving the server (capture
+observes the request to send, not delivery), and the Stripe SDK on engines without
+the endpoint. `--engine wp-env` stages no mu-plugins today, so none of this runs there.
 
 ### `area_paths` — which specs a diff could have broken
 

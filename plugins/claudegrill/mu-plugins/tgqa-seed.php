@@ -37,6 +37,8 @@
  *                                          "status":200,"body":{…}}]}
  *                                         or   {"clear":true}
  *   GET  /?tgqa_seed=<token>&op=stubs                -> {"stubs":[…],"calls":[…]}
+ *   POST /?tgqa_seed=<token>&op=mail     body: {"capture":true} | {"capture":false} | {"clear":true}
+ *   GET  /?tgqa_seed=<token>&op=mail                 -> {"capturing":b,"mail":[{to,subject,message,headers}]}
  *
  * `previous` tells "was absent" from "was null" with a sentinel, so a restore puts
  * the site back exactly as found. Posting the sentinel as a value DELETES the
@@ -65,6 +67,10 @@
  *   passes here could still be state production would never hold. The check
  *   below is what keeps the two engines honest.
  * - A delete with no condition.
+ * - Mail that is not being captured: `mail` records what `wp_mail()` was asked to
+ *   send and sends nothing. Capture is off until a spec turns it on and the call
+ *   log is capped, so a forgotten `capture:true` neither floods the site nor hides
+ *   real mail from the next run.
  * - An outbound call nobody stubbed. While a Stripe stub is registered, the Stripe
  *   SDK talks to this file and never to the network. For `via: http` (anything
  *   going through `wp_remote_*`, such as PayPal) a request to a HOST that has a
@@ -141,7 +147,11 @@ function tgqa_seed_maybe_respond() {
 		'POST' === $method ? tgqa_seed_stubs_write() : tgqa_seed_stubs_read();
 	}
 
-	tgqa_seed_fail( 400, 'unknown op — expected options, cron, rows or stubs' );
+	if ( 'mail' === $op ) {
+		'POST' === $method ? tgqa_seed_mail_write() : tgqa_seed_mail_read();
+	}
+
+	tgqa_seed_fail( 400, 'unknown op — expected options, cron, rows, stubs or mail' );
 }
 
 /** The staged token. Shared with tgqa-probe.php so one install covers every endpoint. */
@@ -564,8 +574,14 @@ function tgqa_seed_http_stub( $pre, $args, $url ) {
 	$method = strtoupper( isset( $args['method'] ) ? (string) $args['method'] : 'GET' );
 	$base   = strtok( $url, '?' );
 	$match  = null;
+	$query = (string) wp_parse_url( $url, PHP_URL_QUERY );
 	foreach ( $stubs as $stub ) {
-		if ( $stub['method'] === $method && $stub['url'] === $base ) {
+		// An optional `query` narrows a stub to requests whose query string contains it,
+		// for endpoints that serve many answers from one path (PayPal's event listing
+		// takes the event type as a parameter). The first matching stub wins, so the
+		// narrow one goes before a catch-all.
+		if ( $stub['method'] === $method && $stub['url'] === $base
+			&& ( empty( $stub['query'] ) || false !== strpos( $query, (string) $stub['query'] ) ) ) {
 			$match = $stub;
 			break;
 		}
@@ -575,7 +591,7 @@ function tgqa_seed_http_stub( $pre, $args, $url ) {
 	$calls[] = array(
 		'via'     => 'http',
 		'method'  => $method,
-		'path'    => $base,
+		'path'    => $base . ( '' !== $query ? '?' . $query : '' ),
 		'params'  => isset( $args['body'] ) ? ( is_string( $args['body'] ) ? json_decode( $args['body'], true ) : $args['body'] ) : array(),
 		'matched' => null !== $match,
 	);
@@ -643,7 +659,7 @@ function tgqa_seed_stubs_write() {
 		if ( 'stripe' === $via && ! empty( $stub['method'] ) && ! empty( $stub['path'] ) ) {
 			$key = array( 'path' => (string) $stub['path'] );
 		} elseif ( 'http' === $via && ! empty( $stub['method'] ) && ! empty( $stub['url'] ) && wp_parse_url( (string) $stub['url'], PHP_URL_HOST ) ) {
-			$key = array( 'url' => (string) $stub['url'] );
+			$key = array( 'url' => (string) $stub['url'] ) + ( ! empty( $stub['query'] ) ? array( 'query' => (string) $stub['query'] ) : array() );
 		} else {
 			tgqa_seed_fail( 400, 'each stub needs via=stripe with method and path, or via=http with method and a full url' );
 		}
@@ -684,4 +700,79 @@ function tgqa_seed_sqlite_named_locks( $query ) {
 	}
 
 	return preg_replace( '/SELECT\s+(?:GET_LOCK|RELEASE_LOCK)\s*\([^)]*\)/i', 'SELECT 1', $query );
+}
+
+/*
+ * Mail capture.
+ *
+ * Playground cannot send mail, so "the admin was emailed" has nothing to observe.
+ * `pre_wp_mail` (WordPress 5.7) lets a filter take over `wp_mail()` before it sends,
+ * which is also what keeps a capturing run from ever mailing a real address.
+ */
+
+const TGQA_MAIL_FLAG = 'tgqa_mail_capture';
+const TGQA_MAIL_LOG  = 'tgqa_mail_log';
+
+add_filter( 'pre_wp_mail', 'tgqa_seed_capture_mail', 10, 2 );
+
+/**
+ * Record a mail instead of sending it, while capture is on.
+ *
+ * @param null|bool $pre  Short-circuit value.
+ * @param array     $atts wp_mail() arguments.
+ * @return null|bool True when captured, otherwise the incoming value.
+ */
+function tgqa_seed_capture_mail( $pre, $atts ) {
+	if ( null !== $pre || '1' !== get_option( TGQA_MAIL_FLAG, '' ) ) {
+		return $pre;
+	}
+
+	$log   = (array) get_option( TGQA_MAIL_LOG, array() );
+	$log[] = array(
+		'to'      => array_values( (array) ( isset( $atts['to'] ) ? $atts['to'] : array() ) ),
+		'subject' => isset( $atts['subject'] ) ? (string) $atts['subject'] : '',
+		'message' => substr( (string) ( isset( $atts['message'] ) ? $atts['message'] : '' ), 0, 4000 ),
+		'headers' => isset( $atts['headers'] ) ? $atts['headers'] : array(),
+	);
+	update_option( TGQA_MAIL_LOG, array_slice( $log, -100 ), false );
+
+	return true;
+}
+
+/**
+ * Report whether capture is on and what it has recorded.
+ *
+ * @return void
+ */
+function tgqa_seed_mail_read() {
+	wp_send_json(
+		array(
+			'capturing' => '1' === get_option( TGQA_MAIL_FLAG, '' ),
+			'mail'      => array_values( (array) get_option( TGQA_MAIL_LOG, array() ) ),
+		)
+	);
+}
+
+/**
+ * Turn capture on or off, or clear the log. Turning it on clears the log, so a
+ * spec never reads the previous spec's mail.
+ *
+ * @return void
+ */
+function tgqa_seed_mail_write() {
+	$in = tgqa_seed_body();
+
+	if ( array_key_exists( 'capture', $in ) ) {
+		if ( $in['capture'] ) {
+			update_option( TGQA_MAIL_FLAG, '1', false );
+			delete_option( TGQA_MAIL_LOG );
+		} else {
+			delete_option( TGQA_MAIL_FLAG );
+		}
+	}
+	if ( ! empty( $in['clear'] ) ) {
+		delete_option( TGQA_MAIL_LOG );
+	}
+
+	tgqa_seed_mail_read();
 }
