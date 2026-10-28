@@ -437,7 +437,7 @@ function installProbe(url, slug) {
     // The probe answers the licence gate; the theme-mod endpoint gives specs an
     // engine-agnostic way to set a setting without a Customizer round trip. Both
     // read the same token file, so they install and clean up together.
-    for (const f of ["tgqa-probe.php", "tgqa-theme-mod.php"]) {
+    for (const f of ["tgqa-probe.php", "tgqa-theme-mod.php", "tgqa-seed.php"]) {
       const dest = path.join(muDir, f);
       // Never clobber a file somebody else put here. If it is already ours,
       // reusing it is correct; if it is something else, that is theirs.
@@ -512,7 +512,14 @@ function installProbe(url, slug) {
 let resolvedProbeUrl = null;
 
 async function verifyLicence() {
-  if (!opt.pro) return null;
+  if (!opt.pro) {
+    // A free run has no licence to verify, but a spec seeding state through
+    // `tgqa-seed.php` still needs the URL. Only a probe somebody already staged
+    // is used: installing files into a developer's site is something a pro gate
+    // earns, not something every free run does.
+    resolvedProbeUrl = opt.probeUrl ?? process.env.TGQA_PROBE_URL ?? bootHandoff?.probe_url ?? null;
+    return null;
+  }
 
   let probeUrl = opt.probeUrl ?? process.env.TGQA_PROBE_URL ?? bootHandoff?.probe_url ?? null;
 

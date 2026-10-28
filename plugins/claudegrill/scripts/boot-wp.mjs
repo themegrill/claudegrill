@@ -381,6 +381,7 @@ function stageMuPlugins(siteUrl) {
     "tgqa-probe.php",
     // Shares the probe's token, so it costs no extra staging.
     "tgqa-theme-mod.php",
+    "tgqa-seed.php",
     ...(opt.license ? ["tgqa-license.php"] : []),
   ]) {
     fs.copyFileSync(path.join(qaHome, "mu-plugins", f), path.join(dir, f));
