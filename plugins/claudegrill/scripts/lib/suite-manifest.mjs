@@ -152,16 +152,18 @@ export function loadManifest(productRoot) {
 }
 
 /**
- * The tables a product lets `tgqa-seed.php` touch: `seed_tables` in suite.json,
- * unprefixed. Anything that is not a plain table name is dropped rather than
- * passed on, because this list is the whole allow-list of a write endpoint.
+ * What a product lets `tgqa-seed.php` touch: `seed_tables` (unprefixed table
+ * names) and `seed_cron_hooks` in suite.json. These two lists are the whole
+ * allow-list of a write endpoint, so anything that is not a plain identifier is
+ * dropped rather than passed on.
  *
- * @returns {string[]}
+ * @returns {{tables: string[], cron_hooks: string[]}}
  */
-export function seedTables(productRoot) {
-  const loaded = loadManifest(productRoot);
-  const list = loaded.manifest?.seed_tables;
-  return Array.isArray(list) ? list.filter((t) => typeof t === "string" && /^[A-Za-z0-9_]+$/.test(t)) : [];
+export function seedConfig(productRoot) {
+  const m = loadManifest(productRoot).manifest ?? {};
+  const clean = (list) =>
+    Array.isArray(list) ? list.filter((t) => typeof t === "string" && /^[A-Za-z0-9_]+$/.test(t)) : [];
+  return { tables: clean(m.seed_tables), cron_hooks: clean(m.seed_cron_hooks) };
 }
 
 /**

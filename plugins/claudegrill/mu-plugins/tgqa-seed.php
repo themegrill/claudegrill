@@ -23,7 +23,7 @@
  *   POST /?tgqa_seed=<token>&op=options  body: JSON object
  *                                                -> {"previous":{…},"applied":[…]}
  *   POST /?tgqa_seed=<token>&op=cron     body: {"hook":"…","args":[…]}
- *                                                -> {"hook":…,"callbacks":n,"ran":true,…}
+ *                                                -> {"hook":…,"callbacks":n,"scheduled":b,"ran":true,…}
  *   POST /?tgqa_seed=<token>&op=rows     body: {"action":"insert","table":"t","row":{…}}
  *                                                -> {"id":n}
  *                                         or   {"action":"select","table":"t","where":{…}}
@@ -42,10 +42,15 @@
  *
  * What it refuses, and why
  * ------------------------
- * - A hook that is not a scheduled cron event, or that has no callback: running
- *   an `init` or `wp_login` hook through here is not a cron test, and a hook with
- *   nothing attached "runs" successfully while exercising nothing — a green that
- *   means nothing.
+ * - A hook the product did not declare in `seed_cron_hooks` (staged as
+ *   `tgqa-seed.json`): running `init` or `wp_login` through here is not a cron
+ *   test. And a declared hook with no callback attached: it "runs"
+ *   successfully while exercising nothing — a green that means nothing.
+ *
+ *   Whether the product SCHEDULES the hook is reported, not required. UR attaches
+ *   its payment-retry handler in the free plugin and schedules it only when Pro
+ *   is active, so requiring a schedule would put free-plugin logic out of reach.
+ *   A spec that is about the schedule asserts `scheduled` itself.
  * - The options that would take the site away from the harness (`siteurl`,
  *   `home`, `active_plugins`, `template`, `stylesheet`).
  * - A table the product did not declare. `rows` is not a SQL endpoint: it takes
@@ -228,15 +233,17 @@ function tgqa_seed_cron_run() {
 		tgqa_seed_fail( 400, 'body needs {"hook":"…"}' );
 	}
 
+	$cfg = tgqa_seed_config();
+	if ( ! in_array( $hook, isset( $cfg['cron_hooks'] ) && is_array( $cfg['cron_hooks'] ) ? $cfg['cron_hooks'] : array(), true ) ) {
+		tgqa_seed_fail( 403, "hook {$hook} is not declared in seed_cron_hooks of the product's suite.json" );
+	}
+
 	$scheduled = false;
 	foreach ( (array) _get_cron_array() as $events ) {
 		if ( isset( $events[ $hook ] ) ) {
 			$scheduled = true;
 			break;
 		}
-	}
-	if ( ! $scheduled ) {
-		tgqa_seed_fail( 409, "{$hook} is not a scheduled cron event on this site — is the product active, and its module enabled?" );
 	}
 
 	$callbacks = 0;
@@ -246,7 +253,7 @@ function tgqa_seed_cron_run() {
 		}
 	}
 	if ( 0 === $callbacks ) {
-		tgqa_seed_fail( 409, "{$hook} is scheduled but has no callback attached, so running it would test nothing" );
+		tgqa_seed_fail( 409, "{$hook} has no callback attached, so running it would test nothing — is the product active and its module enabled?" );
 	}
 
 	$errors = array();
@@ -263,6 +270,7 @@ function tgqa_seed_cron_run() {
 		array(
 			'hook'        => $hook,
 			'callbacks'   => $callbacks,
+			'scheduled'   => $scheduled,
 			'ran'         => empty( $errors ),
 			'errors'      => $errors,
 			'output'      => substr( $output, 0, 2000 ),
@@ -277,13 +285,24 @@ function tgqa_seed_cron_run() {
  * @return string[]
  */
 function tgqa_seed_tables() {
+	$cfg = tgqa_seed_config();
+
+	return isset( $cfg['tables'] ) && is_array( $cfg['tables'] ) ? array_map( 'strval', $cfg['tables'] ) : array();
+}
+
+/**
+ * The product's staged allow-lists: `tables` and `cron_hooks`.
+ *
+ * @return array
+ */
+function tgqa_seed_config() {
 	$file = __DIR__ . '/tgqa-seed.json';
 	if ( ! is_readable( $file ) ) {
 		return array();
 	}
 	$cfg = json_decode( (string) file_get_contents( $file ), true ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 
-	return is_array( $cfg ) && isset( $cfg['tables'] ) && is_array( $cfg['tables'] ) ? array_map( 'strval', $cfg['tables'] ) : array();
+	return is_array( $cfg ) ? $cfg : array();
 }
 
 /**
